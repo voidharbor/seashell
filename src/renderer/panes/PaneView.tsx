@@ -204,7 +204,9 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
       },
     })
     terminals.set(pane.id, t)
-    t.enableWebgl()
+    // WebGL is left to the visibility effect below, which owns it. Enabling
+    // here as well would build a GPU context for every background tab's panes
+    // at mount and tear it down again a moment later.
     t.refit()
 
     // Spawn only after fit, so the child never sees a wrong initial size and
@@ -259,6 +261,27 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
     const raf = requestAnimationFrame(() => t.refit())
     return () => cancelAnimationFrame(raf)
   }, [pane.id, hidden, rect.width, rect.height])
+
+  /**
+   * A hidden pane gives up its WebGL context and takes it back when shown.
+   *
+   * Every tab's panes stay mounted so their scrollback survives a tab switch,
+   * which means the number of live terminals is now bounded by tabs × panes
+   * rather than by one screenful. Chromium force-loses WebGL contexts past
+   * roughly sixteen per page, and a forced loss is not free — it fires the
+   * addon's context-loss path, which counts toward the two-strikes rule that
+   * drops a pane to the DOM renderer permanently.
+   *
+   * Releasing deliberately while hidden keeps live contexts to what is actually
+   * on screen. Nothing is lost by it: the buffer lives in xterm, not in the GPU
+   * context, and a pane nobody can see does not need a renderer at all.
+   */
+  useEffect(() => {
+    const t = terminals.get(pane.id)
+    if (!t) return
+    if (hidden) t.disableWebgl()
+    else t.enableWebgl()
+  }, [pane.id, hidden])
 
   useEffect(() => {
     if (hidden) return

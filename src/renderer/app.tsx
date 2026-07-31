@@ -642,24 +642,58 @@ export function App(): React.JSX.Element {
         )}
 
         <div className="grid" ref={gridRef}>
-          {activeTab &&
-            rects.map((r) => {
-              const pane = activeTab.panes[r.paneId]
+          {/*
+            Every pane of every tab stays mounted; only the active tab's are laid
+            out and visible.
+
+            Rendering just the active tab is the obvious thing and it silently
+            destroys work: React unmounts the panes whose keys disappeared, the
+            pane effect's cleanup disposes their terminals, and main keeps no
+            history to replay — so switching tabs threw away the scrollback of the
+            tab you left, permanently. The PTY survived, which is what made it
+            look like a rendering glitch rather than data loss.
+
+            Hidden panes cost almost nothing to keep: `display: none` stops them
+            painting, the refit effect skips them so no SIGWINCH is sent for a
+            size nobody can see, and their WebGL context is released while hidden
+            (see TerminalBody) so mounting several tabs cannot walk into
+            Chromium's per-page context limit.
+          */}
+          {state.tabs.map((tab) => {
+            const isActive = tab.id === state.activeTabId
+            // Only the active tab has computed geometry. An inactive tab's panes
+            // are display:none, so their rect is never used for anything.
+            const tabRects = isActive
+              ? rects
+              : dfsPaneOrder(tab.tree).map((paneId) => ({
+                  paneId,
+                  x: 0,
+                  y: 0,
+                  width: 0,
+                  height: 0,
+                }))
+            const tabOrder = isActive ? order : dfsPaneOrder(tab.tree)
+
+            return tabRects.map((r) => {
+              const pane = tab.panes[r.paneId]
               if (!pane) return null
-              const zoomed = activeTab.zoomedPaneId
+              const zoomed = tab.zoomedPaneId
               const isZoomTarget = zoomed === r.paneId
-              const rect = isZoomTarget
-                ? { x: 0, y: 0, width: gridSize.width, height: gridSize.height }
-                : r
-              const isFocused = activeTab.focusedPaneId === r.paneId
+              const rect =
+                isActive && isZoomTarget
+                  ? { x: 0, y: 0, width: gridSize.width, height: gridSize.height }
+                  : r
+              // A background tab's panes must never take focus or answer a find.
+              const isFocused = isActive && tab.focusedPaneId === r.paneId
+              const isHidden = !isActive || (zoomed !== null && !isZoomTarget)
               return (
                 <PaneView
                   key={r.paneId}
                   pane={pane}
-                  index={order.indexOf(r.paneId) + 1}
+                  index={tabOrder.indexOf(r.paneId) + 1}
                   rect={rect}
                   focused={isFocused}
-                  hidden={zoomed !== null && !isZoomTarget}
+                  hidden={isHidden}
                   fontSize={fontSize}
                   findOpen={findOpen && isFocused}
                   findNonce={find.nonce}
@@ -686,7 +720,8 @@ export function App(): React.JSX.Element {
                   onToast={(m) => dispatch({ type: 'toast', message: m })}
                 />
               )
-            })}
+            })
+          })}
 
           {dividers.map((d) => (
             <div
