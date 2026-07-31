@@ -2,6 +2,7 @@ import type { PaneMetrics, SystemMetrics } from '../shared/ipc.js'
 import type { PaneColorKey } from './panes/colors.js'
 import { cleanPaneTitle } from './panes/paneTitle.js'
 import { doneExpired, nextAttention, type Attention } from './panes/attention.js'
+import { nextAutoColor } from './panes/colors.js'
 import type { RowNode } from './layout/types.js'
 import { createInitialTree } from './layout/tree.js'
 import { insertPane, rebalance } from './layout/auto-arrange.js'
@@ -194,9 +195,9 @@ export type Action =
   | { type: 'tab.selectIndex'; index: number }
   | { type: 'tab.cycle'; delta: number }
   | { type: 'tab.rename'; tabId: string; name: string; home: string }
-  | { type: 'pane.new'; home: string; command: PaneCommand; commandText?: string }
-  | { type: 'pane.newFile'; path: string }
-  | { type: 'pane.newWeb'; url: string }
+  | { type: 'pane.new'; home: string; command: PaneCommand; commandText?: string; autoColor?: boolean }
+  | { type: 'pane.newFile'; path: string; autoColor?: boolean }
+  | { type: 'pane.newWeb'; url: string; autoColor?: boolean }
   | { type: 'pane.setUrl'; paneId: string; url: string }
   | { type: 'pane.setRawSource'; paneId: string; raw: boolean }
   | { type: 'pane.setColor'; paneId: string; color: PaneColorKey | null }
@@ -217,6 +218,19 @@ export type Action =
   | { type: 'explorer.reveal'; path: string | null }
   | { type: 'metrics'; panes: PaneMetrics[]; system: SystemMetrics }
   | { type: 'toast'; message: string | null }
+
+/**
+ * Applies the automatic colour tag, if the setting is on.
+ *
+ * The tab's *existing* panes decide the choice, so a new pane avoids colours
+ * already on screen. A tab's very first pane is left untagged deliberately —
+ * there is nothing to tell it apart from, and colouring it would mean every
+ * single-pane tab wears a colour that carries no information.
+ */
+function withAutoColor(pane: PaneState, tab: TabState, enabled: boolean | undefined): PaneState {
+  if (!enabled || Object.keys(tab.panes).length === 0) return pane
+  return { ...pane, color: nextAutoColor(Object.values(tab.panes).map((p) => p.color)) }
+}
 
 function activeTab(s: AppState): TabState | undefined {
   return s.tabs.find((t) => t.id === s.activeTabId)
@@ -291,7 +305,11 @@ export function reducer(state: AppState, action: Action): AppState {
       if (Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
         return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (⌘T)` }
       }
-      const pane = makePane(tab.cwd, action.home, action.command, action.commandText)
+      const pane = withAutoColor(
+        makePane(tab.cwd, action.home, action.command, action.commandText),
+        tab,
+        action.autoColor
+      )
       return replaceTab(state, tab.id, (t) => ({
         ...t,
         tree: insertPane(t.tree, pane.id, t.pristine),
@@ -332,7 +350,7 @@ export function reducer(state: AppState, action: Action): AppState {
       if (Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
         return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (⌘T)` }
       }
-      const pane = makeFilePane(action.path, tab.cwd)
+      const pane = withAutoColor(makeFilePane(action.path, tab.cwd), tab, action.autoColor)
       return replaceTab(state, tab.id, (t) => ({
         ...t,
         tree: insertPane(t.tree, pane.id, t.pristine),
@@ -348,7 +366,7 @@ export function reducer(state: AppState, action: Action): AppState {
       if (Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
         return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (⌘T)` }
       }
-      const pane = makeWebPane(action.url, tab.cwd)
+      const pane = withAutoColor(makeWebPane(action.url, tab.cwd), tab, action.autoColor)
       return replaceTab(state, tab.id, (t) => ({
         ...t,
         tree: insertPane(t.tree, pane.id, t.pristine),

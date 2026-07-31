@@ -25,12 +25,16 @@ export interface Settings {
   /** Name panes from the title the running program sets, e.g. an agent's
    *  session summary, instead of the working directory. */
   autoTitlePanes: boolean
+  /** Give every new pane a colour tag automatically, preferring one the tab is
+   *  not already using. Renaming or recolouring by hand always wins. */
+  autoColorPanes: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   attentionGlow: true,
   attentionSound: false,
   autoTitlePanes: true,
+  autoColorPanes: false,
 }
 
 const STORAGE_KEY = 'seashell.settings'

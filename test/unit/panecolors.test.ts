@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PANE_COLORS, isPaneColorKey, paneColorHex } from '../../src/renderer/panes/colors.js'
+import {
+  PANE_COLORS,
+  isPaneColorKey,
+  nextAutoColor,
+  paneColorHex,
+} from '../../src/renderer/panes/colors.js'
 
 describe('pane colour palette', () => {
   it('has unique keys and unique hexes', () => {
@@ -58,5 +63,40 @@ describe('isPaneColorKey', () => {
     expect(isPaneColorKey('mauve')).toBe(false)
     expect(isPaneColorKey(null)).toBe(false)
     expect(isPaneColorKey(7)).toBe(false)
+  })
+})
+
+describe('nextAutoColor', () => {
+  it('starts at the first colour when nothing is taken', () => {
+    expect(nextAutoColor([])).toBe(PANE_COLORS[0]!.key)
+  })
+
+  it('never repeats a colour already on screen', () => {
+    const taken: string[] = []
+    for (let i = 0; i < PANE_COLORS.length; i += 1) {
+      const next = nextAutoColor(taken)
+      expect(taken).not.toContain(next)
+      taken.push(next)
+    }
+    expect(taken.length).toBe(PANE_COLORS.length)
+  })
+
+  it('skips over gaps rather than counting positions', () => {
+    // Second colour freed: it should be reused before moving further along.
+    const taken = [PANE_COLORS[0]!.key, PANE_COLORS[2]!.key]
+    expect(nextAutoColor(taken)).toBe(PANE_COLORS[1]!.key)
+  })
+
+  it('ignores untagged panes and unknown keys', () => {
+    expect(nextAutoColor([undefined, 'chartreuse', undefined])).toBe(PANE_COLORS[0]!.key)
+  })
+
+  /**
+   * A tab caps at six panes and the palette has seven, so exhaustion is only
+   * reachable if the cap changes. It still must not return something invalid.
+   */
+  it('wraps to the oldest colour once every one is taken', () => {
+    const all = PANE_COLORS.map((c) => c.key)
+    expect(nextAutoColor(all)).toBe(all[0])
   })
 })

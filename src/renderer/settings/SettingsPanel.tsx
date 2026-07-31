@@ -29,6 +29,12 @@ const GROUPS: Array<{ heading: string; rows: Row[] }> = [
           'A short, quiet two-tone chime the moment a pane begins asking — not while it keeps asking. Sleep silences it along with the glow, and rapid pings are collapsed into one.',
       },
       {
+        key: 'autoColorPanes',
+        title: 'Colour new panes automatically',
+        detail:
+          'Each new pane gets a colour the tab is not already using, so panes stay distinguishable without tagging them by hand. Colours you set yourself are never overwritten.',
+      },
+      {
         key: 'autoTitlePanes',
         title: 'Name panes from the running program',
         detail:

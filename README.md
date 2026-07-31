@@ -3,6 +3,10 @@
 A terminal window manager for macOS. Run many shells side by side in one window — plain
 `zsh`, a dev server, or several AI coding agents — and keep a file explorer next to them.
 
+**Built for running Claude Code.** SeaShell works with any terminal program, but every design
+decision that had a tie-breaker was settled in favour of watching several long-running agent
+sessions at once. That is what it is for.
+
 > **Status: pre-alpha.** Under active development. Not yet packaged for general use.
 
 ## Why
@@ -13,6 +17,37 @@ you tabs but only ever show you one thing at a time.
 
 SeaShell is built around a narrower goal: **watch several long-running sessions at once**, and
 work with the files they mention without leaving the window.
+
+## Working with Claude Code
+
+Running agents is not the same as running commands. An agent session lasts hours, spends most of
+that time either thinking or waiting on you, and prints paths you immediately want to look at.
+These exist because of that:
+
+- **Panes tell you when they want you.** A pane breathes its border while its program sits waiting
+  for input, and pulses briefly when a job finishes — never the pane you are already looking at.
+  The distinction matters: an agent showing a spinner is emitting bytes constantly while doing
+  nothing, so idle detection keys on what the foreground process is actually doing, not on output.
+  An optional ping sounds the moment a pane starts asking.
+- **Sleep.** One click in the tab bar stops every pane asking, glow and ping together, for when you
+  need to concentrate on one of them.
+- **Panes name themselves.** A pane takes the title the running program sets — Claude Code
+  publishes its session summary that way — so six agents read as six pieces of work instead of six
+  panes all labelled `claude`. Colour tags, automatic or hand-picked, tell them apart at a glance.
+- **Closing a pane really closes it.** An escalating kill ladder reaps the pane's whole process
+  tree, including anything that double-forked away from the shell. Forgotten agent sessions
+  quietly eating a 16 GB machine is the problem this app was built to end; panes over 200 MB show
+  their memory in the title bar.
+- **Paths and previews.** Double-click a path an agent printed and the explorer reveals it. Inside
+  a full-screen program that claims the mouse, hold ⌥. Open the file and it becomes a tiled pane
+  with syntax highlighting, beside the agent that mentioned it.
+- **⌘A selects your input line**, not thousands of lines of scrollback — the difference between
+  editing the prompt you are halfway through and selecting an entire transcript.
+- **Shift+Enter sends ESC CR**, the multi-line-input binding agents expect, with no setup and
+  without SeaShell touching your Terminal.app preferences.
+- **A pane is a real login shell.** Your dotfiles, your PATH, your history. Nothing is wrapped or
+  intercepted, and the environment a pane inherits is scrubbed of SeaShell's own identity so a
+  nested launch cannot confuse the agent running inside it.
 
 ## What it does
 

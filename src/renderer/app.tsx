@@ -50,6 +50,16 @@ export function App(): React.JSX.Element {
   useEffect(() => unlockAudio(), [])
 
   /**
+   * Read through a ref so `newPane` and the menu-command handler do not have to
+   * list settings as a dependency. Both are rebuilt on every change to their
+   * deps, and the command handler re-subscribes to the IPC channel when it is —
+   * churning that on a checkbox is needless.
+   */
+  const autoColorRef = useRef(false)
+  autoColorRef.current = settings.autoColorPanes
+
+
+  /**
    * Pings on the *transition* into attention, never on the state.
    *
    * Attention is recomputed on every metrics tick, so reacting to "this pane
@@ -178,7 +188,13 @@ export function App(): React.JSX.Element {
 
   const newPane = useCallback(
     (command: PaneCommand, commandText?: string) => {
-      dispatch({ type: 'pane.new', home, command, ...(commandText ? { commandText } : {}) })
+      dispatch({
+        type: 'pane.new',
+        home,
+        command,
+        autoColor: autoColorRef.current,
+        ...(commandText ? { commandText } : {}),
+      })
     },
     [home]
   )
@@ -296,7 +312,7 @@ export function App(): React.JSX.Element {
           dispatch({ type: 'explorer.reveal', path: null })
           break
         case 'preview.web':
-          dispatch({ type: 'pane.newWeb', url: '' })
+          dispatch({ type: 'pane.newWeb', url: '', autoColor: autoColorRef.current })
           break
         case 'layout.rebalance':
           dispatch({ type: 'layout.rebalance' })
@@ -561,7 +577,9 @@ export function App(): React.JSX.Element {
           className="tabbar__new"
           title="New web preview (⌘⇧U)"
           style={full ? { opacity: 0.4 } : undefined}
-          onClick={() => !full && dispatch({ type: 'pane.newWeb', url: '' })}
+          onClick={() =>
+            !full && dispatch({ type: 'pane.newWeb', url: '', autoColor: settings.autoColorPanes })
+          }
         >
           ◍
         </div>
@@ -606,7 +624,9 @@ export function App(): React.JSX.Element {
               revealPath={state.revealPath}
               refreshNonce={explorerNonce}
               onRevealHandled={() => dispatch({ type: 'explorer.reveal', path: null })}
-              onOpenInViewer={(p) => dispatch({ type: 'pane.newFile', path: p })}
+              onOpenInViewer={(p) =>
+                dispatch({ type: 'pane.newFile', path: p, autoColor: settings.autoColorPanes })
+              }
               onToast={(m) => dispatch({ type: 'toast', message: m })}
             />
             <div

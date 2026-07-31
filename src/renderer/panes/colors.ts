@@ -58,3 +58,26 @@ export function paneColorHex(key: string | undefined): string | null {
 export function isPaneColorKey(value: unknown): value is PaneColorKey {
   return typeof value === 'string' && BY_KEY.has(value as PaneColorKey)
 }
+
+/**
+ * Picks the colour for a newly created pane when auto-colouring is on.
+ *
+ * Prefers a colour not already in use in the tab, because the entire value of
+ * the tag is telling two panes apart — handing a new pane the same colour as an
+ * existing one is worse than leaving it untagged. Only once every colour is
+ * spoken for does it wrap, and then it wraps to the least recently taken so the
+ * duplicate pair is as far apart as the palette allows.
+ *
+ * `used` is in creation order, which is what makes "least recently taken"
+ * meaningful.
+ */
+export function nextAutoColor(used: ReadonlyArray<string | undefined>): PaneColorKey {
+  const taken = used.filter((k): k is string => typeof k === 'string' && BY_KEY.has(k as PaneColorKey))
+
+  const free = PANE_COLORS.find((c) => !taken.includes(c.key))
+  if (free) return free.key
+
+  // Everything is taken: reuse whichever was claimed first.
+  const oldest = taken[0]
+  return isPaneColorKey(oldest) ? oldest : PANE_COLORS[0]!.key
+}
