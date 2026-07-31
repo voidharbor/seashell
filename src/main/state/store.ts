@@ -1,61 +1,38 @@
 import { app } from 'electron'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import type { Project, SavedTab } from '../../shared/ipc.js'
 
 /**
- * Reads and writes the saved window layout (spec §11).
+ * Named projects — reopenable sets of tabs and panes (spec §11).
  *
- * What this file holds is a *layout*, never a session: no pty state, no pid, no
+ * What a project holds is a *layout*, never a session: no pty state, no pid, no
  * scrollback, no environment. A pane's processes die with the app and cannot be
  * brought back; what returns is the shape — which tabs existed, how they were
  * split, what each pane's directory was, and what it had been launched as.
  *
- * Scrollback is deliberately excluded rather than merely unimplemented. A
+ * Scrollback is excluded deliberately rather than merely unimplemented. A
  * terminal buffer routinely contains API keys, tokens and customer data, and
  * persisting that to a plain JSON file is a real exposure to buy a nicety.
  */
 
-const FILE = 'state.json'
+const FILE = 'projects.json'
 
 /** Bumped only on a breaking shape change; unknown versions are quarantined. */
 export const SCHEMA_VERSION = 1
 
-export interface SavedPane {
-  label: string
-  labelIsCustom: boolean
-  kind: 'term' | 'file' | 'web'
-  command: 'zsh' | 'claude' | 'cmd'
-  commandText?: string
-  cwd: string
-  color?: string
-  filePath?: string
-  url?: string
-}
+/** Enough for any real workflow, low enough that a runaway caller cannot grow
+ *  the file without bound. */
+export const MAX_PROJECTS = 50
 
-export interface SavedTab {
-  id: string
-  name: string
-  nameIsCustom: boolean
-  cwd: string
-  zoomedPaneId: string | null
-  focusedPaneId: string | null
-  tree: unknown
-  panes: Record<string, SavedPane>
-}
+export const MAX_NAME_LENGTH = 60
 
-export interface SavedState {
+export interface ProjectsFile {
   schemaVersion: number
-  savedAt: string
-  window: { width: number; height: number; x?: number; y?: number }
-  activeTabId: string
-  tabs: SavedTab[]
+  projects: Project[]
 }
 
-export type LoadResult =
-  | { ok: true; state: SavedState }
-  | { ok: false; reason: 'first-run' | 'corrupt' | 'unreadable' }
-
-function statePath(): string {
+function filePath(): string {
   return path.join(app.getPath('userData'), FILE)
 }
 
@@ -66,12 +43,11 @@ function statePath(): string {
  * nothing about the directory entry the rename creates. Without the directory
  * fsync the rename itself is not durable, so a crash at the wrong moment can
  * leave the old file in place having reported success. This is the one write in
- * the app where a torn result would silently lose the user's layout.
+ * the app where a torn result would silently lose the user's saved work.
  */
-export async function saveState(state: SavedState): Promise<void> {
-  const target = statePath()
+async function writeFileAtomic(body: string): Promise<void> {
+  const target = filePath()
   const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  const body = JSON.stringify(state, null, 2)
 
   const fh = await fs.open(tmp, 'w')
   try {
@@ -96,28 +72,35 @@ export async function saveState(state: SavedState): Promise<void> {
 /**
  * A missing file is first run, not a failure. A file that exists but does not
  * parse is renamed aside rather than deleted — it is the only debuggable
- * artifact of whatever went wrong, and its entire contents are a recreatable
- * window layout, so keeping it costs nothing.
+ * artifact of whatever went wrong, and a user's saved projects are worth more
+ * than the tidiness of removing them.
  */
-export async function loadState(): Promise<LoadResult> {
-  const target = statePath()
+export async function loadProjects(): Promise<Project[]> {
+  const target = filePath()
 
   let raw: string
   try {
     raw = await fs.readFile(target, 'utf8')
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ok: false, reason: 'first-run' }
-    return { ok: false, reason: 'unreadable' }
+  } catch {
+    return []
   }
 
   try {
-    const parsed = JSON.parse(raw) as SavedState
-    if (!isValidState(parsed)) throw new Error('shape')
-    return { ok: true, state: parsed }
+    const parsed = JSON.parse(raw) as ProjectsFile
+    if (parsed?.schemaVersion !== SCHEMA_VERSION || !Array.isArray(parsed.projects)) {
+      throw new Error('shape')
+    }
+    return parsed.projects.filter(isValidProject)
   } catch {
     await quarantine(target)
-    return { ok: false, reason: 'corrupt' }
+    return []
   }
+}
+
+export async function saveProjects(projects: Project[]): Promise<void> {
+  await writeFileAtomic(
+    JSON.stringify({ schemaVersion: SCHEMA_VERSION, projects } satisfies ProjectsFile, null, 2)
+  )
 }
 
 async function quarantine(target: string): Promise<void> {
@@ -125,38 +108,64 @@ async function quarantine(target: string): Promise<void> {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     await fs.rename(target, target.replace(/\.json$/, `.corrupt-${stamp}.json`))
   } catch {
-    /* nothing further to do; the caller falls back to defaults regardless */
+    /* nothing further to do; the caller falls back to an empty list regardless */
   }
 }
 
 /**
  * Structural validation only — enough that the renderer cannot be handed
- * something it will crash on. Anything questionable is rejected wholesale
- * rather than repaired, because a half-restored layout is harder to understand
- * than a fresh one.
+ * something it will crash on. Anything questionable is dropped wholesale rather
+ * than repaired, because a half-restored layout is harder to understand than a
+ * missing one.
  */
-export function isValidState(value: unknown): value is SavedState {
+export function isValidProject(value: unknown): value is Project {
   if (typeof value !== 'object' || value === null) return false
-  const s = value as Partial<SavedState>
+  const p = value as Partial<Project>
 
-  if (s.schemaVersion !== SCHEMA_VERSION) return false
-  if (typeof s.activeTabId !== 'string') return false
-  if (!Array.isArray(s.tabs)) return false
-  if (typeof s.window !== 'object' || s.window === null) return false
-  if (!Number.isFinite(s.window.width) || !Number.isFinite(s.window.height)) return false
+  if (typeof p.id !== 'string' || p.id === '') return false
+  if (typeof p.name !== 'string' || p.name === '') return false
+  if (typeof p.savedAt !== 'string') return false
+  if (!Array.isArray(p.tabs) || p.tabs.length === 0) return false
 
-  for (const tab of s.tabs) {
-    if (typeof tab?.id !== 'string' || typeof tab.name !== 'string') return false
-    if (typeof tab.cwd !== 'string') return false
-    if (typeof tab.panes !== 'object' || tab.panes === null) return false
-    if (typeof tab.tree !== 'object' || tab.tree === null) return false
+  return p.tabs.every(isValidTab)
+}
 
-    for (const pane of Object.values(tab.panes)) {
-      if (typeof pane?.label !== 'string') return false
-      if (pane.kind !== 'term' && pane.kind !== 'file' && pane.kind !== 'web') return false
-      if (typeof pane.cwd !== 'string') return false
-    }
+function isValidTab(tab: unknown): tab is SavedTab {
+  if (typeof tab !== 'object' || tab === null) return false
+  const t = tab as Partial<SavedTab>
+
+  if (typeof t.id !== 'string' || typeof t.name !== 'string') return false
+  if (typeof t.cwd !== 'string') return false
+  if (typeof t.panes !== 'object' || t.panes === null) return false
+  if (typeof t.tree !== 'object' || t.tree === null) return false
+
+  for (const pane of Object.values(t.panes)) {
+    if (typeof pane?.label !== 'string') return false
+    if (pane.kind !== 'term' && pane.kind !== 'file' && pane.kind !== 'web') return false
+    if (typeof pane.cwd !== 'string') return false
   }
-
   return true
+}
+
+/**
+ * Saving by name, not by id, is the behaviour that matches how people think
+ * about this: "save as Solar Bear" twice means one project called Solar Bear,
+ * not two. An explicit id still wins, so renaming an existing project does not
+ * silently fork it.
+ */
+export function upsertProject(existing: Project[], incoming: Project): Project[] {
+  const byId = incoming.id
+    ? existing.findIndex((p) => p.id === incoming.id)
+    : -1
+  const idx =
+    byId >= 0
+      ? byId
+      : existing.findIndex((p) => p.name.toLowerCase() === incoming.name.toLowerCase())
+
+  if (idx >= 0) {
+    const next = [...existing]
+    next[idx] = { ...incoming, id: existing[idx]!.id }
+    return next
+  }
+  return [...existing, incoming]
 }

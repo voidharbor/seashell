@@ -2,7 +2,7 @@ import type { PaneMetrics, SystemMetrics } from '../shared/ipc.js'
 import type { PaneColorKey } from './panes/colors.js'
 import { cleanPaneTitle } from './panes/paneTitle.js'
 import { doneExpired, nextAttention, type Attention } from './panes/attention.js'
-import { nextAutoColor } from './panes/colors.js'
+import { FIRST_PANE_COLOR, nextAutoColor } from './panes/colors.js'
 import type { RowNode } from './layout/types.js'
 import { createInitialTree } from './layout/tree.js'
 import { insertPane, rebalance } from './layout/auto-arrange.js'
@@ -174,8 +174,16 @@ export function hostLabel(url: string): string {
   }
 }
 
-export function makeTab(cwd: string, home: string, command: PaneCommand = 'zsh'): TabState {
-  const pane = makePane(cwd, home, command)
+export function makeTab(
+  cwd: string,
+  home: string,
+  command: PaneCommand = 'zsh',
+  autoColor = false
+): TabState {
+  const base = makePane(cwd, home, command)
+  // A tab's first pane is created here, not through the pane.new path, so the
+  // first-pane colour has to be applied at birth rather than by withAutoColor.
+  const pane = autoColor ? { ...base, color: FIRST_PANE_COLOR } : base
   return {
     id: uid('tab'),
     name: baseLabel(cwd, home),
@@ -189,12 +197,13 @@ export function makeTab(cwd: string, home: string, command: PaneCommand = 'zsh')
 }
 
 export type Action =
-  | { type: 'tab.new'; cwd: string; home: string }
+  | { type: 'tab.new'; cwd: string; home: string; autoColor?: boolean }
   | { type: 'tab.close'; tabId: string }
   | { type: 'tab.select'; tabId: string }
   | { type: 'tab.selectIndex'; index: number }
   | { type: 'tab.cycle'; delta: number }
   | { type: 'tab.rename'; tabId: string; name: string; home: string }
+  | { type: 'tabs.replace'; tabs: TabState[] }
   | { type: 'pane.new'; home: string; command: PaneCommand; commandText?: string; autoColor?: boolean }
   | { type: 'pane.newFile'; path: string; autoColor?: boolean }
   | { type: 'pane.newWeb'; url: string; autoColor?: boolean }
@@ -223,12 +232,12 @@ export type Action =
  * Applies the automatic colour tag, if the setting is on.
  *
  * The tab's *existing* panes decide the choice, so a new pane avoids colours
- * already on screen. A tab's very first pane is left untagged deliberately —
- * there is nothing to tell it apart from, and colouring it would mean every
- * single-pane tab wears a colour that carries no information.
+ * already on screen. A tab's first pane has no existing panes to avoid and gets
+ * the fixed first-pane colour, so every tab starts from the same place instead
+ * of the default pane being the one odd untagged one.
  */
 function withAutoColor(pane: PaneState, tab: TabState, enabled: boolean | undefined): PaneState {
-  if (!enabled || Object.keys(tab.panes).length === 0) return pane
+  if (!enabled) return pane
   return { ...pane, color: nextAutoColor(Object.values(tab.panes).map((p) => p.color)) }
 }
 
@@ -256,7 +265,7 @@ function focusAfterClose(tree: RowNode, closedId: string, order: string[]): stri
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'tab.new': {
-      const tab = makeTab(action.cwd, action.home)
+      const tab = makeTab(action.cwd, action.home, 'zsh', action.autoColor)
       return { ...state, tabs: [...state.tabs, tab], activeTabId: tab.id }
     }
 
@@ -268,6 +277,17 @@ export function reducer(state: AppState, action: Action): AppState {
           ? (remaining[0]?.id ?? '')
           : state.activeTabId
       return { ...state, tabs: remaining, activeTabId: active }
+    }
+
+    /**
+     * Opening a project replaces the whole window, not just adds to it — that is
+     * what "open this project" means everywhere else. The caller is responsible
+     * for reaping the panes being replaced; the reducer cannot, because killing
+     * a process is asynchronous and a reducer must stay pure.
+     */
+    case 'tabs.replace': {
+      if (action.tabs.length === 0) return state
+      return { ...state, tabs: action.tabs, activeTabId: action.tabs[0]!.id }
     }
 
     case 'tab.select':

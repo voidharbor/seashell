@@ -46,6 +46,16 @@ export const PANE_COLORS: readonly PaneColor[] = [
 const BY_KEY = new Map(PANE_COLORS.map((c) => [c.key, c]))
 
 /**
+ * The colour a tab's first pane gets.
+ *
+ * Green rather than "no colour": a tab that starts untagged and then sprouts
+ * colours as you add panes reads as though the first pane is somehow different
+ * in kind. Green also sits closest to the terminal's own foreground, so the
+ * default pane looks native rather than decorated.
+ */
+export const FIRST_PANE_COLOR: PaneColorKey = 'green'
+
+/**
  * Resolves a stored key to its colour. Returns null for an untagged pane and
  * for any key the palette no longer contains, so a value left over from an
  * older build degrades to "no tag" instead of rendering nothing at all.
@@ -73,6 +83,9 @@ export function isPaneColorKey(value: unknown): value is PaneColorKey {
  */
 export function nextAutoColor(used: ReadonlyArray<string | undefined>): PaneColorKey {
   const taken = used.filter((k): k is string => typeof k === 'string' && BY_KEY.has(k as PaneColorKey))
+
+  // Nothing taken means this is the tab's first pane, which has its own colour.
+  if (taken.length === 0) return FIRST_PANE_COLOR
 
   const free = PANE_COLORS.find((c) => !taken.includes(c.key))
   if (free) return free.key

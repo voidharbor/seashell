@@ -34,6 +34,11 @@ import {
   type PtyResizeRequest,
   type PtySpawnRequest,
   type PtySpawnResponse,
+  type ProjectsDeleteRequest,
+  type ProjectsDeleteResponse,
+  type ProjectsListResponse,
+  type ProjectsSaveRequest,
+  type ProjectsSaveResponse,
   type PtyWriteRequest,
   type SeashellApi,
   type UiCommandEvent,
@@ -82,6 +87,13 @@ const api: SeashellApi = {
   },
   metrics: {
     onTick: (cb: (e: MetricsTickEvent) => void) => subscribe<MetricsTickEvent>(CH.metricsTick, cb),
+  },
+  projects: {
+    list: (): Promise<ProjectsListResponse> => ipcRenderer.invoke(CH.projectsList),
+    save: (req: ProjectsSaveRequest): Promise<ProjectsSaveResponse> =>
+      ipcRenderer.invoke(CH.projectsSave, req),
+    remove: (req: ProjectsDeleteRequest): Promise<ProjectsDeleteResponse> =>
+      ipcRenderer.invoke(CH.projectsDelete, req),
   },
   app: {
     getPaths: (): Promise<AppPaths> => ipcRenderer.invoke(CH.appGetPaths),

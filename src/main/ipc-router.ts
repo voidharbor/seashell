@@ -6,6 +6,7 @@ import { z } from 'zod'
 import {
   CH,
   type AppPaths,
+  type Project,
   type FsProbeResponse,
   type OpenPathResponse,
 } from '../shared/ipc.js'
@@ -15,6 +16,13 @@ import { readTextFile } from './fs/read.js'
 import { statBatch } from './fs/stat-batch.js'
 import { decideRoute, VIEWER_MAX_BYTES } from './fs/route.js'
 import { denyOpenPath, extOf } from './fs/path-guard.js'
+import {
+  MAX_NAME_LENGTH,
+  MAX_PROJECTS,
+  loadProjects,
+  saveProjects,
+  upsertProject,
+} from './state/store.js'
 
 const TERMINAL_FONT =
   '/System/Applications/Utilities/Terminal.app/Contents/Resources/Fonts/SFMono-Terminal.ttf'
@@ -54,6 +62,18 @@ const ReadTextReq = z.object({
   maxBytes: z.number().int().min(1).max(64 * 1024 * 1024),
 })
 const OpenReq = z.object({ path: AbsPath })
+
+/**
+ * A project arrives from the renderer, so its shape is validated here like any
+ * other inbound payload. The layout tree is accepted as opaque — the renderer
+ * re-validates and remaps it on restore, and duplicating that structural walk in
+ * two places is how the two copies drift apart.
+ */
+const ProjectSaveReq = z.object({
+  id: z.string().min(1).max(128).optional(),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  tabs: z.array(z.unknown()).min(1).max(64),
+})
 const HttpReq = z.object({ url: z.string().max(4096) })
 
 /** Extension -> mime, for the image preview. Fixed table; never sniffed. */
@@ -228,6 +248,50 @@ export function registerIpc(ptyManager: PtyManager): void {
     // are all rejected by omission.
     if (!/^https?:\/\//i.test(parsed.data.url)) return { ok: false, error: 'scheme not allowed' }
     await shell.openExternal(parsed.data.url)
+    return { ok: true }
+  })
+
+  // ------------------------------------------------------------- projects
+  ipcMain.handle(CH.projectsList, async () => ({ projects: await loadProjects() }))
+
+  ipcMain.handle(CH.projectsSave, async (_e, raw) => {
+    const parsed = ProjectSaveReq.safeParse(raw)
+    if (!parsed.success) {
+      return { ok: false, code: 'EINVALID', message: 'invalid project' }
+    }
+
+    const existing = await loadProjects()
+    const isNew = !existing.some(
+      (p) => p.id === parsed.data.id || p.name.toLowerCase() === parsed.data.name.toLowerCase()
+    )
+    if (isNew && existing.length >= MAX_PROJECTS) {
+      return { ok: false, code: 'ELIMIT', message: `at most ${MAX_PROJECTS} projects` }
+    }
+
+    const project = {
+      id: parsed.data.id ?? `proj-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+      name: parsed.data.name.trim(),
+      savedAt: new Date().toISOString(),
+      tabs: parsed.data.tabs as unknown as Project['tabs'],
+    }
+
+    try {
+      await saveProjects(upsertProject(existing, project))
+    } catch {
+      return { ok: false, code: 'EWRITE', message: 'could not write projects file' }
+    }
+    return { ok: true, project }
+  })
+
+  ipcMain.handle(CH.projectsDelete, async (_e, raw) => {
+    const parsed = z.object({ id: z.string().min(1).max(128) }).safeParse(raw)
+    if (!parsed.success) return { ok: false }
+    const existing = await loadProjects()
+    try {
+      await saveProjects(existing.filter((p) => p.id !== parsed.data.id))
+    } catch {
+      return { ok: false }
+    }
     return { ok: true }
   })
 

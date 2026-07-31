@@ -35,6 +35,10 @@ export const CH = {
 
   appGetPaths: 'app:getPaths',
   appGetTerminalFont: 'app:getTerminalFont',
+
+  projectsList: 'projects:list',
+  projectsSave: 'projects:save',
+  projectsDelete: 'projects:delete',
   uiCommand: 'ui:command',
 } as const
 
@@ -274,6 +278,66 @@ export interface UiCommandEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Projects — named, reopenable sets of tabs and panes
+// ---------------------------------------------------------------------------
+
+/**
+ * A project stores a *shape*, never a session. No pid, no scrollback, no
+ * environment: those describe processes, and processes die with the app. What
+ * comes back is which tabs existed, how they were split, each pane's directory
+ * and what it had been launched as.
+ */
+export interface SavedPane {
+  label: string
+  labelIsCustom: boolean
+  kind: 'term' | 'file' | 'web'
+  command: 'zsh' | 'claude' | 'cmd'
+  commandText?: string
+  cwd: string
+  color?: string
+  filePath?: string
+  url?: string
+}
+
+export interface SavedTab {
+  id: string
+  name: string
+  nameIsCustom: boolean
+  cwd: string
+  zoomedPaneId: string | null
+  focusedPaneId: string | null
+  tree: unknown
+  panes: Record<string, SavedPane>
+}
+
+export interface Project {
+  id: string
+  name: string
+  /** ISO timestamp of the last save. */
+  savedAt: string
+  tabs: SavedTab[]
+}
+
+export interface ProjectsListResponse {
+  projects: Project[]
+}
+
+export interface ProjectsSaveRequest {
+  /** Existing id to overwrite, or omitted to create a new project. */
+  id?: string
+  name: string
+  tabs: SavedTab[]
+}
+
+export type ProjectsSaveResponse = Result<{ project: Project }, 'EINVALID' | 'EWRITE' | 'ELIMIT'>
+
+export interface ProjectsDeleteRequest {
+  id: string
+}
+
+export type ProjectsDeleteResponse = { ok: boolean }
+
+// ---------------------------------------------------------------------------
 // The preload surface, as seen by the renderer on `window.seashell`
 // ---------------------------------------------------------------------------
 
@@ -300,6 +364,11 @@ export interface SeashellApi {
   }
   metrics: {
     onTick(cb: (e: MetricsTickEvent) => void): () => void
+  }
+  projects: {
+    list(): Promise<ProjectsListResponse>
+    save(req: ProjectsSaveRequest): Promise<ProjectsSaveResponse>
+    remove(req: ProjectsDeleteRequest): Promise<ProjectsDeleteResponse>
   }
   app: {
     getPaths(): Promise<AppPaths>

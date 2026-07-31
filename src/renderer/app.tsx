@@ -3,7 +3,7 @@ import { computeLayout } from './layout/resize.js'
 import { dfsPaneOrder } from './layout/tree.js'
 import { MAX_PANES_PER_TAB, type RowNode } from './layout/types.js'
 import { applyDividerDrag, deriveDividers, type DividerSpec } from './layout/dividers.js'
-import { MAX_TAB_NAME, reducer, type AppState, type PaneCommand } from './store.js'
+import { MAX_TAB_NAME, reducer, uid, type AppState, type PaneCommand } from './store.js'
 import { PaneView, forgetSpawn, terminals } from './panes/PaneView.js'
 import { Explorer } from './explorer/Explorer.js'
 import { StatusBar } from './status/StatusBar.js'
@@ -18,6 +18,9 @@ import {
 import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
 import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
+import { ProjectsPanel } from './projects/ProjectsPanel.js'
+import { stateToTabs, tabsFromSaved } from './projects/serialize.js'
+import type { Project } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
@@ -40,6 +43,8 @@ export function App(): React.JSX.Element {
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
   const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial())
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [projectsOpen, setProjectsOpen] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([])
   const [settings, setSettings] = useState<Settings>(loadSettings)
 
   const updateSettings = useCallback((next: Settings) => {
@@ -48,6 +53,15 @@ export function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => unlockAudio(), [])
+
+  const refreshProjects = useCallback(async () => {
+    const res = await window.seashell.projects.list()
+    setProjects(res.projects)
+  }, [])
+
+  useEffect(() => {
+    if (projectsOpen) void refreshProjects()
+  }, [projectsOpen, refreshProjects])
 
   /**
    * Read through a ref so `newPane` and the menu-command handler do not have to
@@ -158,7 +172,12 @@ export function App(): React.JSX.Element {
       const paths = await window.seashell.app.getPaths()
       setHome(paths.home)
       dispatch({ type: 'explorer.setRoot', root: paths.home })
-      dispatch({ type: 'tab.new', cwd: paths.home, home: paths.home })
+      dispatch({
+        type: 'tab.new',
+        cwd: paths.home,
+        home: paths.home,
+        autoColor: autoColorRef.current,
+      })
       setReady(true)
     })()
   }, [])
@@ -238,6 +257,59 @@ export function App(): React.JSX.Element {
   )
 
   /** Closes every preview pane in the active tab, leaving the terminals alone. */
+  const saveProject = useCallback(
+    async (name: string) => {
+      const res = await window.seashell.projects.save({ name, tabs: stateToTabs(state) })
+      if (!res.ok) {
+        dispatch({ type: 'toast', message: `Could not save project (${res.code})` })
+        return
+      }
+      await refreshProjects()
+      dispatch({ type: 'toast', message: `Saved project “${res.project.name}”` })
+    },
+    [state, refreshProjects]
+  )
+
+  /**
+   * Opening a project replaces the window, so every pane currently open has to
+   * be reaped first. Skipping that would leave the shells of the tabs being
+   * replaced running with nothing on screen pointing at them — the exact
+   * orphaned-process outcome this app exists to prevent, made worse by being
+   * invisible.
+   */
+  const openProject = useCallback(
+    async (project: Project) => {
+      const restored = tabsFromSaved(project.tabs, uid)
+      if (restored.length === 0) {
+        dispatch({ type: 'toast', message: 'That project has nothing to open' })
+        return
+      }
+
+      const live = state.tabs.flatMap((t) =>
+        Object.values(t.panes).filter((p) => p.kind === 'term')
+      )
+      await Promise.all(
+        live.map(async (p) => {
+          await window.seashell.pty.kill({ paneId: p.id })
+          forgetSpawn(p.id)
+        })
+      )
+
+      dispatch({ type: 'tabs.replace', tabs: restored })
+      setProjectsOpen(false)
+      dispatch({ type: 'toast', message: `Opened “${project.name}”` })
+    },
+    [state.tabs]
+  )
+
+  const deleteProject = useCallback(
+    async (project: Project) => {
+      await window.seashell.projects.remove({ id: project.id })
+      await refreshProjects()
+    },
+    [refreshProjects]
+  )
+
   const closeAllPreviews = useCallback(() => {
     if (!activeTab) return
     const previews = Object.values(activeTab.panes).filter((p) => p.kind !== 'term')
@@ -273,7 +345,7 @@ export function App(): React.JSX.Element {
       }
       switch (command) {
         case 'tab.new':
-          dispatch({ type: 'tab.new', cwd: home, home })
+          dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current })
           break
         case 'tab.close':
           if (activeTab) void closeTab(activeTab.id)
@@ -325,6 +397,13 @@ export function App(): React.JSX.Element {
           break
         case 'help.tutorial':
           setTutorialOpen(true)
+          break
+        case 'app.projects':
+          setProjectsOpen(true)
+          break
+        case 'app.saveProject':
+          // Saving needs a name, and the panel is where names are entered.
+          setProjectsOpen(true)
           break
         case 'app.settings':
           setSettingsOpen(true)
@@ -553,7 +632,9 @@ export function App(): React.JSX.Element {
         <div
           className="tabbar__new"
           title="New tab (⌘T)"
-          onClick={() => dispatch({ type: 'tab.new', cwd: home, home })}
+          onClick={() =>
+            dispatch({ type: 'tab.new', cwd: home, home, autoColor: settings.autoColorPanes })
+          }
         >
           +
         </div>
@@ -736,7 +817,12 @@ export function App(): React.JSX.Element {
           {!activeTab && (
             <div className="empty">
               <div>No tabs open</div>
-              <button className="btn" onClick={() => dispatch({ type: 'tab.new', cwd: home, home })}>
+              <button
+                className="btn"
+                onClick={() =>
+                  dispatch({ type: 'tab.new', cwd: home, home, autoColor: settings.autoColorPanes })
+                }
+              >
                 New Tab (⌘T)
               </button>
             </div>
@@ -757,6 +843,18 @@ export function App(): React.JSX.Element {
             setTutorialOpen(true)
           }}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {projectsOpen && (
+        <ProjectsPanel
+          projects={projects}
+          tabCount={state.tabs.length}
+          paneCount={state.tabs.reduce((n, t) => n + Object.keys(t.panes).length, 0)}
+          onSave={(name) => void saveProject(name)}
+          onOpen={(p) => void openProject(p)}
+          onDelete={(p) => void deleteProject(p)}
+          onClose={() => setProjectsOpen(false)}
         />
       )}
 

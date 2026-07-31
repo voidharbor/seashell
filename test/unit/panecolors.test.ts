@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  FIRST_PANE_COLOR,
   PANE_COLORS,
   isPaneColorKey,
   nextAutoColor,
@@ -67,8 +68,10 @@ describe('isPaneColorKey', () => {
 })
 
 describe('nextAutoColor', () => {
-  it('starts at the first colour when nothing is taken', () => {
-    expect(nextAutoColor([])).toBe(PANE_COLORS[0]!.key)
+  it('gives a tab\'s first pane the fixed first-pane colour', () => {
+    // Not palette[0]: a tab should always start from the same colour, so the
+    // default pane looks like every other tab's default pane.
+    expect(nextAutoColor([])).toBe(FIRST_PANE_COLOR)
   })
 
   it('never repeats a colour already on screen', () => {
@@ -88,7 +91,8 @@ describe('nextAutoColor', () => {
   })
 
   it('ignores untagged panes and unknown keys', () => {
-    expect(nextAutoColor([undefined, 'chartreuse', undefined])).toBe(PANE_COLORS[0]!.key)
+    // Nothing valid is taken, so this is still effectively a first pane.
+    expect(nextAutoColor([undefined, 'chartreuse', undefined])).toBe(FIRST_PANE_COLOR)
   })
 
   /**

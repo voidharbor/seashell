@@ -57,6 +57,10 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
       label: 'File',
       submenu: [
         item('New Tab', 'Cmd+T', 'tab.new'),
+        { type: 'separator' },
+        item('Projects…', 'Cmd+Shift+P', 'app.projects'),
+        item('Save Project…', 'Cmd+S', 'app.saveProject'),
+        { type: 'separator' },
         item('New Pane', 'Cmd+D', 'pane.new'),
         { type: 'separator' },
         item('New File Preview…', 'Cmd+Shift+O', 'preview.file'),

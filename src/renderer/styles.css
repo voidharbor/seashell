@@ -1127,3 +1127,51 @@ body.dragging .web__view {
   color: var(--text);
   box-shadow: 0 6px 20px #0008;
 }
+
+/* -------------------------------------------------------------- projects */
+
+.proj__saverow {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--ui-scale));
+  margin-bottom: calc(8px * var(--ui-scale));
+}
+
+.proj__name {
+  flex: 1;
+  min-width: 0;
+  padding: calc(4px * var(--ui-scale)) calc(9px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-radius: 4px;
+  background: #0a0d11;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  user-select: text;
+}
+
+.proj__name:focus {
+  border-color: var(--accent);
+}
+
+.proj__row {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--ui-scale));
+  padding: calc(7px * var(--ui-scale)) 0;
+  border-top: 1px solid var(--chrome-line);
+}
+
+.proj__text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2px * var(--ui-scale));
+  flex: 1;
+  min-width: 0;
+}
+
+.proj__danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
+}
