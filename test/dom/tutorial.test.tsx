@@ -36,17 +36,27 @@ function stepText(): string {
   return screen.getByText(/^\d+ \/ \d+$/).textContent ?? ''
 }
 
+/** Derived, never hardcoded — steps get added as features land, and a test that
+ *  pins the count fails for a reason that has nothing to do with behaviour. */
+function stepIndex(): number {
+  return Number(stepText().split('/')[0]!.trim())
+}
+
+function stepCount(): number {
+  return Number(stepText().split('/')[1]!.trim())
+}
+
 describe('Tutorial', () => {
   it('opens on the first step', () => {
     render(<Tutorial onClose={() => {}} />)
-    expect(stepText()).toBe('1 / 6')
+    expect(stepIndex()).toBe(1)
   })
 
   it('does not advance when the app re-renders around it', () => {
     const { rerender } = render(<Tutorial onClose={() => {}} />)
     // Stand in for the metrics tick and every other ambient re-render.
     for (let i = 0; i < 25; i += 1) rerender(<Tutorial onClose={() => {}} />)
-    expect(stepText()).toBe('1 / 6')
+    expect(stepIndex()).toBe(1)
   })
 
   it('advances exactly one step per key press, however many renders preceded it', () => {
@@ -54,23 +64,23 @@ describe('Tutorial', () => {
     for (let i = 0; i < 10; i += 1) rerender(<Tutorial onClose={() => {}} />)
 
     fireEvent.keyDown(window, { key: 'ArrowRight' })
-    expect(stepText()).toBe('2 / 6')
+    expect(stepIndex()).toBe(2)
 
     for (let i = 0; i < 10; i += 1) rerender(<Tutorial onClose={() => {}} />)
     fireEvent.keyDown(window, { key: 'ArrowRight' })
-    expect(stepText()).toBe('3 / 6')
+    expect(stepIndex()).toBe(3)
 
     fireEvent.keyDown(window, { key: 'ArrowLeft' })
-    expect(stepText()).toBe('2 / 6')
+    expect(stepIndex()).toBe(2)
   })
 
   it('clamps at both ends rather than wrapping', () => {
     render(<Tutorial onClose={() => {}} />)
     fireEvent.keyDown(window, { key: 'ArrowLeft' })
-    expect(stepText()).toBe('1 / 6')
+    expect(stepIndex()).toBe(1)
 
     for (let i = 0; i < 20; i += 1) fireEvent.keyDown(window, { key: 'ArrowRight' })
-    expect(stepText()).toBe('6 / 6')
+    expect(stepIndex()).toBe(stepCount())
   })
 
   it('only marks itself seen once actually dismissed', () => {

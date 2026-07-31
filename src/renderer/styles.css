@@ -426,6 +426,57 @@ body.dragging .sidebar__grip {
   border: 2px solid #ffffff;
 }
 
+/* ------------------------------------------------------- attention glow */
+
+/* A pane asks for attention by breathing its border, never by flashing. This
+   sits in peripheral vision above six terminals of scrolling text, so it has to
+   be noticeable when you look for it and ignorable when you are not. The glow
+   takes the pane's tag colour when it has one, so "the blue one wants me" stays
+   true. A focused pane never glows — see attention.ts. */
+:root {
+  --attn-wait: #e5a83c;
+  --attn-done: #35d06b;
+}
+
+@keyframes paneBreatheWait {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    border-color: var(--chrome-line);
+  }
+  50% {
+    box-shadow: 0 0 14px 1px var(--attn-glow, var(--attn-wait));
+    border-color: var(--attn-glow, var(--attn-wait));
+  }
+}
+
+.pane--attn-waiting {
+  animation: paneBreatheWait 2.8s ease-in-out infinite;
+}
+
+.pane--attn-done {
+  --attn-glow: var(--attn-done);
+  /* Finite: a finished pane states it and stops. attention.ts clears the state
+     a moment after the animation ends. */
+  animation: paneBreatheWait 1.8s ease-in-out 4;
+}
+
+.pane--tagged.pane--attn-waiting,
+.pane--tagged.pane--attn-done {
+  --attn-glow: var(--pane-accent);
+}
+
+/* A pulsing border is exactly what this setting exists to suppress. Keep the
+   information, drop the motion. */
+@media (prefers-reduced-motion: reduce) {
+  .pane--attn-waiting,
+  .pane--attn-done {
+    animation: none;
+    border-color: var(--attn-glow, var(--attn-wait));
+    box-shadow: 0 0 8px 0 var(--attn-glow, var(--attn-wait));
+  }
+}
+
 /* Zoom hides panes with display:none, never visibility/opacity/transform —
    those still report as intersecting, so xterm's IntersectionObserver would
    never pause and every hidden pane would keep rendering. */
@@ -804,6 +855,95 @@ body.dragging .web__view {
 
 .findbar__btn {
   padding: calc(2px * var(--ui-scale)) calc(7px * var(--ui-scale));
+}
+
+/* -------------------------------------------------------------- settings */
+
+.sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000000bb;
+  backdrop-filter: blur(2px);
+}
+
+.sheet__card {
+  width: min(620px, 88%);
+  max-height: 82%;
+  overflow-y: auto;
+  padding: calc(20px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-radius: 10px;
+  background: #10161b;
+  box-shadow: 0 20px 60px #000c;
+}
+
+.sheet__head {
+  display: flex;
+  align-items: center;
+  margin-bottom: calc(14px * var(--ui-scale));
+}
+
+.sheet__title {
+  margin: 0;
+  font-size: calc(18px * var(--ui-scale));
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.set__group {
+  margin-bottom: calc(18px * var(--ui-scale));
+}
+
+.set__heading {
+  margin-bottom: calc(8px * var(--ui-scale));
+  padding-bottom: calc(4px * var(--ui-scale));
+  border-bottom: 1px solid var(--chrome-line);
+  color: var(--text-faint);
+  font-size: calc(11.5px * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.set__row {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(10px * var(--ui-scale));
+  padding: calc(9px * var(--ui-scale)) calc(4px * var(--ui-scale));
+}
+
+.set__row input[type='checkbox'] {
+  margin-top: calc(2px * var(--ui-scale));
+  width: calc(15px * var(--ui-scale));
+  height: calc(15px * var(--ui-scale));
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.set__row--off {
+  opacity: 0.45;
+}
+
+.set__text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(3px * var(--ui-scale));
+  flex: 1;
+}
+
+.set__name {
+  color: var(--text);
+  font-size: calc(13.5px * var(--ui-scale));
+}
+
+.set__detail {
+  color: var(--text-dim);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.45;
 }
 
 /* -------------------------------------------------------------- tutorial */

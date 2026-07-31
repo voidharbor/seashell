@@ -1,5 +1,7 @@
 import type { PaneMetrics, SystemMetrics } from '../shared/ipc.js'
 import type { PaneColorKey } from './panes/colors.js'
+import { cleanPaneTitle } from './panes/paneTitle.js'
+import { doneExpired, nextAttention, type Attention } from './panes/attention.js'
 import type { RowNode } from './layout/types.js'
 import { createInitialTree } from './layout/tree.js'
 import { insertPane, rebalance } from './layout/auto-arrange.js'
@@ -47,6 +49,10 @@ export interface PaneState {
   status: 'starting' | 'live' | 'exited'
   exit?: { code: number; signal: number | null }
   metrics?: PaneMetrics
+  /** Set when the pane wants attention: idle-waiting, or just finished. */
+  attention?: Attention
+  /** When `attention` became 'done', so the pulse can stop asking. */
+  attentionAt?: number
   /**
    * Incremented on every restart. A restarted pane deliberately keeps its id —
    * so it holds its position, label and place in the layout tree — which means
@@ -202,6 +208,7 @@ export type Action =
   | { type: 'pane.exited'; paneId: string; code: number; signal: number | null }
   | { type: 'pane.restarting'; paneId: string }
   | { type: 'pane.label'; paneId: string; label: string }
+  | { type: 'pane.autoTitle'; paneId: string; title: string }
   | { type: 'pane.cwd'; paneId: string; cwd: string; home: string }
   | { type: 'layout.setTree'; tree: RowNode; pristine?: boolean }
   | { type: 'layout.rebalance' }
@@ -400,7 +407,20 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'pane.focus': {
       const tab = activeTab(state)
       if (!tab) return state
-      return replaceTab(state, tab.id, (t) => ({ ...t, focusedPaneId: action.paneId }))
+      // Focusing a pane acknowledges whatever it was trying to tell you.
+      return replaceTab(state, tab.id, (t) => {
+        const pane = t.panes[action.paneId]
+        return {
+          ...t,
+          focusedPaneId: action.paneId,
+          panes: pane
+            ? {
+                ...t.panes,
+                [action.paneId]: { ...pane, attention: undefined, attentionAt: undefined },
+              }
+            : t.panes,
+        }
+      })
     }
 
     case 'pane.cycle': {
@@ -452,6 +472,20 @@ export function reducer(state: AppState, action: Action): AppState {
         labelIsCustom: true,
       }))
 
+    /**
+     * A title announced by the running program. Never overrides a name the user
+     * typed themselves, and a title that cleans down to nothing leaves the
+     * existing label alone rather than blanking the pane — programs routinely
+     * clear the title on exit.
+     */
+    case 'pane.autoTitle': {
+      const title = cleanPaneTitle(action.title)
+      if (title === null) return state
+      return mapPane(state, action.paneId, (p) =>
+        p.labelIsCustom ? p : { ...p, label: title }
+      )
+    }
+
     case 'pane.cwd':
       return mapPane(state, action.paneId, (p) => ({
         ...p,
@@ -486,6 +520,7 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'metrics': {
       const byId = new Map(action.panes.map((m) => [m.paneId, m]))
+      const now = Date.now()
       return {
         ...state,
         system: action.system,
@@ -494,7 +529,35 @@ export function reducer(state: AppState, action: Action): AppState {
           panes: Object.fromEntries(
             Object.entries(t.panes).map(([id, p]) => {
               const m = byId.get(id)
-              return [id, m ? { ...p, metrics: m } : p]
+              if (!m) return [id, p]
+
+              const focused = t.id === state.activeTabId && t.focusedPaneId === id
+              let attention = nextAttention({
+                previous: p.metrics?.state,
+                next: m.state,
+                current: p.attention ?? null,
+                focused,
+              })
+
+              // A finished pulse stops asking after a while; a waiting one does
+              // not, because the pane is still waiting.
+              if (attention === 'done' && p.attention === 'done' && doneExpired(p.attentionAt, now)) {
+                attention = null
+              }
+
+              const changed = attention !== (p.attention ?? null)
+              const attentionAt =
+                attention === 'done' && changed ? now : attention === null ? undefined : p.attentionAt
+
+              return [
+                id,
+                {
+                  ...p,
+                  metrics: m,
+                  ...(attention === null ? { attention: undefined } : { attention }),
+                  attentionAt,
+                },
+              ]
             })
           ),
         })),

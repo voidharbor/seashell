@@ -16,6 +16,8 @@ import {
   widthFromDrag,
 } from './layout/sidebar.js'
 import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
+import { SettingsPanel } from './settings/SettingsPanel.js'
+import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
 
@@ -36,6 +38,13 @@ export function App(): React.JSX.Element {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
   const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial())
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settings, setSettings] = useState<Settings>(loadSettings)
+
+  const updateSettings = useCallback((next: Settings) => {
+    setSettings(next)
+    saveSettings(next)
+  }, [])
   const [findOpen, setFindOpen] = useState(false)
   const [find, setFind] = useState<{ nonce: number; direction: 'next' | 'prev' }>({
     nonce: 0,
@@ -268,6 +277,9 @@ export function App(): React.JSX.Element {
         case 'help.tutorial':
           setTutorialOpen(true)
           break
+        case 'app.settings':
+          setSettingsOpen(true)
+          break
         case 'ui.zoomIn':
           setZoomIndex((i) => clampIndex(i + 1))
           break
@@ -304,8 +316,11 @@ export function App(): React.JSX.Element {
           break
         }
         case 'edit.selectAll': {
+          // Scoped to the line being typed, not the whole scrollback — see
+          // inputline.ts. Selecting thousands of transcript lines is not what
+          // anyone means by select-all in a pane running an agent.
           const id = activeTab?.focusedPaneId
-          if (id) terminals.get(id)?.term.selectAll()
+          if (id) terminals.get(id)?.selectInputLine()
           break
         }
         default:
@@ -580,6 +595,11 @@ export function App(): React.JSX.Element {
                   onSetColor={(color) =>
                     dispatch({ type: 'pane.setColor', paneId: r.paneId, color })
                   }
+                  onTitle={(title) => {
+                    if (!settings.autoTitlePanes) return
+                    dispatch({ type: 'pane.autoTitle', paneId: r.paneId, title })
+                  }}
+                  glow={settings.attentionGlow}
                   onToast={(m) => dispatch({ type: 'toast', message: m })}
                 />
               )
@@ -617,6 +637,18 @@ export function App(): React.JSX.Element {
       </div>
 
       <StatusBar tab={activeTab} system={state.system} />
+
+      {settingsOpen && (
+        <SettingsPanel
+          settings={settings}
+          onChange={updateSettings}
+          onShowTutorial={() => {
+            setSettingsOpen(false)
+            setTutorialOpen(true)
+          }}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
 
       {tutorialOpen && <Tutorial onClose={() => setTutorialOpen(false)} />}
     </div>

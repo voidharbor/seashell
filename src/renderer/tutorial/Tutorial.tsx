@@ -76,9 +76,28 @@ const STEPS: Step[] = [
     title: 'Double-click a path to find it',
     body:
       'Double-click any file path in terminal output and the explorer expands to ' +
-      'it and highlights it. It reveals — it does not open. A stray double-click ' +
-      'can never launch an application. Double-click the file in the explorer when ' +
-      'you actually want to open it.',
+      'it and highlights it. It reveals — it does not open. Inside a pane running ' +
+      'an agent or any full-screen program, hold Option: those programs claim the ' +
+      'mouse for themselves, and Option is how you tell SeaShell the click was ' +
+      'meant for it. Bare URLs are clickable anywhere.',
+    keys: [
+      ['double-click', 'Reveal a path in the explorer'],
+      ['⌥ double-click', 'Same, inside an agent or TUI pane'],
+    ],
+  },
+  {
+    title: 'Panes tell you when they want you',
+    body:
+      'A pane breathes its border while its program sits waiting for input, and ' +
+      'pulses when a job finishes — never the pane you are already looking at. ' +
+      'Panes also name themselves from whatever the running program is doing, so ' +
+      'six agents read as six pieces of work rather than six panes called claude. ' +
+      'Click the dot in a title bar to colour a pane, or double-click a tab to ' +
+      'rename it. All of it is switchable in Settings.',
+    keys: [
+      ['⌘,', 'Settings'],
+      ['⌘/', 'Show this tutorial again'],
+    ],
   },
   {
     title: 'Previews are panes, not windows',

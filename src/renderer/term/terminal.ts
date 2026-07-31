@@ -5,6 +5,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { FALLBACK_FONT_SIZE, FONT_FAMILY, FONT_SIZE, TERMINAL_APP_PALETTE } from './palette.js'
+import { inputLineSelection } from './inputline.js'
 
 /**
  * One xterm.js terminal bound to one PTY.
@@ -29,6 +30,8 @@ export interface PaneTerminalOptions {
   onHttpLink: (url: string) => void
   /** Terminal font size in px, from the current zoom level. */
   fontSize?: number
+  /** OSC 0/2 title, as set by the running program. */
+  onTitle?: (title: string) => void
 }
 
 const RESIZE_DEBOUNCE_MS = 80
@@ -123,9 +126,13 @@ export class PaneTerminal {
     this.attachKeyHandler()
 
     this.term.onData((d) => this.opts.onInput(d))
+    this.term.onTitleChange((t) => this.opts.onTitle?.(t))
     this.term.onResize(({ cols, rows }) => this.scheduleResize(cols, rows))
 
-    this.term.element?.addEventListener('dblclick', this.handleDoubleClick)
+    // Both on the host in capture phase: the host is a strict ancestor of
+    // term.element, so these are guaranteed to run before xterm's own handlers.
+    this.opts.container.addEventListener('mousedown', this.handleOptionMouseDown, true)
+    this.opts.container.addEventListener('dblclick', this.handleDoubleClick, true)
 
     this.warnOnBadFontResidual()
   }
@@ -137,7 +144,10 @@ export class PaneTerminal {
    * user's real Terminal.app preferences.
    *
    * Cmd chords are swallowed so they reach the application menu instead of the
-   * PTY. Cmd+A is the exception xterm handles natively (select all).
+   * PTY — including Cmd+A. xterm handles Cmd+A natively as "select the entire
+   * buffer", and letting it through as well as the menu means both run: the
+   * input line gets selected, then the whole scrollback is selected over the top
+   * of it. The menu owns select-all, and it scopes to the line being typed.
    */
   private attachKeyHandler(): void {
     this.term.attachCustomKeyEventHandler((ev) => {
@@ -145,7 +155,7 @@ export class PaneTerminal {
         this.opts.onInput('\x1b\r')
         return false
       }
-      if (ev.metaKey && ev.key !== 'a') return false
+      if (ev.metaKey) return false
       return true
     })
   }
@@ -162,8 +172,27 @@ export class PaneTerminal {
    * never launch an application.
    */
   private handleDoubleClick = (ev: MouseEvent): void => {
-    if (this.mouseReportingActive()) return
+    // With mouse tracking on, a plain double-click belongs to the program —
+    // stealing it would break a TUI's own click handling. Option is the
+    // documented escape hatch (§8.4), and it is the only way this feature works
+    // at all inside an agent pane, which is precisely where paths get printed.
+    if (this.mouseReportingActive() && !ev.altKey) return
     this.opts.onDoubleClick(ev.clientX, ev.clientY)
+  }
+
+  /**
+   * Swallows the second press of an Option double-click before xterm forwards
+   * it to the PTY. Without this the program still receives a click at that
+   * position — so an agent would act on a click the user meant for SeaShell.
+   *
+   * Capture phase on the host, which is a strict ancestor of `term.element`, so
+   * this runs before xterm's own bubble-phase mousedown handler.
+   */
+  private handleOptionMouseDown = (ev: MouseEvent): void => {
+    if (ev.button !== 0 || !ev.altKey || ev.detail !== 2) return
+    if (!this.mouseReportingActive()) return
+    ev.preventDefault()
+    ev.stopPropagation()
   }
 
   /**
@@ -172,6 +201,13 @@ export class PaneTerminal {
    * alternative of unconditionally stealing double-clicks from every TUI.
    */
   private mouseReportingActive(): boolean {
+    // `term.modes.mouseTrackingMode` is public API and the right source. The
+    // private core is kept only as a fallback, since reading it defensively is
+    // still far better than the alternative of unconditionally stealing
+    // double-clicks from every TUI.
+    const mode = this.term.modes?.mouseTrackingMode
+    if (typeof mode === 'string') return mode !== 'none'
+
     const core = (this.term as unknown as { _core?: { coreMouseService?: { activeProtocol?: string } } })
       ._core
     const proto = core?.coreMouseService?.activeProtocol
@@ -277,6 +313,29 @@ export class PaneTerminal {
     })
   }
 
+  /**
+   * ⌘A. Selects the line being typed rather than the whole scrollback.
+   *
+   * Falls back to selecting everything when there is no input to speak of, so
+   * the shortcut always does something recognisable.
+   */
+  selectInputLine(): void {
+    if (this.disposed) return
+    const buf = this.term.buffer.active
+    const sel = inputLineSelection({
+      cursorRow: buf.baseY + buf.cursorY,
+      cursorCol: buf.cursorX,
+      cols: this.term.cols,
+      isWrapped: (row) => buf.getLine(row)?.isWrapped ?? false,
+    })
+
+    if (!sel) {
+      this.term.selectAll()
+      return
+    }
+    this.term.select(sel.col, sel.row, sel.length)
+  }
+
   clearSearch(): void {
     if (this.disposed) return
     this.search.clearDecorations()
@@ -319,7 +378,8 @@ export class PaneTerminal {
     this.disposed = true
     this.search.dispose()
     if (this.resizeTimer) clearTimeout(this.resizeTimer)
-    this.term.element?.removeEventListener('dblclick', this.handleDoubleClick)
+    this.opts.container.removeEventListener('mousedown', this.handleOptionMouseDown, true)
+    this.opts.container.removeEventListener('dblclick', this.handleDoubleClick, true)
     this.disableWebgl()
     this.term.dispose()
   }

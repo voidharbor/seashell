@@ -44,6 +44,8 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
       submenu: [
         { role: 'about' },
         { type: 'separator' },
+        item('Settings…', 'Cmd+,', 'app.settings'),
+        { type: 'separator' },
         { role: 'hide' },
         { role: 'hideOthers' },
         { role: 'unhide' },

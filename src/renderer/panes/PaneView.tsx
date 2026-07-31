@@ -59,6 +59,9 @@ export interface PaneViewProps {
   onUrlChange: (url: string) => void
   onToggleRaw: (raw: boolean) => void
   onSetColor: (color: PaneColorKey | null) => void
+  onTitle: (title: string) => void
+  /** Whether the attention pulse is enabled in settings. */
+  glow: boolean
   onToast: (message: string) => void
 }
 
@@ -96,7 +99,8 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
         (focused ? ' pane--focused' : '') +
         (hidden ? ' pane--hidden' : '') +
         (pane.kind !== 'term' ? ' pane--preview' : '') +
-        (accent ? ' pane--tagged' : '')
+        (accent ? ' pane--tagged' : '') +
+        (props.glow && !focused && pane.attention ? ` pane--attn-${pane.attention}` : '')
       }
       style={paneStyle}
       onMouseDown={props.onFocus}
@@ -177,6 +181,8 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
   revealRef.current = props.onReveal
   const spawnedRef = useRef(props.onSpawned)
   spawnedRef.current = props.onSpawned
+  const titleRef = useRef(props.onTitle)
+  titleRef.current = props.onTitle
 
   const generation = pane.generation ?? 0
 
@@ -191,6 +197,7 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
       onInput: (data) => window.seashell.pty.write({ paneId: pane.id, data }),
       onResize: (cols, rows) => window.seashell.pty.resize({ paneId: pane.id, cols, rows }),
       onHttpLink: (url) => void window.seashell.open.externalHttp({ url }),
+      onTitle: (title) => titleRef.current(title),
       onDoubleClick: (x, y) => {
         const candidate = pathAtPoint(t.term, x, y)
         if (candidate) revealRef.current(candidate)
