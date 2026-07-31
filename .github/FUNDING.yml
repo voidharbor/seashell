@@ -1,10 +1,6 @@
-# SeaShell funding configuration.
+# Renders the "Sponsor" button on the repo.
 #
-# Uncomment once the accounts exist. GitHub renders a "Sponsor" button on the
-# repo for every entry below.
-#
-# Ko-fi: live immediately after signup, 0% platform fee on one-off tips.
-# ko_fi: voidharbor
-#
-# GitHub Sponsors: requires Stripe Connect + tax info + GitHub review.
+# Ko-fi takes 0% on one-off tips; you still pay the payment processor (~2.9% + $0.30).
+ko_fi: voidharbor
+# GitHub Sponsors needs Stripe Connect + tax info + GitHub review. Add once approved.
 # github: [voidharbor]
