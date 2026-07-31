@@ -87,13 +87,26 @@ export function buildEnv(options: BuildEnvOptions): NodeJS.ProcessEnv {
   const { baseEnv, paneId, appVersion, zdotdirShimPath, truecolorOptOut = false } = options
   const env: NodeJS.ProcessEnv = { ...baseEnv }
 
-  // Strip anything that would leak Electron's or npm's own process identity
-  // into a shell whose whole point is to look like a normal login shell.
+  // Strip anything that would leak the identity of whatever process happened to
+  // start SeaShell into a shell whose whole point is to look like a normal
+  // login shell: Electron's and npm's own variables, and — when SeaShell was
+  // opened from inside a Claude Code session — that session's CLAUDE_* set.
+  // The last one is not cosmetic. SeaShell reparents to launchd and keeps the
+  // inherited environment for its whole run, so every pane would otherwise see
+  // CLAUDE_CODE_CHILD_SESSION=1 and `claude` would take itself for a nested
+  // child session and save no transcript, while CLAUDE_CODE_SESSION_ID named a
+  // session that had long since ended.
+  //
+  // Safe to strip because the pane's root is a login shell: whatever the user
+  // exports from their own dotfiles is set again moments later. Only the
+  // inherited identity, which no dotfile restores, is dropped.
   delete env.COLORTERM
   delete env.ELECTRON_RUN_AS_NODE
   delete env.NODE_OPTIONS
+  delete env.CLAUDECODE
+  delete env.AI_AGENT
   for (const key of Object.keys(env)) {
-    if (key.startsWith('ELECTRON_') || key.startsWith('npm_')) {
+    if (key.startsWith('ELECTRON_') || key.startsWith('npm_') || key.startsWith('CLAUDE_')) {
       delete env[key]
     }
   }
