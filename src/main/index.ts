@@ -112,6 +112,27 @@ function createWindow(): void {
   })
 }
 
+/**
+ * One instance only.
+ *
+ * Two copies of SeaShell share a single `userData` directory, and both rewrite
+ * the ZDOTDIR shim at startup — while the other's panes may be sourcing those
+ * exact files. The instances also cannot see each other's PTYs, so the kill
+ * ladder and the pane cap are both computed against half the truth.
+ *
+ * A second launch focuses the window that already exists instead, which is what
+ * double-clicking the app in the Dock should do anyway.
+ */
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  })
+}
+
 app.whenReady().then(() => {
   protocol.handle('app', async (req) => {
     const file = resolveRendererFile(req.url)
