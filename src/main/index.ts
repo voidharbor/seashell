@@ -122,6 +122,16 @@ function createWindow(): void {
  *
  * A second launch focuses the window that already exists instead, which is what
  * double-clicking the app in the Dock should do anyway.
+ *
+ * Known failure mode, and the reason this comment is here: the lock lives in
+ * `Singleton{Lock,Socket,Cookie}` under userData. Chromium normally reclaims it
+ * when the recorded pid is gone, but after an abnormal termination that leaves
+ * orphaned `SeaShell Helper` processes behind, it can stay held — and the
+ * symptom is that the app exits instantly with no window and nothing printed,
+ * which looks like a crash rather than a lock. If SeaShell ever refuses to
+ * start after a force-quit: kill any stray `SeaShell Helper` processes and
+ * delete the three `Singleton*` entries in
+ * ~/Library/Application Support/seashell/.
  */
 if (!app.requestSingleInstanceLock()) {
   app.quit()
