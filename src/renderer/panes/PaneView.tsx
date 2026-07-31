@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PaneTerminal } from '../term/terminal.js'
 import { pathAtPoint } from './pathclick.js'
 import { WebPreview } from './WebPreview.js'
+import { ColorDot, ColorPicker } from './ColorPicker.js'
+import { paneColorHex, type PaneColorKey } from './colors.js'
 import { FilePreview } from '../viewer/FilePreview.js'
 import { FindBar } from '../find/FindBar.js'
 import type { PaneState } from '../store.js'
@@ -56,14 +58,36 @@ export interface PaneViewProps {
   onRestart: () => void
   onUrlChange: (url: string) => void
   onToggleRaw: (raw: boolean) => void
+  onSetColor: (color: PaneColorKey | null) => void
   onToast: (message: string) => void
 }
 
 export function PaneView(props: PaneViewProps): React.JSX.Element {
   const { pane, index, rect, focused, hidden } = props
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   const mem = pane.metrics?.footprintBytes ?? 0
   const showMem = pane.kind === 'term' && mem >= 200 * 1024 * 1024
+
+  /**
+   * A tagged pane keeps its colour on the border at all times, but only at full
+   * strength when focused. Six panes all outlined in full-strength colour at
+   * once would drown out the focus ring, which is the one border that has to
+   * stay readable at a glance.
+   */
+  const accent = paneColorHex(pane.color)
+  const paneStyle: React.CSSProperties = {
+    left: rect.x,
+    top: rect.y,
+    width: rect.width,
+    height: rect.height,
+  }
+  if (accent) {
+    paneStyle.borderColor = accent
+    paneStyle.opacity = undefined
+    // Consumed by the title bar's accent stripe in CSS.
+    ;(paneStyle as Record<string, string>)['--pane-accent'] = accent
+  }
 
   return (
     <div
@@ -71,19 +95,21 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
         'pane' +
         (focused ? ' pane--focused' : '') +
         (hidden ? ' pane--hidden' : '') +
-        (pane.kind !== 'term' ? ' pane--preview' : '')
+        (pane.kind !== 'term' ? ' pane--preview' : '') +
+        (accent ? ' pane--tagged' : '')
       }
-      style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
+      style={paneStyle}
       onMouseDown={props.onFocus}
     >
       <div
         className="pane__title"
         onDoubleClick={(e) => {
-          if ((e.target as HTMLElement).closest('.pane__close')) return
+          if ((e.target as HTMLElement).closest('.pane__close, .pane__dot')) return
           props.onZoom()
         }}
       >
         <span className="pane__index">{index}</span>
+        <ColorDot color={pane.color} onClick={() => setPickerOpen((o) => !o)} />
         <span className="pane__label" title={pane.filePath ?? pane.url ?? pane.cwd}>
           {pane.label}
         </span>
@@ -98,6 +124,14 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
           ×
         </span>
       </div>
+
+      {pickerOpen && (
+        <ColorPicker
+          current={pane.color}
+          onPick={props.onSetColor}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
 
       {pane.kind === 'term' && <TerminalBody {...props} />}
 

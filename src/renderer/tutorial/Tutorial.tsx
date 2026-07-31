@@ -113,14 +113,25 @@ export interface TutorialProps {
 
 export function Tutorial(props: TutorialProps): React.JSX.Element {
   const [step, setStep] = useState(0)
+  /**
+   * Defaults to checked, which keeps the behaviour a first-run tutorial should
+   * have — you see it once. The checkbox exists so that is a visible, reversible
+   * choice rather than something that silently happens to you: untick it and the
+   * tutorial is waiting again next launch.
+   */
+  const [dontShowAgain, setDontShowAgain] = useState(true)
   const current = STEPS[step]!
   const last = step === STEPS.length - 1
 
   const closeRef = useRef(props.onClose)
   closeRef.current = props.onClose
+  // Read by the key handler, which is bound once and would otherwise capture
+  // the checkbox value as it was at mount.
+  const dontShowRef = useRef(dontShowAgain)
+  dontShowRef.current = dontShowAgain
 
   const close = (): void => {
-    markTutorialSeen()
+    if (dontShowAgain) markTutorialSeen()
     props.onClose()
   }
 
@@ -139,7 +150,7 @@ export function Tutorial(props: TutorialProps): React.JSX.Element {
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        markTutorialSeen()
+        if (dontShowRef.current) markTutorialSeen()
         closeRef.current()
       } else if (e.key === 'ArrowRight') {
         e.preventDefault()
@@ -192,6 +203,15 @@ export function Tutorial(props: TutorialProps): React.JSX.Element {
         </div>
 
         <div className="tut__foot">
+          <label className="tut__again" title="Reopen any time with Help ▸ Show Tutorial (⌘/)">
+            <input
+              type="checkbox"
+              checked={dontShowAgain}
+              onChange={(e) => setDontShowAgain(e.target.checked)}
+            />
+            <span>Don&rsquo;t show this again</span>
+          </label>
+          <span className="pane__spacer" />
           <button
             className="btn"
             disabled={step === 0}

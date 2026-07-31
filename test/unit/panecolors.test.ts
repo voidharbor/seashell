@@ -1,0 +1,62 @@
+import { describe, expect, it } from 'vitest'
+import { PANE_COLORS, isPaneColorKey, paneColorHex } from '../../src/renderer/panes/colors.js'
+
+describe('pane colour palette', () => {
+  it('has unique keys and unique hexes', () => {
+    expect(new Set(PANE_COLORS.map((c) => c.key)).size).toBe(PANE_COLORS.length)
+    expect(new Set(PANE_COLORS.map((c) => c.hex)).size).toBe(PANE_COLORS.length)
+  })
+
+  it('uses well-formed 6-digit hex', () => {
+    for (const c of PANE_COLORS) {
+      expect(c.hex, c.key).toMatch(/^#[0-9A-F]{6}$/)
+    }
+  })
+
+  /**
+   * A tag colour has to be visible against the chrome it sits on (#0a0f0a) or
+   * the feature does nothing. This is the same class of mistake as the close
+   * buttons, which shipped in a colour that was technically present and
+   * practically invisible.
+   */
+  it('is bright enough to read against the pane chrome', () => {
+    const luminance = (hex: string): number => {
+      const v = (i: number): number => {
+        const c = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+      }
+      return 0.2126 * v(0) + 0.7152 * v(1) + 0.0722 * v(2)
+    }
+    // Contrast against the chrome background, which is very near black.
+    const bg = luminance('#0A0F0A')
+    for (const c of PANE_COLORS) {
+      const ratio = (luminance(c.hex) + 0.05) / (bg + 0.05)
+      expect(ratio, `${c.key} contrast ${ratio.toFixed(2)}`).toBeGreaterThan(3)
+    }
+  })
+
+  it('does not reuse the terminal foreground green, which would read as text recolouring', () => {
+    expect(PANE_COLORS.map((c) => c.hex.toUpperCase())).not.toContain('#28FE14')
+  })
+})
+
+describe('paneColorHex', () => {
+  it('resolves a known key', () => {
+    expect(paneColorHex('blue')).toBe('#5A8DEE')
+  })
+
+  it('treats untagged and unknown alike, so a stale key degrades to no tag', () => {
+    expect(paneColorHex(undefined)).toBeNull()
+    expect(paneColorHex('')).toBeNull()
+    expect(paneColorHex('chartreuse')).toBeNull()
+  })
+})
+
+describe('isPaneColorKey', () => {
+  it('accepts only palette keys', () => {
+    expect(isPaneColorKey('red')).toBe(true)
+    expect(isPaneColorKey('mauve')).toBe(false)
+    expect(isPaneColorKey(null)).toBe(false)
+    expect(isPaneColorKey(7)).toBe(false)
+  })
+})

@@ -87,6 +87,30 @@ describe('Tutorial', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps showing next launch when "don\'t show again" is unticked', () => {
+    const onClose = vi.fn()
+    render(<Tutorial onClose={onClose} />)
+
+    // Ticked by default — a first-run tutorial should be a first-run tutorial.
+    const box = screen.getByRole('checkbox') as HTMLInputElement
+    expect(box.checked).toBe(true)
+
+    fireEvent.click(box)
+    expect(box.checked).toBe(false)
+
+    fireEvent.click(screen.getByText('Skip'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    // The whole point: dismissed, but not suppressed.
+    expect(window.localStorage.getItem('seashell.tutorialSeen')).toBeNull()
+  })
+
+  it('honours the unticked box when dismissed with Escape too', () => {
+    render(<Tutorial onClose={() => {}} />)
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(window.localStorage.getItem('seashell.tutorialSeen')).toBeNull()
+  })
+
   it('stops listening once unmounted', () => {
     const onClose = vi.fn()
     const { unmount } = render(<Tutorial onClose={onClose} />)

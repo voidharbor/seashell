@@ -3,12 +3,18 @@ import { computeLayout } from './layout/resize.js'
 import { dfsPaneOrder } from './layout/tree.js'
 import { MAX_PANES_PER_TAB, type RowNode } from './layout/types.js'
 import { applyDividerDrag, deriveDividers, type DividerSpec } from './layout/dividers.js'
-import { reducer, type AppState, type PaneCommand } from './store.js'
+import { MAX_TAB_NAME, reducer, type AppState, type PaneCommand } from './store.js'
 import { PaneView, forgetSpawn, terminals } from './panes/PaneView.js'
 import { Explorer } from './explorer/Explorer.js'
 import { StatusBar } from './status/StatusBar.js'
 import { loadTerminalFont } from './term/terminal.js'
 import { applyUiScale, clampIndex, levelAt, loadZoomIndex, saveZoomIndex } from './term/zoom.js'
+import {
+  SIDEBAR_DEFAULT,
+  loadSidebarWidth,
+  saveSidebarWidth,
+  widthFromDrag,
+} from './layout/sidebar.js'
 import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
@@ -27,6 +33,8 @@ export function App(): React.JSX.Element {
   }))
 
   const [zoomIndex, setZoomIndex] = useState(loadZoomIndex)
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
   const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial())
   const [findOpen, setFindOpen] = useState(false)
   const [find, setFind] = useState<{ nonce: number; direction: 'next' | 'prev' }>({
@@ -43,6 +51,46 @@ export function App(): React.JSX.Element {
     applyUiScale(zoomIndex)
     saveZoomIndex(zoomIndex)
   }, [zoomIndex])
+
+  // Same reasoning as the zoom scale: the sidebar width is a CSS variable, so
+  // it has to be published before paint or the first frame is the wrong width.
+  useLayoutEffect(() => {
+    document.documentElement.style.setProperty('--sidebar-base', String(sidebarWidth))
+  }, [sidebarWidth])
+
+  /**
+   * Sidebar resize drag.
+   *
+   * The pointer's x position is the rendered width directly, since the sidebar
+   * is pinned to the window's left edge. It is divided back out by the current
+   * zoom scale before storing, so width and zoom stay independent settings.
+   */
+  const startSidebarDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const scale = levelAt(zoomIndex).ui
+      let latest = sidebarWidth
+
+      const move = (ev: MouseEvent): void => {
+        latest = widthFromDrag(ev.clientX, scale)
+        setSidebarWidth(latest)
+      }
+      const up = (): void => {
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+        document.body.style.cursor = ''
+        document.body.classList.remove('dragging')
+        // Persist once on release rather than on every mousemove — a drag emits
+        // dozens of events and localStorage writes are synchronous.
+        saveSidebarWidth(latest)
+      }
+      document.body.style.cursor = 'col-resize'
+      document.body.classList.add('dragging')
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    },
+    [sidebarWidth, zoomIndex]
+  )
 
   // Boot: font first, then the initial tab. The font has to be registered
   // before any terminal is opened or the first pane measures the wrong cell.
@@ -406,8 +454,25 @@ export function App(): React.JSX.Element {
               key={t.id}
               className={'tab' + (t.id === state.activeTabId ? ' tab--active' : '')}
               onMouseDown={() => dispatch({ type: 'tab.select', tabId: t.id })}
+              onDoubleClick={(e) => {
+                if ((e.target as HTMLElement).closest('.tab__close')) return
+                setRenamingTabId(t.id)
+              }}
             >
-              <span className="tab__name">{t.name}</span>
+              {renamingTabId === t.id ? (
+                <TabNameInput
+                  initial={t.name}
+                  onCommit={(name) => {
+                    dispatch({ type: 'tab.rename', tabId: t.id, name, home })
+                    setRenamingTabId(null)
+                  }}
+                  onCancel={() => setRenamingTabId(null)}
+                />
+              ) : (
+                <span className="tab__name" title="Double-click to rename">
+                  {t.name}
+                </span>
+              )}
               <span
                 className="tab__close"
                 title="Close tab (⌘⇧W)"
@@ -456,15 +521,26 @@ export function App(): React.JSX.Element {
 
       <div className="body">
         {state.sidebarVisible && state.explorerRoot && (
-          <Explorer
-            root={state.explorerRoot}
-            home={home}
-            revealPath={state.revealPath}
-            refreshNonce={explorerNonce}
-            onRevealHandled={() => dispatch({ type: 'explorer.reveal', path: null })}
-            onOpenInViewer={(p) => dispatch({ type: 'pane.newFile', path: p })}
-            onToast={(m) => dispatch({ type: 'toast', message: m })}
-          />
+          <>
+            <Explorer
+              root={state.explorerRoot}
+              home={home}
+              revealPath={state.revealPath}
+              refreshNonce={explorerNonce}
+              onRevealHandled={() => dispatch({ type: 'explorer.reveal', path: null })}
+              onOpenInViewer={(p) => dispatch({ type: 'pane.newFile', path: p })}
+              onToast={(m) => dispatch({ type: 'toast', message: m })}
+            />
+            <div
+              className="sidebar__grip"
+              title="Drag to resize · double-click to reset"
+              onMouseDown={startSidebarDrag}
+              onDoubleClick={() => {
+                setSidebarWidth(SIDEBAR_DEFAULT)
+                saveSidebarWidth(SIDEBAR_DEFAULT)
+              }}
+            />
+          </>
         )}
 
         <div className="grid" ref={gridRef}>
@@ -500,6 +576,9 @@ export function App(): React.JSX.Element {
                   onUrlChange={(url) => dispatch({ type: 'pane.setUrl', paneId: r.paneId, url })}
                   onToggleRaw={(raw) =>
                     dispatch({ type: 'pane.setRawSource', paneId: r.paneId, raw })
+                  }
+                  onSetColor={(color) =>
+                    dispatch({ type: 'pane.setColor', paneId: r.paneId, color })
                   }
                   onToast={(m) => dispatch({ type: 'toast', message: m })}
                 />
@@ -541,5 +620,58 @@ export function App(): React.JSX.Element {
 
       {tutorialOpen && <Tutorial onClose={() => setTutorialOpen(false)} />}
     </div>
+  )
+}
+
+/**
+ * Inline tab rename field.
+ *
+ * Its own component so the input is genuinely uncontrolled while editing. Held
+ * in App state instead, every keystroke would re-render the whole window —
+ * including every terminal pane — to type one character into the tab bar.
+ *
+ * Blur commits rather than cancels: clicking away from a rename you have
+ * finished typing should keep it. Escape is the explicit discard.
+ */
+function TabNameInput(props: {
+  initial: string
+  onCommit: (name: string) => void
+  onCancel: () => void
+}): React.JSX.Element {
+  const ref = useRef<HTMLInputElement | null>(null)
+  const cancelled = useRef(false)
+
+  useEffect(() => {
+    ref.current?.focus()
+    ref.current?.select()
+  }, [])
+
+  return (
+    <input
+      ref={ref}
+      className="tab__rename"
+      defaultValue={props.initial}
+      maxLength={MAX_TAB_NAME}
+      spellCheck={false}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onBlur={(e) => {
+        if (cancelled.current) return
+        props.onCommit(e.target.value)
+      }}
+      onKeyDown={(e) => {
+        // Every key here is for the field. Without this, a rename containing
+        // "d" or "w" would also reach the app's command handling.
+        e.stopPropagation()
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          props.onCommit(e.currentTarget.value)
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          cancelled.current = true
+          props.onCancel()
+        }
+      }}
+    />
   )
 }

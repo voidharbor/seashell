@@ -1,4 +1,5 @@
 import type { PaneMetrics, SystemMetrics } from '../shared/ipc.js'
+import type { PaneColorKey } from './panes/colors.js'
 import type { RowNode } from './layout/types.js'
 import { createInitialTree } from './layout/tree.js'
 import { insertPane, rebalance } from './layout/auto-arrange.js'
@@ -40,6 +41,8 @@ export interface PaneState {
   rawSource?: boolean
   /** kind 'web' — the URL currently loaded. Empty until the user enters one. */
   url?: string
+  /** Colour tag key from the pane palette. Undefined means untagged. */
+  color?: PaneColorKey
   pid: number | null
   status: 'starting' | 'live' | 'exited'
   exit?: { code: number; signal: number | null }
@@ -61,6 +64,9 @@ export function isTerm(p: PaneState): boolean {
 export interface TabState {
   id: string
   name: string
+  /** Set once the user renames the tab by hand. Guards the name against being
+   *  overwritten by anything that derives a label from the tab's cwd. */
+  nameIsCustom?: boolean
   cwd: string
   tree: RowNode
   /** False once the user drags a divider; stops auto-arrange from stomping it. */
@@ -80,6 +86,10 @@ export interface AppState {
   system: SystemMetrics | null
   toast: string | null
 }
+
+/** Long enough for a real name, short enough that one tab cannot push every
+ *  other tab off the bar. */
+export const MAX_TAB_NAME = 40
 
 let counter = 0
 export function uid(prefix: string): string {
@@ -177,11 +187,13 @@ export type Action =
   | { type: 'tab.select'; tabId: string }
   | { type: 'tab.selectIndex'; index: number }
   | { type: 'tab.cycle'; delta: number }
+  | { type: 'tab.rename'; tabId: string; name: string; home: string }
   | { type: 'pane.new'; home: string; command: PaneCommand; commandText?: string }
   | { type: 'pane.newFile'; path: string }
   | { type: 'pane.newWeb'; url: string }
   | { type: 'pane.setUrl'; paneId: string; url: string }
   | { type: 'pane.setRawSource'; paneId: string; raw: boolean }
+  | { type: 'pane.setColor'; paneId: string; color: PaneColorKey | null }
   | { type: 'pane.close'; paneId: string }
   | { type: 'pane.focus'; paneId: string }
   | { type: 'pane.cycle'; delta: number }
@@ -239,6 +251,20 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'tab.select':
       return { ...state, activeTabId: action.tabId }
+
+    /**
+     * Renaming to blank reverts to the derived name rather than leaving a
+     * nameless tab. An empty tab is unclickable in any practical sense — there
+     * is nothing to aim at but the close button.
+     */
+    case 'tab.rename': {
+      const name = action.name.trim().slice(0, MAX_TAB_NAME)
+      return replaceTab(state, action.tabId, (t) =>
+        name === ''
+          ? { ...t, name: baseLabel(t.cwd, action.home), nameIsCustom: false }
+          : { ...t, name, nameIsCustom: true }
+      )
+    }
 
     case 'tab.selectIndex': {
       const t = state.tabs[action.index]
@@ -334,6 +360,17 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'pane.setRawSource':
       return mapPane(state, action.paneId, (p) => ({ ...p, rawSource: action.raw }))
+
+    case 'pane.setColor':
+      return mapPane(state, action.paneId, (p) => {
+        // Clearing removes the key entirely rather than storing a sentinel, so
+        // "untagged" has exactly one representation.
+        if (action.color === null) {
+          const { color: _cleared, ...rest } = p
+          return rest
+        }
+        return { ...p, color: action.color }
+      })
 
     case 'pane.close': {
       const tab = activeTab(state)
