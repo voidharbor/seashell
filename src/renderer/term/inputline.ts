@@ -61,3 +61,46 @@ export function inputLineSelection(input: InputLineInput): InputLineSelection | 
 
   return { row: start, col: 0, length }
 }
+
+/**
+ * Bytes that clear the line a shell is editing.
+ *
+ * `\x05` is Ctrl+E (move to end of line), `\x15` is Ctrl+U (kill backwards to
+ * the start). Ctrl+U alone only kills back from wherever the cursor happens to
+ * be, so going to the end first is what makes this delete the whole line rather
+ * than the half behind the cursor.
+ */
+export const KILL_LINE = '\x05\x15'
+
+export interface KillLineInput {
+  key: string
+  /** True only while the selection came from ⌘A's input-line select. */
+  inputLineSelected: boolean
+  /** True when a full-screen program has claimed the mouse — see below. */
+  mouseReporting: boolean
+  /** Any of meta/ctrl/alt held: the user asked for something else. */
+  modified: boolean
+}
+
+/**
+ * Whether a Backspace should clear the whole input line instead of one
+ * character.
+ *
+ * A terminal selection is only a highlight — the shell has no idea it exists,
+ * so Backspace sends one erase byte and the highlight disappears because the
+ * buffer changed. That reads as "it unselected and deleted one character". The
+ * only way to honour the selection is to send what the shell's own line editor
+ * understands.
+ *
+ * Refusing while mouse reporting is on is the important guard. That flag means
+ * a full-screen program is in control, and Ctrl+U is not "kill line" there —
+ * in vim it is half a page up. Sending it because a highlight happened to be
+ * on screen would silently do something the user never asked for, so in that
+ * case the key falls through untouched.
+ */
+export function shouldKillLine(input: KillLineInput): boolean {
+  if (!input.inputLineSelected) return false
+  if (input.modified) return false
+  if (input.mouseReporting) return false
+  return input.key === 'Backspace' || input.key === 'Delete'
+}

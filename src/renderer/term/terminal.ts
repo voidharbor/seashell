@@ -5,7 +5,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { FALLBACK_FONT_SIZE, FONT_FAMILY, FONT_SIZE, TERMINAL_APP_PALETTE } from './palette.js'
-import { inputLineSelection } from './inputline.js'
+import { KILL_LINE, inputLineSelection, shouldKillLine } from './inputline.js'
 
 /**
  * One xterm.js terminal bound to one PTY.
@@ -42,6 +42,8 @@ export class PaneTerminal {
   readonly search: SearchAddon
   private webgl: WebglAddon | null = null
   private webglLossCount = 0
+  /** True only between a ⌘A input-line select and the next keystroke. */
+  private inputLineSelected = false
   private resizeTimer: ReturnType<typeof setTimeout> | null = null
   private lastSent: { cols: number; rows: number } | null = null
   private disposed = false
@@ -155,7 +157,28 @@ export class PaneTerminal {
         this.opts.onInput('\x1b\r')
         return false
       }
+      // Cmd chords belong to the menu. Note this runs before the flag is
+      // cleared below, so Cmd+A can set it without immediately clearing it.
       if (ev.metaKey) return false
+
+      if (ev.type === 'keydown') {
+        const kill = shouldKillLine({
+          key: ev.key,
+          inputLineSelected: this.inputLineSelected,
+          mouseReporting: this.mouseReportingActive(),
+          modified: ev.ctrlKey || ev.altKey,
+        })
+
+        // Any keystroke ends the "⌘A just selected your input" state — the
+        // selection is only meaningful until the line changes.
+        this.inputLineSelected = false
+
+        if (kill) {
+          this.term.clearSelection()
+          this.opts.onInput(KILL_LINE)
+          return false
+        }
+      }
       return true
     })
   }
@@ -330,10 +353,14 @@ export class PaneTerminal {
     })
 
     if (!sel) {
+      // Whole-buffer fallback: there is no input line, so Backspace must not
+      // be reinterpreted as "kill the line".
+      this.inputLineSelected = false
       this.term.selectAll()
       return
     }
     this.term.select(sel.col, sel.row, sel.length)
+    this.inputLineSelected = true
   }
 
   clearSearch(): void {

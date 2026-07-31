@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { inputLineSelection } from '../../src/renderer/term/inputline.js'
+import { KILL_LINE, inputLineSelection, shouldKillLine } from '../../src/renderer/term/inputline.js'
 
 /** Rows listed here are wrapped continuations of the row above. */
 const wrapped = (...rows: number[]) => (row: number): boolean => rows.includes(row)
@@ -53,5 +53,56 @@ describe('inputLineSelection', () => {
     })
     expect(sel).not.toBeNull()
     expect(sel!.row).toBe(0)
+  })
+})
+
+/**
+ * Why this exists: a terminal selection is only a highlight. The shell never
+ * learns about it, so Backspace sends one erase byte and the highlight vanishes
+ * because the buffer changed — which reads as "it unselected and deleted a
+ * single character". Honouring the selection means sending what the shell's own
+ * line editor understands instead.
+ */
+describe('shouldKillLine', () => {
+  const base = {
+    key: 'Backspace',
+    inputLineSelected: true,
+    mouseReporting: false,
+    modified: false,
+  }
+
+  it('kills the line for Backspace and Delete after a Cmd+A input select', () => {
+    expect(shouldKillLine(base)).toBe(true)
+    expect(shouldKillLine({ ...base, key: 'Delete' })).toBe(true)
+  })
+
+  it('does nothing special without an input-line selection', () => {
+    expect(shouldKillLine({ ...base, inputLineSelected: false })).toBe(false)
+  })
+
+  it('leaves ordinary typing alone', () => {
+    for (const key of ['a', 'Enter', 'ArrowLeft', 'Tab', 'Escape']) {
+      expect(shouldKillLine({ ...base, key }), key).toBe(false)
+    }
+  })
+
+  /**
+   * The guard that matters most. Mouse reporting means a full-screen program is
+   * driving, and Ctrl+U is not "kill line" there — in vim it scrolls half a
+   * page. Acting on a stale highlight would do something never asked for.
+   */
+  it('refuses inside a program that has claimed the mouse', () => {
+    expect(shouldKillLine({ ...base, mouseReporting: true })).toBe(false)
+  })
+
+  it('refuses when a modifier is held, since that is a different request', () => {
+    expect(shouldKillLine({ ...base, modified: true })).toBe(false)
+  })
+})
+
+describe('KILL_LINE', () => {
+  it('goes to end of line before killing backwards', () => {
+    // Ctrl+U alone would only kill behind the cursor, leaving the tail.
+    expect(KILL_LINE).toBe('\x05\x15')
   })
 })
