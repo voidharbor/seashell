@@ -3,12 +3,15 @@ node_modules/
 .pnp
 .pnp.js
 
-# Build output
+# Build output.
+# NOTE: `build/` is deliberately NOT here — that is electron-builder's
+# buildResources directory and holds SOURCE (afterPack.cjs, icon.icns,
+# make-icon.py). Ignoring it ships a repo that cannot package itself.
+# electron-builder writes its output to release/.
 dist/
 dist-electron/
 out/
 release/
-build/
 *.app
 *.dmg
 *.zip
