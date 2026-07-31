@@ -1,10 +1,10 @@
 # SeaShell funding configuration.
 #
-# Uncomment and fill in once the accounts exist. GitHub renders a "Sponsor"
-# button on the repo for every entry below.
+# Uncomment once the accounts exist. GitHub renders a "Sponsor" button on the
+# repo for every entry below.
 #
 # Ko-fi: live immediately after signup, 0% platform fee on one-off tips.
-# ko_fi: your-handle
+# ko_fi: voidharbor
 #
 # GitHub Sponsors: requires Stripe Connect + tax info + GitHub review.
-# github: [nullharbor]
+# github: [voidharbor]
