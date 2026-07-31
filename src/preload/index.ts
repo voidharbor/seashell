@@ -17,6 +17,8 @@ import {
   type FsProbeResponse,
   type FsReadDirRequest,
   type FsReadDirResponse,
+  type FsReadImageFileRequest,
+  type FsReadImageFileResponse,
   type FsReadTextFileRequest,
   type FsReadTextFileResponse,
   type FsStatBatchRequest,
@@ -67,6 +69,8 @@ const api: SeashellApi = {
     probe: (req: FsProbeRequest): Promise<FsProbeResponse> => ipcRenderer.invoke(CH.fsProbe, req),
     readTextFile: (req: FsReadTextFileRequest): Promise<FsReadTextFileResponse> =>
       ipcRenderer.invoke(CH.fsReadTextFile, req),
+    readImageFile: (req: FsReadImageFileRequest): Promise<FsReadImageFileResponse> =>
+      ipcRenderer.invoke(CH.fsReadImageFile, req),
   },
   open: {
     withDefaultApp: (req: OpenPathRequest): Promise<OpenPathResponse> =>

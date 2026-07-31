@@ -7,8 +7,9 @@ import { reducer, type AppState, type PaneCommand } from './store.js'
 import { PaneView, forgetSpawn, terminals } from './panes/PaneView.js'
 import { Explorer } from './explorer/Explorer.js'
 import { StatusBar } from './status/StatusBar.js'
-import { Viewer } from './viewer/Viewer.js'
 import { loadTerminalFont } from './term/terminal.js'
+import { applyUiScale, clampIndex, levelAt, loadZoomIndex, saveZoomIndex } from './term/zoom.js'
+import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
 
@@ -21,13 +22,27 @@ export function App(): React.JSX.Element {
     sidebarVisible: true,
     explorerRoot: '',
     revealPath: null,
-    viewerPath: null,
     system: null,
     toast: null,
   }))
 
+  const [zoomIndex, setZoomIndex] = useState(loadZoomIndex)
+  const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial())
+  const [findOpen, setFindOpen] = useState(false)
+  const [find, setFind] = useState<{ nonce: number; direction: 'next' | 'prev' }>({
+    nonce: 0,
+    direction: 'next',
+  })
+
   const gridRef = useRef<HTMLDivElement | null>(null)
   const [gridSize, setGridSize] = useState({ width: 0, height: 0 })
+
+  // Chrome scale is a CSS variable, so it must be published before first paint —
+  // a layout effect, not an effect, or the first frame renders at the wrong size.
+  useLayoutEffect(() => {
+    applyUiScale(zoomIndex)
+    saveZoomIndex(zoomIndex)
+  }, [zoomIndex])
 
   // Boot: font first, then the initial tab. The font has to be registered
   // before any terminal is opened or the first pane measures the wrong cell.
@@ -78,6 +93,71 @@ export function App(): React.JSX.Element {
     [home]
   )
 
+  /**
+   * Panes must be killed, not just forgotten — an orphaned agent process is
+   * exactly the problem this app is meant to prevent. Preview panes own no
+   * process, so reaping one would be a pointless round trip through the ladder.
+   */
+  const closePane = useCallback(
+    async (paneId: string) => {
+      const pane = activeTab?.panes[paneId]
+      if (pane && pane.kind === 'term') {
+        const res = await window.seashell.pty.kill({ paneId })
+        forgetSpawn(paneId)
+        if (!res.ok && res.survivors > 0) {
+          dispatch({ type: 'toast', message: `${res.survivors} process(es) could not be reaped` })
+        }
+      }
+      dispatch({ type: 'pane.close', paneId })
+    },
+    [activeTab]
+  )
+
+  const closeTab = useCallback(
+    async (tabId: string) => {
+      const tab = state.tabs.find((t) => t.id === tabId)
+      if (tab) {
+        await Promise.all(
+          Object.values(tab.panes)
+            .filter((p) => p.kind === 'term')
+            .map(async (p) => {
+              await window.seashell.pty.kill({ paneId: p.id })
+              forgetSpawn(p.id)
+            })
+        )
+      }
+      dispatch({ type: 'tab.close', tabId })
+    },
+    [state.tabs]
+  )
+
+  /** Closes every preview pane in the active tab, leaving the terminals alone. */
+  const closeAllPreviews = useCallback(() => {
+    if (!activeTab) return
+    const previews = Object.values(activeTab.panes).filter((p) => p.kind !== 'term')
+    if (previews.length === 0) {
+      dispatch({ type: 'toast', message: 'No preview panes open' })
+      return
+    }
+    for (const p of previews) dispatch({ type: 'pane.close', paneId: p.id })
+  }, [activeTab])
+
+  const openFind = useCallback(() => {
+    const pane = activeTab?.focusedPaneId ? activeTab.panes[activeTab.focusedPaneId] : undefined
+    // A web preview hosts its own page with its own find; there is nothing here
+    // to search that this bar could reach.
+    if (pane?.kind === 'web') {
+      dispatch({ type: 'toast', message: 'Find is not available in a web preview' })
+      return
+    }
+    setFindOpen(true)
+  }, [activeTab])
+
+  const stepFind = useCallback((direction: 'next' | 'prev') => {
+    setFindOpen(true)
+    setFind((f) => ({ nonce: f.nonce + 1, direction }))
+  }, [])
+
   // Menu accelerators arrive here regardless of DOM focus.
   useEffect(() => {
     const off = window.seashell.app.onCommand(({ command }) => {
@@ -104,6 +184,9 @@ export function App(): React.JSX.Element {
         case 'pane.close':
           if (activeTab?.focusedPaneId) void closePane(activeTab.focusedPaneId)
           break
+        case 'pane.closeAll':
+          closeAllPreviews()
+          break
         case 'pane.next':
           dispatch({ type: 'pane.cycle', delta: 1 })
           break
@@ -118,11 +201,42 @@ export function App(): React.JSX.Element {
           if (id) terminals.get(id)?.term.clear()
           break
         }
+        case 'preview.file':
+          dispatch({ type: 'toast', message: 'Double-click a file in the explorer to preview it' })
+          dispatch({ type: 'explorer.reveal', path: null })
+          break
+        case 'preview.web':
+          dispatch({ type: 'pane.newWeb', url: '' })
+          break
         case 'layout.rebalance':
           dispatch({ type: 'layout.rebalance' })
           break
         case 'explorer.toggle':
           dispatch({ type: 'explorer.toggle' })
+          break
+        case 'explorer.refresh':
+          setExplorerNonce((n) => n + 1)
+          break
+        case 'help.tutorial':
+          setTutorialOpen(true)
+          break
+        case 'ui.zoomIn':
+          setZoomIndex((i) => clampIndex(i + 1))
+          break
+        case 'ui.zoomOut':
+          setZoomIndex((i) => clampIndex(i - 1))
+          break
+        case 'ui.zoomReset':
+          setZoomIndex(2)
+          break
+        case 'edit.find':
+          openFind()
+          break
+        case 'edit.findNext':
+          stepFind('next')
+          break
+        case 'edit.findPrev':
+          stepFind('prev')
           break
         case 'edit.copy': {
           const id = activeTab?.focusedPaneId
@@ -152,31 +266,52 @@ export function App(): React.JSX.Element {
     })
     return off
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, home, newPane])
+  }, [activeTab, home, newPane, closePane, closeTab, closeAllPreviews, openFind, stepFind])
 
-  // Panes must be killed, not just forgotten — an orphaned agent process is
-  // exactly the problem this app is meant to prevent.
-  const closePane = useCallback(async (paneId: string) => {
-    const res = await window.seashell.pty.kill({ paneId })
-    forgetSpawn(paneId)
-    if (!res.ok && res.survivors > 0) {
-      dispatch({ type: 'toast', message: `${res.survivors} process(es) could not be reaped` })
+  /**
+   * Zoom keys are bound here rather than as menu accelerators.
+   *
+   * "Zoom in" has two physical spellings — ⌘= and ⌘+ (shifted) — and an
+   * Electron menu item takes exactly one accelerator, so a menu binding leaves
+   * whichever form the user actually presses dead. See the note in menu.ts.
+   *
+   * This is safe to do at the document level because xterm's key handler
+   * returns false for every Cmd chord except Cmd+A without calling
+   * preventDefault, so the event reaches here without ever reaching the PTY.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault()
+        setZoomIndex((i) => clampIndex(i + 1))
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault()
+        setZoomIndex((i) => clampIndex(i - 1))
+      } else if (e.key === '0') {
+        e.preventDefault()
+        setZoomIndex(2)
+      }
     }
-    dispatch({ type: 'pane.close', paneId })
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const closeTab = useCallback(
-    async (tabId: string) => {
-      const tab = state.tabs.find((t) => t.id === tabId)
-      if (tab) {
-        await Promise.all(
-          Object.keys(tab.panes).map((paneId) => window.seashell.pty.kill({ paneId }))
-        )
+  // Escape closes the find bar from anywhere, including a focused terminal.
+  useEffect(() => {
+    if (!findOpen) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        const id = activeTab?.focusedPaneId
+        if (id) terminals.get(id)?.clearSearch()
+        setFindOpen(false)
       }
-      dispatch({ type: 'tab.close', tabId })
-    },
-    [state.tabs]
-  )
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [findOpen, activeTab])
+
+  const [explorerNonce, setExplorerNonce] = useState(0)
 
   useLayoutEffect(() => {
     const el = gridRef.current
@@ -190,15 +325,19 @@ export function App(): React.JSX.Element {
   }, [ready])
 
   const cell = useMemo(() => {
-    const first = activeTab ? Object.keys(activeTab.panes)[0] : undefined
-    const t = first ? terminals.get(first) : undefined
+    // Measure from a terminal pane specifically — a preview pane has no cell
+    // geometry, and the first pane in insertion order may well be one.
+    const termId = activeTab
+      ? Object.values(activeTab.panes).find((p) => p.kind === 'term')?.id
+      : undefined
+    const t = termId ? terminals.get(termId) : undefined
     const core = t
       ? (t.term as unknown as {
           _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } }
         })._core?._renderService?.dimensions?.css?.cell
       : undefined
     return core ? { cellW: core.width, cellH: core.height } : CELL_FALLBACK
-  }, [activeTab, gridSize])
+  }, [activeTab, gridSize, zoomIndex])
 
   const rects = useMemo(() => {
     if (!activeTab || gridSize.width === 0) return []
@@ -233,8 +372,13 @@ export function App(): React.JSX.Element {
         window.removeEventListener('mousemove', move)
         window.removeEventListener('mouseup', up)
         document.body.style.cursor = ''
+        document.body.classList.remove('dragging')
       }
       document.body.style.cursor = divider.orientation === 'v' ? 'col-resize' : 'row-resize'
+      // Suppresses pointer events inside webview panes for the duration of the
+      // drag. Without it the guest page swallows mousemove the moment the
+      // pointer crosses into it and the divider stops following the cursor.
+      document.body.classList.add('dragging')
       window.addEventListener('mousemove', move)
       window.addEventListener('mouseup', up)
     },
@@ -251,6 +395,7 @@ export function App(): React.JSX.Element {
 
   const order = activeTab ? dfsPaneOrder(activeTab.tree) : []
   const full = activeTab ? Object.keys(activeTab.panes).length >= MAX_PANES_PER_TAB : false
+  const fontSize = levelAt(zoomIndex).font
 
   return (
     <div className="app">
@@ -265,6 +410,7 @@ export function App(): React.JSX.Element {
               <span className="tab__name">{t.name}</span>
               <span
                 className="tab__close"
+                title="Close tab (⌘⇧W)"
                 onClick={(e) => {
                   e.stopPropagation()
                   void closeTab(t.id)
@@ -298,6 +444,14 @@ export function App(): React.JSX.Element {
         >
           ✻
         </div>
+        <div
+          className="tabbar__new"
+          title="New web preview (⌘⇧U)"
+          style={full ? { opacity: 0.4 } : undefined}
+          onClick={() => !full && dispatch({ type: 'pane.newWeb', url: '' })}
+        >
+          ◍
+        </div>
       </div>
 
       <div className="body">
@@ -306,8 +460,9 @@ export function App(): React.JSX.Element {
             root={state.explorerRoot}
             home={home}
             revealPath={state.revealPath}
+            refreshNonce={explorerNonce}
             onRevealHandled={() => dispatch({ type: 'explorer.reveal', path: null })}
-            onOpenInViewer={(p) => dispatch({ type: 'viewer.open', path: p })}
+            onOpenInViewer={(p) => dispatch({ type: 'pane.newFile', path: p })}
             onToast={(m) => dispatch({ type: 'toast', message: m })}
           />
         )}
@@ -322,20 +477,31 @@ export function App(): React.JSX.Element {
               const rect = isZoomTarget
                 ? { x: 0, y: 0, width: gridSize.width, height: gridSize.height }
                 : r
+              const isFocused = activeTab.focusedPaneId === r.paneId
               return (
                 <PaneView
                   key={r.paneId}
                   pane={pane}
                   index={order.indexOf(r.paneId) + 1}
                   rect={rect}
-                  focused={activeTab.focusedPaneId === r.paneId}
+                  focused={isFocused}
                   hidden={zoomed !== null && !isZoomTarget}
+                  fontSize={fontSize}
+                  findOpen={findOpen && isFocused}
+                  findNonce={find.nonce}
+                  findDirection={find.direction}
+                  onCloseFind={() => setFindOpen(false)}
                   onFocus={() => dispatch({ type: 'pane.focus', paneId: r.paneId })}
                   onClose={() => void closePane(r.paneId)}
                   onZoom={() => dispatch({ type: 'pane.zoom', paneId: r.paneId })}
                   onReveal={(p) => dispatch({ type: 'explorer.reveal', path: p })}
                   onSpawned={(pid) => dispatch({ type: 'pane.spawned', paneId: r.paneId, pid })}
                   onRestart={() => dispatch({ type: 'pane.restarting', paneId: r.paneId })}
+                  onUrlChange={(url) => dispatch({ type: 'pane.setUrl', paneId: r.paneId, url })}
+                  onToggleRaw={(raw) =>
+                    dispatch({ type: 'pane.setRawSource', paneId: r.paneId, raw })
+                  }
+                  onToast={(m) => dispatch({ type: 'toast', message: m })}
                 />
               )
             })}
@@ -358,8 +524,13 @@ export function App(): React.JSX.Element {
             </div>
           ))}
 
-          {state.viewerPath && (
-            <Viewer path={state.viewerPath} onClose={() => dispatch({ type: 'viewer.close' })} />
+          {!activeTab && (
+            <div className="empty">
+              <div>No tabs open</div>
+              <button className="btn" onClick={() => dispatch({ type: 'tab.new', cwd: home, home })}>
+                New Tab (⌘T)
+              </button>
+            </div>
           )}
 
           {state.toast && <div className="toast">{state.toast}</div>}
@@ -367,6 +538,8 @@ export function App(): React.JSX.Element {
       </div>
 
       <StatusBar tab={activeTab} system={state.system} />
+
+      {tutorialOpen && <Tutorial onClose={() => setTutorialOpen(false)} />}
     </div>
   )
 }

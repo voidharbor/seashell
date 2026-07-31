@@ -56,6 +56,24 @@ const ReadTextReq = z.object({
 const OpenReq = z.object({ path: AbsPath })
 const HttpReq = z.object({ url: z.string().max(4096) })
 
+/** Extension -> mime, for the image preview. Fixed table; never sniffed. */
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  // SVG is deliberately absent. It is a script-bearing document, not a picture;
+  // previewing one as an image would be handing an untrusted file a rendering
+  // context. SVGs fall through to the text path and are shown as source.
+}
+
+/** Base64 inflates by 4/3 and the payload crosses IPC as a string, so this
+ *  ceiling is about renderer memory, not disk. */
+const IMAGE_MAX_BYTES = 16 * 1024 * 1024
+
 export function registerIpc(ptyManager: PtyManager): void {
   ipcMain.handle(CH.ptySpawn, (_e, raw) => {
     const parsed = SpawnReq.safeParse(raw)
@@ -134,6 +152,39 @@ export function registerIpc(ptyManager: PtyManager): void {
       path: parsed.data.path,
       maxBytes: Math.min(parsed.data.maxBytes, VIEWER_MAX_BYTES),
     })
+  })
+
+  /**
+   * Images for the preview pane.
+   *
+   * The mime type comes from this fixed table keyed on extension — it is never
+   * sniffed from the file and never derived from anything the file contains. A
+   * mime string taken from untrusted bytes would be interpolated straight into
+   * a `data:` URL, which is a content-type confusion bug waiting to happen. An
+   * unrecognized extension is refused rather than guessed.
+   */
+  ipcMain.handle(CH.fsReadImageFile, async (_e, raw) => {
+    const parsed = OpenReq.safeParse(raw)
+    if (!parsed.success) return { ok: false, code: 'ENOENT', message: 'invalid path' }
+
+    const abs = path.resolve(parsed.data.path)
+    const mime = IMAGE_MIME[extOf(path.basename(abs))]
+    if (!mime) {
+      return { ok: false, code: 'EUNSUPPORTED', message: 'not a previewable image' }
+    }
+
+    try {
+      const st = await fs.lstat(abs)
+      if (!st.isFile()) return { ok: false, code: 'ENOENT', message: 'not a file' }
+      if (st.size > IMAGE_MAX_BYTES) {
+        return { ok: false, code: 'ETOOBIG', message: `image larger than ${IMAGE_MAX_BYTES} bytes` }
+      }
+      const buf = await fs.readFile(abs)
+      return { ok: true, base64: buf.toString('base64'), mime, size: st.size }
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code === 'EACCES' ? 'EACCES' : 'ENOENT'
+      return { ok: false, code, message: 'could not read image' }
+    }
   })
 
   /**

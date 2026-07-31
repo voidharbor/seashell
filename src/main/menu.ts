@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from 'electron'
 import { CH } from '../shared/ipc.js'
 
 /**
@@ -13,6 +13,19 @@ import { CH } from '../shared/ipc.js'
  *
  * Accelerators fire regardless of DOM focus and are forwarded to the renderer,
  * which dispatches on which zone (pane / explorer / tab bar) is focused.
+ *
+ * The zoom items are the one documented exception: they carry no accelerator
+ * and are bound in the renderer instead. "Zoom in" has two physical spellings —
+ * ⌘= (unshifted) and ⌘+ (shifted) — and an Electron menu item accepts exactly
+ * one accelerator, so binding it here would leave whichever form the user
+ * actually presses silently dead. Registering both as separate menu items would
+ * duplicate the row in the menu. The renderer handles both spellings in one
+ * keydown listener; the menu rows stay for discoverability, with the chord
+ * written into the label so the menu still teaches the shortcut.
+ *
+ * Every command sent from here must have a case in the renderer's command
+ * switch. A menu item whose command nothing handles is worse than no menu item:
+ * it presents as a working feature and does nothing.
  */
 export function buildMenu(getWindow: () => BrowserWindow | null): void {
   const send = (command: string) => () => {
@@ -43,9 +56,12 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
       submenu: [
         item('New Tab', 'Cmd+T', 'tab.new'),
         item('New Pane', 'Cmd+D', 'pane.new'),
-        item('New Pane in New Column', 'Cmd+Shift+D', 'pane.newColumn'),
+        { type: 'separator' },
+        item('New File Preview…', 'Cmd+Shift+O', 'preview.file'),
+        item('New Web Preview…', 'Cmd+Shift+U', 'preview.web'),
         { type: 'separator' },
         item('Close Pane', 'Cmd+W', 'pane.close'),
+        item('Close All Panes', 'Cmd+Alt+W', 'pane.closeAll'),
         item('Close Tab', 'Cmd+Shift+W', 'tab.close'),
       ],
     },
@@ -58,7 +74,10 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
         item('Paste', 'Cmd+V', 'edit.paste'),
         item('Select All', 'Cmd+A', 'edit.selectAll'),
         { type: 'separator' },
-        item('Find in Pane', 'Cmd+F', 'edit.find'),
+        item('Find', 'Cmd+F', 'edit.find'),
+        item('Find Next', 'Cmd+G', 'edit.findNext'),
+        item('Find Previous', 'Cmd+Shift+G', 'edit.findPrev'),
+        { type: 'separator' },
         item('Clear Pane', 'Cmd+K', 'pane.clear'),
       ],
     },
@@ -68,8 +87,12 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
         item('Toggle Zoom', 'Cmd+Return', 'pane.zoom'),
         item('Rebalance Panes', 'Cmd+Shift+R', 'layout.rebalance'),
         { type: 'separator' },
+        // No accelerators on these three, deliberately — see the note below.
+        { label: 'Zoom In\t⌘+', click: send('ui.zoomIn') },
+        { label: 'Zoom Out\t⌘−', click: send('ui.zoomOut') },
+        { label: 'Actual Size\t⌘0', click: send('ui.zoomReset') },
+        { type: 'separator' },
         item('Toggle File Explorer', 'Cmd+B', 'explorer.toggle'),
-        item('Focus File Explorer', 'Cmd+Shift+E', 'explorer.focus'),
         item('Refresh Explorer', 'Cmd+R', 'explorer.refresh'),
         { type: 'separator' },
         { role: 'togglefullscreen' },
@@ -91,6 +114,16 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
       ],
     },
     { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        item('Show Tutorial', 'Cmd+/', 'help.tutorial'),
+        {
+          label: 'SeaShell on GitHub',
+          click: () => void shell.openExternal('https://github.com/voidharbor/seashell'),
+        },
+      ],
+    },
   ]
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))

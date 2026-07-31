@@ -1,3 +1,4 @@
+import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
 /**
@@ -16,10 +17,14 @@ export default defineConfig({
         },
       },
       {
+        // The react plugin is required here and only here: the dom project is
+        // the only one that has to transform TSX.
+        plugins: [react()],
         test: {
           name: 'dom',
           environment: 'happy-dom',
           include: ['test/dom/**/*.test.ts', 'test/dom/**/*.test.tsx'],
+          setupFiles: ['test/dom/setup.ts'],
         },
       },
     ],

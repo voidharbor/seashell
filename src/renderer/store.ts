@@ -9,18 +9,53 @@ import { MAX_PANES_PER_TAB } from './layout/types.js'
  *  records what the user asked for so a restart reproduces it. */
 export type PaneCommand = 'zsh' | 'claude' | 'cmd'
 
+/**
+ * What a pane contains.
+ *
+ * Preview panes are real leaves in the layout tree, not overlays. That is the
+ * whole point: an overlay has to invent its own sizing, its own close affordance
+ * and its own stacking rules, and it cannot be tiled next to the terminal that
+ * produced it. As tree leaves they inherit dividers, zoom, focus cycling,
+ * auto-arrange and close for free, and "resize the preview" is just "drag the
+ * divider" — the same gesture as everywhere else.
+ *
+ * - `term` a PTY-backed terminal
+ * - `file` a read-only file preview (highlighted source, rendered markdown, image)
+ * - `web`  a live URL, for watching a dev server next to the pane running it
+ */
+export type PaneKind = 'term' | 'file' | 'web'
+
 export interface PaneState {
   id: string
+  kind: PaneKind
   cwd: string
   label: string
   labelIsCustom: boolean
   command: PaneCommand
   /** The literal text typed into the shell for a 'cmd' pane. */
   commandText?: string
+  /** kind 'file' — absolute path being previewed. */
+  filePath?: string
+  /** kind 'file' — render the source rather than the rich form (markdown/image). */
+  rawSource?: boolean
+  /** kind 'web' — the URL currently loaded. Empty until the user enters one. */
+  url?: string
   pid: number | null
   status: 'starting' | 'live' | 'exited'
   exit?: { code: number; signal: number | null }
   metrics?: PaneMetrics
+  /**
+   * Incremented on every restart. A restarted pane deliberately keeps its id —
+   * so it holds its position, label and place in the layout tree — which means
+   * the id alone cannot tell "restart this pane" apart from "this pane already
+   * spawned". The generation is what distinguishes them.
+   */
+  generation?: number
+}
+
+/** Only terminal panes own a process, so only they can be spawned or reaped. */
+export function isTerm(p: PaneState): boolean {
+  return p.kind === 'term'
 }
 
 export interface TabState {
@@ -42,7 +77,6 @@ export interface AppState {
   explorerRoot: string
   /** Path revealed by a double-click in a terminal — highlighted in the tree. */
   revealPath: string | null
-  viewerPath: string | null
   system: SystemMetrics | null
   toast: string | null
 }
@@ -63,6 +97,7 @@ export function baseLabel(cwd: string, home: string): string {
 export function makePane(cwd: string, home: string, command: PaneCommand, commandText?: string): PaneState {
   return {
     id: uid('pane'),
+    kind: 'term',
     cwd,
     label: baseLabel(cwd, home),
     labelIsCustom: false,
@@ -70,6 +105,55 @@ export function makePane(cwd: string, home: string, command: PaneCommand, comman
     ...(commandText === undefined ? {} : { commandText }),
     pid: null,
     status: 'starting',
+  }
+}
+
+export function basename(p: string): string {
+  const parts = p.split('/').filter(Boolean)
+  return parts[parts.length - 1] ?? p
+}
+
+/**
+ * A preview pane is `live` from birth. There is no process to wait on, and
+ * leaving it `starting` would make the pane render an exit/restart affordance
+ * that has nothing to restart.
+ */
+export function makeFilePane(path: string, cwd: string): PaneState {
+  return {
+    id: uid('pane'),
+    kind: 'file',
+    cwd,
+    label: basename(path),
+    labelIsCustom: false,
+    command: 'zsh',
+    filePath: path,
+    pid: null,
+    status: 'live',
+  }
+}
+
+export function makeWebPane(url: string, cwd: string): PaneState {
+  return {
+    id: uid('pane'),
+    kind: 'web',
+    cwd,
+    label: url ? hostLabel(url) : 'Web',
+    labelIsCustom: false,
+    command: 'zsh',
+    url,
+    pid: null,
+    status: 'live',
+  }
+}
+
+/** Tab-bar-sized label for a URL: host plus port, which is what distinguishes
+ *  two dev servers from each other. A full URL would never fit. */
+export function hostLabel(url: string): string {
+  try {
+    const u = new URL(url)
+    return u.port ? `${u.hostname}:${u.port}` : u.hostname
+  } catch {
+    return url.slice(0, 24) || 'Web'
   }
 }
 
@@ -94,6 +178,10 @@ export type Action =
   | { type: 'tab.selectIndex'; index: number }
   | { type: 'tab.cycle'; delta: number }
   | { type: 'pane.new'; home: string; command: PaneCommand; commandText?: string }
+  | { type: 'pane.newFile'; path: string }
+  | { type: 'pane.newWeb'; url: string }
+  | { type: 'pane.setUrl'; paneId: string; url: string }
+  | { type: 'pane.setRawSource'; paneId: string; raw: boolean }
   | { type: 'pane.close'; paneId: string }
   | { type: 'pane.focus'; paneId: string }
   | { type: 'pane.cycle'; delta: number }
@@ -108,8 +196,6 @@ export type Action =
   | { type: 'explorer.toggle' }
   | { type: 'explorer.setRoot'; root: string }
   | { type: 'explorer.reveal'; path: string | null }
-  | { type: 'viewer.open'; path: string }
-  | { type: 'viewer.close' }
   | { type: 'metrics'; panes: PaneMetrics[]; system: SystemMetrics }
   | { type: 'toast'; message: string | null }
 
@@ -182,6 +268,73 @@ export function reducer(state: AppState, action: Action): AppState {
       }))
     }
 
+    /**
+     * Opening a file retargets an existing file preview instead of adding
+     * another one. Six panes is the hard cap, and a tab that fills with preview
+     * panes because the user clicked four files in the explorer is a worse
+     * outcome than reusing the surface they are already looking at.
+     */
+    case 'pane.newFile': {
+      const tab = activeTab(state)
+      if (!tab) return state
+
+      const existing = Object.values(tab.panes).find((p) => p.kind === 'file')
+      if (existing) {
+        return replaceTab(state, tab.id, (t) => ({
+          ...t,
+          focusedPaneId: existing.id,
+          zoomedPaneId: null,
+          panes: {
+            ...t.panes,
+            [existing.id]: {
+              ...existing,
+              filePath: action.path,
+              rawSource: false,
+              label: existing.labelIsCustom ? existing.label : basename(action.path),
+            },
+          },
+        }))
+      }
+
+      if (Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
+        return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (⌘T)` }
+      }
+      const pane = makeFilePane(action.path, tab.cwd)
+      return replaceTab(state, tab.id, (t) => ({
+        ...t,
+        tree: insertPane(t.tree, pane.id, t.pristine),
+        panes: { ...t.panes, [pane.id]: pane },
+        focusedPaneId: pane.id,
+        zoomedPaneId: null,
+      }))
+    }
+
+    case 'pane.newWeb': {
+      const tab = activeTab(state)
+      if (!tab) return state
+      if (Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
+        return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (⌘T)` }
+      }
+      const pane = makeWebPane(action.url, tab.cwd)
+      return replaceTab(state, tab.id, (t) => ({
+        ...t,
+        tree: insertPane(t.tree, pane.id, t.pristine),
+        panes: { ...t.panes, [pane.id]: pane },
+        focusedPaneId: pane.id,
+        zoomedPaneId: null,
+      }))
+    }
+
+    case 'pane.setUrl':
+      return mapPane(state, action.paneId, (p) => ({
+        ...p,
+        url: action.url,
+        label: p.labelIsCustom ? p.label : hostLabel(action.url),
+      }))
+
+    case 'pane.setRawSource':
+      return mapPane(state, action.paneId, (p) => ({ ...p, rawSource: action.raw }))
+
     case 'pane.close': {
       const tab = activeTab(state)
       if (!tab || !tab.panes[action.paneId]) return state
@@ -247,7 +400,12 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'pane.restarting':
       return mapPane(state, action.paneId, (p) => {
         const { exit: _drop, ...rest } = p
-        return { ...rest, status: 'starting', pid: null }
+        return {
+          ...rest,
+          status: 'starting',
+          pid: null,
+          generation: (p.generation ?? 0) + 1,
+        }
       })
 
     case 'pane.label':
@@ -288,12 +446,6 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'explorer.reveal':
       return { ...state, revealPath: action.path, sidebarVisible: true }
-
-    case 'viewer.open':
-      return { ...state, viewerPath: action.path }
-
-    case 'viewer.close':
-      return { ...state, viewerPath: null }
 
     case 'metrics': {
       const byId = new Map(action.panes.map((m) => [m.paneId, m]))

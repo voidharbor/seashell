@@ -54,7 +54,40 @@ function createWindow(): void {
       sandbox: true,
       webSecurity: true,
       spellcheck: false,
+      // Required by the web preview pane. Guests are separate processes and
+      // cannot reach the preload surface; `will-attach-webview` below strips
+      // any preload or node integration a guest tag tries to request.
+      webviewTag: true,
     },
+  })
+
+  /**
+   * Last word on what a web preview guest is allowed to be.
+   *
+   * The renderer already sets safe attributes on the tag, but a renderer
+   * compromise could set different ones — so the decision is re-made here,
+   * where the renderer cannot reach it. Any preload is deleted outright and
+   * node integration is forced off regardless of what the tag asked for.
+   */
+  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+
+    const src = String(params.src ?? '')
+    if (!/^https?:\/\//i.test(src)) {
+      // A guest is for previewing a web page. file:// would give it the disk.
+      params.src = 'about:blank'
+    }
+  })
+
+  // A guest must not be able to open windows in the host app either.
+  mainWindow.webContents.on('did-attach-webview', (_e, guest) => {
+    guest.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
   })
 
   mainWindow.once('ready-to-show', () => mainWindow?.show())
@@ -103,7 +136,42 @@ app.on('window-all-closed', () => {
   app.quit()
 })
 
-app.on('will-quit', () => {
+/**
+ * Quit must not race the kill ladder.
+ *
+ * `killAll()` is async — it signals, waits for processes to actually die, and
+ * escalates. Firing it from a quit handler without holding the quit open lets
+ * Electron tear the process down mid-ladder, so nothing past the first SIGHUP
+ * ever runs.
+ *
+ * Closing the PTY master does make the kernel SIGHUP each pane's foreground
+ * process group, which cleans up an idle shell on its own. That rescue is what
+ * hid this: it covers the common case and none of the cases the ladder exists
+ * for. Anything that survives SIGHUP — a `nohup`'d job, a `disown`ed background
+ * process, a program that traps HUP — is precisely the orphaned-agent process
+ * this app was built to prevent, and it leaked out on every quit.
+ *
+ * The timeout is a deadlock guard: a wedged `ps` sweep must never make the app
+ * unquittable. Losing the ladder is bad; an app you cannot quit is worse.
+ */
+const QUIT_DRAIN_TIMEOUT_MS = 8000
+let draining = false
+
+app.on('before-quit', (e) => {
+  if (draining) return // second pass, after the drain — let it through
+  e.preventDefault()
+  draining = true
   metrics?.stop()
-  void ptyManager?.killAll()
+
+  void (async () => {
+    try {
+      await Promise.race([
+        ptyManager?.killAll() ?? Promise.resolve(),
+        new Promise<void>((r) => setTimeout(r, QUIT_DRAIN_TIMEOUT_MS)),
+      ])
+    } catch {
+      /* a failed reap must still not block quit */
+    }
+    app.exit(0)
+  })()
 })

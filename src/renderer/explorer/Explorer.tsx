@@ -23,6 +23,8 @@ export interface ExplorerProps {
   home: string
   /** Path to expand to and highlight — set by a double-click in a terminal. */
   revealPath: string | null
+  /** Bumped by ⌘R. Re-reads every directory currently expanded. */
+  refreshNonce: number
   onRevealHandled: () => void
   onOpenInViewer: (path: string) => void
   onToast: (message: string) => void
@@ -67,6 +69,27 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
     setDirs({})
     void load(root)
   }, [root, load])
+
+  /**
+   * ⌘R. Re-reads every directory that is currently open rather than only the
+   * root — a refresh that left every expanded subdirectory stale would be
+   * indistinguishable from a refresh that did nothing, since the thing the user
+   * is looking at is usually nested.
+   */
+  const refresh = useCallback(() => {
+    for (const dir of expanded) void load(dir)
+  }, [expanded, load])
+
+  const firstRefresh = useRef(true)
+  useEffect(() => {
+    if (firstRefresh.current) {
+      firstRefresh.current = false
+      return
+    }
+    refresh()
+    // Only the nonce drives this; `refresh` changes on every expand.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.refreshNonce])
 
   const toggle = useCallback(
     (dir: string) => {
@@ -220,7 +243,7 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
     <div className="sidebar">
       <div className="sidebar__head">
         <span>{displayRoot(root, props.home)}</span>
-        <span className="sidebar__refresh" title="Refresh (⌘R)" onClick={() => void load(root)}>
+        <span className="sidebar__refresh" title="Refresh (⌘R)" onClick={refresh}>
           ⟳
         </span>
       </div>

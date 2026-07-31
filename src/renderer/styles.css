@@ -13,10 +13,20 @@
   --warn: #e5a83c;
   /* Finder's selection blue reads correctly even on a green-tinted sidebar. */
   --select: #2c68d0;
-  --titlebar-h: 24px;
-  --tabbar-h: 34px;
-  --statusbar-h: 26px;
-  --sidebar-w: 260px;
+
+  /* Set from JS by the zoom commands (Cmd+ / Cmd- / Cmd0) and persisted.
+     Every chrome dimension below is expressed against it, so one variable
+     scales the entire UI rather than just the terminal text. */
+  --ui-scale: 1;
+
+  --ui-font-size: calc(13px * var(--ui-scale));
+  --titlebar-h: calc(28px * var(--ui-scale));
+  --tabbar-h: calc(38px * var(--ui-scale));
+  --statusbar-h: calc(28px * var(--ui-scale));
+  --sidebar-w: calc(260px * var(--ui-scale));
+  --row-h: calc(25px * var(--ui-scale));
+  /* Close buttons need a real hit target, not a glyph's ink area. */
+  --hit: calc(20px * var(--ui-scale));
   --divider: 9px;
   --ui-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
 }
@@ -37,7 +47,7 @@ body {
   background: var(--chrome-bg);
   color: var(--text);
   font-family: var(--ui-font);
-  font-size: 12px;
+  font-size: var(--ui-font-size);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;
@@ -77,10 +87,10 @@ body {
 .tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-width: 90px;
-  max-width: 200px;
-  padding: 0 10px;
+  gap: calc(6px * var(--ui-scale));
+  min-width: calc(100px * var(--ui-scale));
+  max-width: calc(220px * var(--ui-scale));
+  padding: 0 calc(6px * var(--ui-scale)) 0 calc(12px * var(--ui-scale));
   border-right: 1px solid var(--chrome-line);
   color: var(--text-dim);
   white-space: nowrap;
@@ -98,35 +108,53 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Always visible.
+   These used to be opacity:0 until hover, in --text-faint, with 2px of padding.
+   That combined three problems at once: you could not see the control, you
+   could not tell where to aim, and the glyph was near-invisible against black
+   even once revealed. A close button is a primary action on every pane — it
+   gets a persistent, legible affordance and a square hit target. */
 .tab__close,
 .pane__close {
-  opacity: 0;
-  padding: 0 2px;
-  border-radius: 3px;
-  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--hit);
+  height: var(--hit);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: calc(15px * var(--ui-scale));
+  line-height: 1;
+  opacity: 0.75;
+  transition: background 0.1s ease, opacity 0.1s ease, color 0.1s ease;
 }
 
 .tab:hover .tab__close,
-.pane:hover .pane__close {
+.pane:hover .pane__close,
+.tab--active .tab__close,
+.pane--focused .pane__close {
   opacity: 1;
 }
 
 .tab__close:hover,
 .pane__close:hover {
-  background: #333a43;
-  color: var(--text);
+  background: var(--danger);
+  color: #ffffff;
+  opacity: 1;
 }
 
 .tabbar__new {
   -webkit-app-region: no-drag;
-  padding: 0 12px;
+  padding: 0 calc(12px * var(--ui-scale));
   display: flex;
   align-items: center;
+  font-size: calc(15px * var(--ui-scale));
   color: var(--text-dim);
 }
 
 .tabbar__new:hover {
-  color: var(--text);
+  color: var(--accent);
 }
 
 /* ----------------------------------------------------------------- body */
@@ -155,11 +183,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 12px;
-  font-size: 11px;
+  padding: calc(8px * var(--ui-scale)) calc(12px * var(--ui-scale));
+  font-size: calc(12px * var(--ui-scale));
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--text-faint);
+  color: var(--text-dim);
   border-bottom: 1px solid var(--chrome-line);
 }
 
@@ -184,13 +212,13 @@ body {
 .node {
   display: flex;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 8px 0 0;
+  gap: calc(5px * var(--ui-scale));
+  height: var(--row-h);
+  padding: 0 calc(8px * var(--ui-scale)) 0 0;
   border-radius: 6px;
   white-space: nowrap;
   color: var(--text);
-  font-size: 13px;
+  font-size: calc(13.5px * var(--ui-scale));
 }
 
 .node:hover {
@@ -227,11 +255,11 @@ body {
 
 /* Disclosure triangle that rotates, the way Finder's does. */
 .node__twisty {
-  width: 13px;
+  width: calc(14px * var(--ui-scale));
   flex: none;
   text-align: center;
-  font-size: 9px;
-  color: var(--text-faint);
+  font-size: calc(10px * var(--ui-scale));
+  color: var(--text-dim);
   transition: transform 0.12s ease;
 }
 
@@ -240,8 +268,8 @@ body {
 }
 
 .node__icon {
-  width: 16px;
-  height: 16px;
+  width: calc(16px * var(--ui-scale));
+  height: calc(16px * var(--ui-scale));
   flex: none;
   display: block;
 }
@@ -286,11 +314,11 @@ body {
   min-height: var(--titlebar-h);
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 6px;
+  gap: calc(7px * var(--ui-scale));
+  padding: 0 calc(4px * var(--ui-scale)) 0 calc(8px * var(--ui-scale));
   background: var(--chrome-bg);
   border-bottom: 1px solid var(--chrome-line);
-  font-size: 11px;
+  font-size: calc(12.5px * var(--ui-scale));
   color: var(--text-dim);
 }
 
@@ -310,11 +338,12 @@ body {
 }
 
 .pane__badge {
-  font-size: 10px;
-  padding: 0 4px;
+  font-size: calc(11px * var(--ui-scale));
+  padding: calc(1px * var(--ui-scale)) calc(6px * var(--ui-scale));
   border-radius: 3px;
   background: #262d35;
   color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .pane__spacer {
@@ -347,11 +376,11 @@ body {
   bottom: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
+  gap: calc(10px * var(--ui-scale));
+  padding: calc(7px * var(--ui-scale)) calc(10px * var(--ui-scale));
   background: #1b1f24ee;
   border-top: 1px solid var(--chrome-line);
-  font-size: 11px;
+  font-size: calc(12px * var(--ui-scale));
 }
 
 .pane__exit--bad {
@@ -360,12 +389,13 @@ body {
 }
 
 .btn {
-  padding: 2px 8px;
+  padding: calc(3px * var(--ui-scale)) calc(10px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
   border-radius: 4px;
   background: #232a32;
   color: var(--text);
   font: inherit;
+  white-space: nowrap;
 }
 
 .btn:hover {
@@ -401,12 +431,12 @@ body {
   min-height: var(--statusbar-h);
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 0 12px;
+  gap: calc(14px * var(--ui-scale));
+  padding: 0 calc(12px * var(--ui-scale));
   background: var(--chrome-bg);
   border-top: 1px solid var(--chrome-line);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: calc(12px * var(--ui-scale));
   font-variant-numeric: tabular-nums;
 }
 
@@ -465,6 +495,313 @@ body {
   user-select: text;
   white-space: pre;
   tab-size: 4;
+}
+
+/* -------------------------------------------------------------- previews */
+
+/* Preview panes get a slightly lifted background so a wall of six panes still
+   reads as "these two are not terminals" at a glance. */
+.pane--preview {
+  background: #0e1116;
+}
+
+.preview__toolbar,
+.web__bar {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--ui-scale));
+  padding: calc(5px * var(--ui-scale)) calc(7px * var(--ui-scale));
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
+  flex: none;
+}
+
+.preview__toolbar {
+  justify-content: flex-end;
+}
+
+.preview__flag {
+  margin-right: auto;
+  color: var(--warn);
+}
+
+.preview__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+}
+
+.preview__code {
+  margin: 0;
+  padding: calc(10px * var(--ui-scale)) calc(14px * var(--ui-scale));
+  font-family: 'SF Mono Terminal', Menlo, monospace;
+  font-size: calc(12.5px * var(--ui-scale));
+  line-height: 1.55;
+  color: var(--text);
+  user-select: text;
+  white-space: pre;
+  tab-size: 4;
+}
+
+/* Shiki's own theme owns the colours once highlighting lands, so the fallback
+   green must not win over it. */
+.preview__code--hl {
+  color: #c9d1d9;
+  background: transparent;
+}
+
+.preview__code .line {
+  display: block;
+  min-height: 1em;
+}
+
+.preview__imagewrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: calc(12px * var(--ui-scale));
+  /* Checkerboard, so a transparent PNG is legible rather than invisible. */
+  background-image: linear-gradient(45deg, #1a1f26 25%, transparent 25%),
+    linear-gradient(-45deg, #1a1f26 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1a1f26 75%),
+    linear-gradient(-45deg, transparent 75%, #1a1f26 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.preview__image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  image-rendering: auto;
+}
+
+/* ------------------------------------------------------------ web preview */
+
+.web__url {
+  flex: 1;
+  min-width: 0;
+  padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-radius: 4px;
+  background: #0a0d11;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  user-select: text;
+}
+
+.web__url:focus {
+  border-color: var(--accent);
+}
+
+.web__nav {
+  padding: calc(2px * var(--ui-scale)) calc(8px * var(--ui-scale));
+  min-width: calc(26px * var(--ui-scale));
+}
+
+.web__frame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #ffffff;
+}
+
+.web__view {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: inline-flex;
+}
+
+/* A webview is its own process and swallows pointer events, which stops a
+   divider drag dead the moment the cursor crosses one. Disabling hit-testing
+   for the duration of the drag hands those events back to the host. */
+body.dragging .web__view {
+  pointer-events: none;
+}
+
+.web__error {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
+  background: #3a1d1d;
+  color: #ffb4ae;
+  border-bottom: 1px solid var(--danger);
+}
+
+.web__hint {
+  color: var(--text-faint);
+}
+
+/* ------------------------------------------------------------- find bar */
+
+.findbar {
+  position: absolute;
+  top: var(--titlebar-h);
+  right: calc(8px * var(--ui-scale));
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: calc(4px * var(--ui-scale));
+  padding: calc(5px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  background: #161c22;
+  box-shadow: 0 6px 18px #0009;
+}
+
+.findbar__input {
+  width: calc(180px * var(--ui-scale));
+  padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-radius: 4px;
+  background: #0a0d11;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  user-select: text;
+}
+
+.findbar__input:focus {
+  border-color: var(--accent);
+}
+
+.findbar__input--miss {
+  border-color: var(--danger);
+  color: #ffb4ae;
+}
+
+.findbar__btn {
+  padding: calc(2px * var(--ui-scale)) calc(7px * var(--ui-scale));
+}
+
+/* -------------------------------------------------------------- tutorial */
+
+.tut {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000000bb;
+  backdrop-filter: blur(2px);
+}
+
+.tut__card {
+  width: min(560px, 86%);
+  padding: calc(22px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-radius: 10px;
+  background: #10161b;
+  box-shadow: 0 20px 60px #000c;
+}
+
+.tut__head {
+  display: flex;
+  align-items: center;
+  margin-bottom: calc(12px * var(--ui-scale));
+}
+
+.tut__step {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.tut__skip {
+  color: var(--text-dim);
+  text-decoration: underline;
+}
+
+.tut__skip:hover {
+  color: var(--text);
+}
+
+.tut__title {
+  margin: 0 0 calc(10px * var(--ui-scale));
+  font-size: calc(19px * var(--ui-scale));
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tut__body {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--text);
+  font-size: calc(13.5px * var(--ui-scale));
+}
+
+.tut__keys {
+  margin-top: calc(16px * var(--ui-scale));
+  display: flex;
+  flex-direction: column;
+  gap: calc(7px * var(--ui-scale));
+}
+
+.tut__key {
+  display: flex;
+  align-items: center;
+  gap: calc(12px * var(--ui-scale));
+  color: var(--text-dim);
+}
+
+.tut__key kbd {
+  flex: none;
+  min-width: calc(74px * var(--ui-scale));
+  padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: #1b2229;
+  color: var(--text);
+  font-family: var(--ui-font);
+  font-size: calc(12px * var(--ui-scale));
+  text-align: center;
+}
+
+.tut__dots {
+  display: flex;
+  justify-content: center;
+  gap: calc(7px * var(--ui-scale));
+  margin: calc(20px * var(--ui-scale)) 0 calc(16px * var(--ui-scale));
+}
+
+.tut__dot {
+  width: calc(7px * var(--ui-scale));
+  height: calc(7px * var(--ui-scale));
+  border-radius: 50%;
+  background: #2b3540;
+}
+
+.tut__dot--on {
+  background: var(--accent);
+}
+
+.tut__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(8px * var(--ui-scale));
+}
+
+.btn--primary {
+  background: #1f6f14;
+  border-color: #2c8f1e;
+  color: #eafce7;
+}
+
+.btn--primary:hover {
+  background: #268a19;
+}
+
+.btn:disabled {
+  opacity: 0.4;
 }
 
 .empty {

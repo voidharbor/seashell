@@ -56,11 +56,26 @@ export class PtyManager {
    * The "+" menu's `claude` entry just types `claude\r` into stdin.
    */
   spawn(req: PtySpawnRequest): PtySpawnResponse {
-    if (this.panes.size >= MAX_PANES) {
+    /**
+     * An exited pane still holds its record — deliberately, because `kill()`
+     * needs the recorded tty name to find descendants that outlived the shell.
+     * But it must not count against the cap or block a restart, or a session
+     * that opens and exits panes slowly runs out of panes that do not exist.
+     */
+    const existing = this.panes.get(req.paneId)
+    if (existing && !existing.exited) {
+      return { ok: false, code: 'ELIMIT', message: 'pane already has a pty' }
+    }
+
+    const liveCount = [...this.panes.values()].filter((p) => !p.exited).length
+    if (liveCount >= MAX_PANES) {
       return { ok: false, code: 'ELIMIT', message: `at most ${MAX_PANES} panes` }
     }
-    if (this.panes.has(req.paneId)) {
-      return { ok: false, code: 'ELIMIT', message: 'pane already has a pty' }
+
+    // Restart: drop the dead record so the pane id is free to be re-spawned.
+    if (existing) {
+      this.panes.delete(req.paneId)
+      this.batcher.removePane(req.paneId)
     }
 
     let cwd = req.cwd

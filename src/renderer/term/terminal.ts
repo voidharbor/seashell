@@ -1,6 +1,8 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { FALLBACK_FONT_SIZE, FONT_FAMILY, FONT_SIZE, TERMINAL_APP_PALETTE } from './palette.js'
 
@@ -25,6 +27,8 @@ export interface PaneTerminalOptions {
   onDoubleClick: (clientX: number, clientY: number) => void
   /** OSC 8 hyperlink activation. Only ever http/https. */
   onHttpLink: (url: string) => void
+  /** Terminal font size in px, from the current zoom level. */
+  fontSize?: number
 }
 
 const RESIZE_DEBOUNCE_MS = 80
@@ -32,6 +36,7 @@ const RESIZE_DEBOUNCE_MS = 80
 export class PaneTerminal {
   readonly term: Terminal
   readonly fit: FitAddon
+  readonly search: SearchAddon
   private webgl: WebglAddon | null = null
   private webglLossCount = 0
   private resizeTimer: ReturnType<typeof setTimeout> | null = null
@@ -41,7 +46,7 @@ export class PaneTerminal {
   constructor(private readonly opts: PaneTerminalOptions) {
     this.term = new Terminal({
       fontFamily: FONT_FAMILY,
-      fontSize: fontLoaded ? FONT_SIZE : FALLBACK_FONT_SIZE,
+      fontSize: effectiveFontSize(opts.fontSize ?? FONT_SIZE),
       lineHeight: 1,
       letterSpacing: 0,
 
@@ -89,6 +94,30 @@ export class PaneTerminal {
 
     this.fit = new FitAddon()
     this.term.loadAddon(this.fit)
+
+    this.search = new SearchAddon()
+    this.term.loadAddon(this.search)
+
+    /**
+     * Makes bare URLs in output clickable.
+     *
+     * `linkHandler` above only covers OSC 8 hyperlinks — escape sequences a
+     * program emits to explicitly mark text as a link. The overwhelming majority
+     * of URLs in a terminal are not that: they are plain text printed by a dev
+     * server, a test runner or an error message, and without this addon they are
+     * inert characters. This scans the rendered text for URLs and gives them a
+     * real hover target.
+     *
+     * The activation handler re-checks the scheme rather than trusting the
+     * addon's match, and hands off to the same guarded external-open path as
+     * OSC 8 links, which refuses anything that is not http/https.
+     */
+    const webLinks = new WebLinksAddon((event, uri) => {
+      // Ignore a click that is part of a text selection drag.
+      if (event.type === 'click' && (event as MouseEvent).detail === 0) return
+      if (/^https?:\/\//i.test(uri)) this.opts.onHttpLink(uri)
+    })
+    this.term.loadAddon(webLinks)
 
     this.term.open(this.opts.container)
     this.attachKeyHandler()
@@ -213,6 +242,64 @@ export class PaneTerminal {
     this.term.options.cursorBlink = false
   }
 
+  /**
+   * Find-in-pane.
+   *
+   * The decoration colours are constrained by something the palette cannot
+   * express: xterm lets a search decoration set the match *background* but not
+   * its foreground, so every match keeps the program's own text colour — here,
+   * Homebrew's bright green. That rules out the conventional bright-yellow
+   * active-match highlight, which would leave green text on amber. Instead the
+   * inactive matches reuse the theme's own selection green (already proven
+   * readable against this foreground) and the active match uses a desaturated
+   * slate that stays clearly distinguishable from it without fighting the text.
+   */
+  private static readonly SEARCH_DECORATIONS = {
+    matchBackground: '#255A1E',
+    activeMatchBackground: '#3C5A8A',
+    matchOverviewRuler: '#28FE14',
+    activeMatchColorOverviewRuler: '#8AB4F8',
+  }
+
+  findNext(query: string): boolean {
+    if (this.disposed || !query) return false
+    return this.search.findNext(query, {
+      decorations: PaneTerminal.SEARCH_DECORATIONS,
+      caseSensitive: false,
+    })
+  }
+
+  findPrevious(query: string): boolean {
+    if (this.disposed || !query) return false
+    return this.search.findPrevious(query, {
+      decorations: PaneTerminal.SEARCH_DECORATIONS,
+      caseSensitive: false,
+    })
+  }
+
+  clearSearch(): void {
+    if (this.disposed) return
+    this.search.clearDecorations()
+    this.term.clearSelection()
+  }
+
+  /**
+   * Live font-size change, used by the zoom commands.
+   *
+   * The refit is not optional. Changing the size changes the cell size, so the
+   * same pixel box now holds a different number of columns and rows; without
+   * refitting, xterm keeps the old grid and the child program keeps drawing to
+   * a width that no longer matches the pane. refit() ultimately drives the PTY
+   * resize through the normal debounced path, so the child gets one SIGWINCH.
+   */
+  setFontSize(px: number): void {
+    if (this.disposed) return
+    const next = effectiveFontSize(px)
+    if (this.term.options.fontSize === next) return
+    this.term.options.fontSize = next
+    this.refit()
+  }
+
   private warnOnBadFontResidual(): void {
     const cw = (
       this.term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number } } } } } }
@@ -230,6 +317,7 @@ export class PaneTerminal {
 
   dispose(): void {
     this.disposed = true
+    this.search.dispose()
     if (this.resizeTimer) clearTimeout(this.resizeTimer)
     this.term.element?.removeEventListener('dblclick', this.handleDoubleClick)
     this.disableWebgl()
@@ -242,6 +330,18 @@ export class PaneTerminal {
 // ---------------------------------------------------------------------------
 
 let fontLoaded = false
+
+/**
+ * The zoom ladder's sizes are chosen for SF Mono Terminal's advance width. If
+ * that face could not be loaded we are rendering in Menlo, whose clean sizes
+ * are different and whose glyphs read smaller at the same nominal size — so the
+ * requested size is scaled by the same ratio the two defaults differ by, rather
+ * than pinning the fallback to one fixed size and silently dropping zoom.
+ */
+export function effectiveFontSize(px: number): number {
+  if (fontLoaded) return px
+  return Math.max(8, Math.round((px * FALLBACK_FONT_SIZE) / FONT_SIZE))
+}
 
 /**
  * Loads Terminal.app's own private monospace face at runtime.

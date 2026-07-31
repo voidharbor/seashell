@@ -25,6 +25,7 @@ export const CH = {
   fsStatBatch: 'fs:statBatch',
   fsProbe: 'fs:probe',
   fsReadTextFile: 'fs:readTextFile',
+  fsReadImageFile: 'fs:readImageFile',
 
   openWithDefaultApp: 'open:withDefaultApp',
   openRevealInFinder: 'open:revealInFinder',
@@ -180,6 +181,27 @@ export type FsReadTextFileResponse = Result<
   'EBINARY' | 'ETOOBIG' | 'ENOENT' | 'EACCES'
 >
 
+export interface FsReadImageFileRequest {
+  path: string
+}
+
+/**
+ * An image for the preview pane, as a base64 data payload.
+ *
+ * A data: URL rather than a file:// src or a blob: URL, because the renderer's
+ * CSP is `img-src 'self' data:` — file:// would be blocked outright, and
+ * widening the CSP to load pictures would undo the reason the renderer is
+ * served from its own privileged origin in the first place.
+ *
+ * `mime` is chosen from a fixed allowlist keyed on extension, never sniffed
+ * from or echoed out of the file, so the value interpolated into the data: URL
+ * is always one of a handful of known-good constants.
+ */
+export type FsReadImageFileResponse = Result<
+  { base64: string; mime: string; size: number },
+  'ETOOBIG' | 'ENOENT' | 'EACCES' | 'EUNSUPPORTED'
+>
+
 // ---------------------------------------------------------------------------
 // Opening things
 // ---------------------------------------------------------------------------
@@ -269,6 +291,7 @@ export interface SeashellApi {
     statBatch(req: FsStatBatchRequest): Promise<FsStatBatchResponse>
     probe(req: FsProbeRequest): Promise<FsProbeResponse>
     readTextFile(req: FsReadTextFileRequest): Promise<FsReadTextFileResponse>
+    readImageFile(req: FsReadImageFileRequest): Promise<FsReadImageFileResponse>
   }
   open: {
     withDefaultApp(req: OpenPathRequest): Promise<OpenPathResponse>
