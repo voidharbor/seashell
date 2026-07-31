@@ -76,8 +76,11 @@ export interface KillLineInput {
   key: string
   /** True only while the selection came from ⌘A's input-line select. */
   inputLineSelected: boolean
-  /** True when a full-screen program has claimed the mouse — see below. */
-  mouseReporting: boolean
+  /**
+   * True when the terminal is showing the alternate screen buffer — see below.
+   * This replaced a mouse-reporting check, which was the wrong discriminator.
+   */
+  alternateScreen: boolean
   /** Any of meta/ctrl/alt held: the user asked for something else. */
   modified: boolean
 }
@@ -92,15 +95,20 @@ export interface KillLineInput {
  * only way to honour the selection is to send what the shell's own line editor
  * understands.
  *
- * Refusing while mouse reporting is on is the important guard. That flag means
- * a full-screen program is in control, and Ctrl+U is not "kill line" there —
- * in vim it is half a page up. Sending it because a highlight happened to be
- * on screen would silently do something the user never asked for, so in that
- * case the key falls through untouched.
+ * The guard is about *where* Ctrl+U means "kill line". In a shell's line editor
+ * and in an agent's inline prompt it does; in vim it is half a page up. The
+ * discriminator is the alternate screen buffer: full-screen programs switch to
+ * it, and shells and inline agent prompts never do.
+ *
+ * This used to test mouse reporting instead, which was wrong twice over. Agents
+ * enable mouse tracking while still using a normal-buffer inline prompt, so the
+ * check disabled the feature in the panes it was written for — and it would
+ * have permitted it in a full-screen program that simply had not asked for the
+ * mouse.
  */
 export function shouldKillLine(input: KillLineInput): boolean {
   if (!input.inputLineSelected) return false
   if (input.modified) return false
-  if (input.mouseReporting) return false
+  if (input.alternateScreen) return false
   return input.key === 'Backspace' || input.key === 'Delete'
 }

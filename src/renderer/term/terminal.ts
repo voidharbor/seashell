@@ -165,7 +165,7 @@ export class PaneTerminal {
         const kill = shouldKillLine({
           key: ev.key,
           inputLineSelected: this.inputLineSelected,
-          mouseReporting: this.mouseReportingActive(),
+          alternateScreen: this.term.buffer.active.type === 'alternate',
           modified: ev.ctrlKey || ev.altKey,
         })
 
@@ -186,20 +186,23 @@ export class PaneTerminal {
   /**
    * Double-click resolution.
    *
-   * When the foreground program has mouse tracking on, xterm forwards clicks to
-   * the PTY and we must not steal them — otherwise a TUI's own click handling
-   * breaks. We only claim the double-click when mouse reporting is OFF.
+   * This used to bail out whenever the foreground program had mouse tracking
+   * on, to avoid "stealing" the click from a TUI. That reasoning was wrong, and
+   * it disabled the feature exactly where it matters most.
    *
-   * The caller decides what a path activation means; per the design it reveals
-   * the file in the explorer rather than opening it, so a stray double-click can
-   * never launch an application.
+   * By the time a `dblclick` fires, xterm has already forwarded both mousedown
+   * events to the PTY. The program has its clicks either way — there is nothing
+   * left to steal. All the guard did was suppress the reveal, in agent panes,
+   * which is precisely where paths get printed. Requiring Option there was a
+   * workaround for a problem that did not exist.
+   *
+   * So the double-click is always offered to the host. The host resolves it
+   * against the buffer and reveals only if a real path is under the cursor;
+   * a double-click on ordinary text resolves to nothing and changes nothing.
+   *
+   * Revealing never opens anything, so even a wrong guess is inert.
    */
   private handleDoubleClick = (ev: MouseEvent): void => {
-    // With mouse tracking on, a plain double-click belongs to the program —
-    // stealing it would break a TUI's own click handling. Option is the
-    // documented escape hatch (§8.4), and it is the only way this feature works
-    // at all inside an agent pane, which is precisely where paths get printed.
-    if (this.mouseReportingActive() && !ev.altKey) return
     this.opts.onDoubleClick(ev.clientX, ev.clientY)
   }
 

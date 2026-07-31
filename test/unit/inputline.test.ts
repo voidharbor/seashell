@@ -67,7 +67,7 @@ describe('shouldKillLine', () => {
   const base = {
     key: 'Backspace',
     inputLineSelected: true,
-    mouseReporting: false,
+    alternateScreen: false,
     modified: false,
   }
 
@@ -87,12 +87,23 @@ describe('shouldKillLine', () => {
   })
 
   /**
-   * The guard that matters most. Mouse reporting means a full-screen program is
-   * driving, and Ctrl+U is not "kill line" there — in vim it scrolls half a
-   * page. Acting on a stale highlight would do something never asked for.
+   * The guard that matters most. A full-screen program switches to the
+   * alternate screen buffer, and Ctrl+U is not "kill line" there — in vim it
+   * scrolls half a page. Acting on a stale highlight would do something never
+   * asked for.
    */
-  it('refuses inside a program that has claimed the mouse', () => {
-    expect(shouldKillLine({ ...base, mouseReporting: true })).toBe(false)
+  it('refuses inside a full-screen program', () => {
+    expect(shouldKillLine({ ...base, alternateScreen: true })).toBe(false)
+  })
+
+  /**
+   * The regression this replaced. An agent enables mouse tracking while still
+   * drawing an inline prompt on the normal buffer, so the old mouse-reporting
+   * guard switched the feature off in exactly the panes it was written for —
+   * Cmd+A then delete removed a single character instead of the line.
+   */
+  it('works in an agent pane, which tracks the mouse but is not full-screen', () => {
+    expect(shouldKillLine({ ...base, alternateScreen: false })).toBe(true)
   })
 
   it('refuses when a modifier is held, since that is a different request', () => {
