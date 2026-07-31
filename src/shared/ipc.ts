@@ -1,0 +1,293 @@
+/**
+ * The IPC contract between main and renderer.
+ *
+ * This file is the single source of truth for channel names and payload shapes.
+ * It imports nothing — both processes and the preload bridge depend on it, and
+ * the preload runs in a sandbox where `electron` is the only available import.
+ *
+ * Rule: no function in the preload surface ever takes a channel name. The
+ * renderer cannot reach a channel that is not explicitly wrapped.
+ */
+
+// ---------------------------------------------------------------------------
+// Channel names
+// ---------------------------------------------------------------------------
+
+export const CH = {
+  ptySpawn: 'pty:spawn',
+  ptyWrite: 'pty:write',
+  ptyResize: 'pty:resize',
+  ptyKill: 'pty:kill',
+  ptyData: 'pty:data',
+  ptyExit: 'pty:exit',
+
+  fsReadDir: 'fs:readDir',
+  fsStatBatch: 'fs:statBatch',
+  fsProbe: 'fs:probe',
+  fsReadTextFile: 'fs:readTextFile',
+
+  openWithDefaultApp: 'open:withDefaultApp',
+  openRevealInFinder: 'open:revealInFinder',
+  openExternalHttp: 'open:externalHttp',
+
+  metricsTick: 'metrics:tick',
+
+  appGetPaths: 'app:getPaths',
+  appGetTerminalFont: 'app:getTerminalFont',
+  uiCommand: 'ui:command',
+} as const
+
+export type ChannelName = (typeof CH)[keyof typeof CH]
+
+// ---------------------------------------------------------------------------
+// Result envelope
+// ---------------------------------------------------------------------------
+
+export type Ok<T> = { ok: true } & T
+export type Err<C extends string = string> = { ok: false; code: C; message: string }
+export type Result<T, C extends string = string> = Ok<T> | Err<C>
+
+// ---------------------------------------------------------------------------
+// PTY
+// ---------------------------------------------------------------------------
+
+export interface PtySpawnRequest {
+  paneId: string
+  /** Absolute path to the binary. Never a shell string. */
+  file: string
+  /** Always an argv array — never concatenated into a command line. */
+  args: string[]
+  cwd: string
+  cols: number
+  rows: number
+}
+
+export type PtySpawnResponse = Result<{ pid: number }, 'ENOENT' | 'EACCES' | 'ECWD' | 'ELIMIT'>
+
+export interface PtyWriteRequest {
+  paneId: string
+  data: string
+}
+
+export interface PtyResizeRequest {
+  paneId: string
+  cols: number
+  rows: number
+}
+
+export interface PtyKillRequest {
+  paneId: string
+}
+
+/** Result of running the escalating kill ladder. `survivors` should be 0. */
+export interface PtyKillResponse {
+  ok: boolean
+  survivors: number
+}
+
+/**
+ * PTY output, coalesced across panes into one frame-batched message.
+ * Batching matters: a build log can emit thousands of tiny writes per second,
+ * and one IPC message per write starves the renderer.
+ */
+export interface PtyDataEvent {
+  batches: Array<{ paneId: string; data: string }>
+}
+
+export interface PtyExitEvent {
+  paneId: string
+  exitCode: number
+  signal: number | null
+  ranMs: number
+}
+
+// ---------------------------------------------------------------------------
+// Filesystem (read-only — there is deliberately no write/delete/rename/mkdir)
+// ---------------------------------------------------------------------------
+
+export interface FsDirEntry {
+  name: string
+  isDir: boolean
+  isSymlink: boolean
+  size: number
+  mtimeMs: number
+  /** Matched by .gitignore. Kept in the payload so the UI can dim rather than hide. */
+  ignored: boolean
+}
+
+export interface FsReadDirRequest {
+  path: string
+  respectGitignore: boolean
+}
+
+export type FsReadDirResponse = Result<
+  { entries: FsDirEntry[]; truncated: boolean },
+  'ENOENT' | 'EACCES' | 'ENOTDIR' | 'ELOOP'
+>
+
+/**
+ * Bulk-verify path candidates found in terminal output. Misses are omitted
+ * rather than returned as nulls, so a screen full of prose costs almost nothing.
+ */
+export interface FsStatBatchRequest {
+  cwd: string
+  /** Hard-capped at 512 by the main-side validator. */
+  candidates: string[]
+}
+
+export interface FsStatBatchResult {
+  /** Index into the request's `candidates` array. */
+  i: number
+  resolved: string
+  kind: 'file' | 'dir' | 'other'
+  size: number
+  exec: boolean
+}
+
+export interface FsStatBatchResponse {
+  results: FsStatBatchResult[]
+}
+
+/**
+ * How a path should be opened.
+ * - `viewer`    text/code — opens in the in-app read-only viewer
+ * - `os`        hand to the macOS default app via shell.openPath
+ * - `reveal`    refuse to open; reveal in Finder instead (executables, bundles)
+ * - `too-large` exceeds the viewer size guard
+ * - `binary`    no extension and non-text content sniffed
+ */
+export type OpenRoute = 'viewer' | 'os' | 'reveal' | 'too-large' | 'binary'
+
+export interface FsProbeRequest {
+  path: string
+}
+
+export interface FsProbeResponse {
+  exists: boolean
+  isDir: boolean
+  size: number
+  ext: string
+  route: OpenRoute
+}
+
+export interface FsReadTextFileRequest {
+  path: string
+  maxBytes: number
+}
+
+export type FsReadTextFileResponse = Result<
+  { text: string; lines: number; size: number; truncated: boolean },
+  'EBINARY' | 'ETOOBIG' | 'ENOENT' | 'EACCES'
+>
+
+// ---------------------------------------------------------------------------
+// Opening things
+// ---------------------------------------------------------------------------
+
+export interface OpenPathRequest {
+  path: string
+}
+
+export type OpenPathResponse = { ok: boolean; error?: string }
+
+export interface OpenExternalHttpRequest {
+  /** Rejected unless the scheme is exactly http: or https:. */
+  url: string
+}
+
+// ---------------------------------------------------------------------------
+// Metrics
+// ---------------------------------------------------------------------------
+
+/**
+ * What a pane's foreground process is doing.
+ * - `PROMPT`  shell is foreground — sitting at a prompt, nothing running
+ * - `BUSY`    a child is foreground and burning CPU
+ * - `WAITING` a child is foreground but idle (e.g. an agent awaiting input)
+ *
+ * This distinction is why idle detection cannot key on output alone: an
+ * animated spinner emits bytes continuously while doing nothing.
+ */
+export type PaneActivity = 'PROMPT' | 'BUSY' | 'WAITING'
+
+export interface PaneMetrics {
+  paneId: string
+  /** Summed RSS of the whole process subtree. See the caveats in the spec. */
+  footprintBytes: number
+  cpuFrac: number
+  state: PaneActivity
+  foregroundProcess: string
+  procCount: number
+  cwd: string
+}
+
+export interface SystemMetrics {
+  usedBytes: number
+  totalBytes: number
+  compressorBytes: number
+  swapUsedBytes: number
+  swapTotalBytes: number
+  pressureLevel: 'normal' | 'warn' | 'critical'
+}
+
+export interface MetricsTickEvent {
+  panes: PaneMetrics[]
+  system: SystemMetrics
+}
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
+
+export interface AppPaths {
+  home: string
+  userData: string
+  defaultShell: string
+  cwdOfLaunch: string
+}
+
+/** Menu accelerators are delivered here — they fire regardless of DOM focus. */
+export interface UiCommandEvent {
+  command: string
+}
+
+// ---------------------------------------------------------------------------
+// The preload surface, as seen by the renderer on `window.seashell`
+// ---------------------------------------------------------------------------
+
+export interface SeashellApi {
+  pty: {
+    spawn(req: PtySpawnRequest): Promise<PtySpawnResponse>
+    kill(req: PtyKillRequest): Promise<PtyKillResponse>
+    write(req: PtyWriteRequest): void
+    resize(req: PtyResizeRequest): void
+    onData(cb: (e: PtyDataEvent) => void): () => void
+    onExit(cb: (e: PtyExitEvent) => void): () => void
+  }
+  fs: {
+    readDir(req: FsReadDirRequest): Promise<FsReadDirResponse>
+    statBatch(req: FsStatBatchRequest): Promise<FsStatBatchResponse>
+    probe(req: FsProbeRequest): Promise<FsProbeResponse>
+    readTextFile(req: FsReadTextFileRequest): Promise<FsReadTextFileResponse>
+  }
+  open: {
+    withDefaultApp(req: OpenPathRequest): Promise<OpenPathResponse>
+    revealInFinder(req: OpenPathRequest): Promise<OpenPathResponse>
+    externalHttp(req: OpenExternalHttpRequest): Promise<OpenPathResponse>
+  }
+  metrics: {
+    onTick(cb: (e: MetricsTickEvent) => void): () => void
+  }
+  app: {
+    getPaths(): Promise<AppPaths>
+    /** Terminal.app's private SF Mono Terminal face, or null if unreadable. */
+    getTerminalFont(): Promise<ArrayBuffer | null>
+    onCommand(cb: (e: UiCommandEvent) => void): () => void
+  }
+}
+
+declare global {
+  interface Window {
+    seashell: SeashellApi
+  }
+}

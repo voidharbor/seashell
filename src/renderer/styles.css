@@ -1,0 +1,492 @@
+:root {
+  /* Matches the Homebrew Terminal profile: green on black. */
+  --term-bg: #000000;
+  --term-green: #28fe14;
+  --chrome-bg: #0a0f0a;
+  --chrome-bg-alt: #060a06;
+  --chrome-line: #1c2c1c;
+  --text: #b9f5ae;
+  --text-dim: #6ea865;
+  --text-faint: #48703f;
+  --accent: #28fe14;
+  --danger: #ff5f56;
+  --warn: #e5a83c;
+  /* Finder's selection blue reads correctly even on a green-tinted sidebar. */
+  --select: #2c68d0;
+  --titlebar-h: 24px;
+  --tabbar-h: 34px;
+  --statusbar-h: 26px;
+  --sidebar-w: 260px;
+  --divider: 9px;
+  --ui-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--chrome-bg);
+  color: var(--text);
+  font-family: var(--ui-font);
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---------------------------------------------------------------- tab bar */
+
+.tabbar {
+  height: var(--tabbar-h);
+  min-height: var(--tabbar-h);
+  display: flex;
+  align-items: stretch;
+  background: var(--chrome-bg);
+  border-bottom: 1px solid var(--chrome-line);
+  -webkit-app-region: drag;
+  padding-left: 78px; /* clear the traffic lights */
+}
+
+.tabbar__tabs {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+
+.tabbar__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 90px;
+  max-width: 200px;
+  padding: 0 10px;
+  border-right: 1px solid var(--chrome-line);
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.tab--active {
+  background: var(--chrome-bg-alt);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.tab__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab__close,
+.pane__close {
+  opacity: 0;
+  padding: 0 2px;
+  border-radius: 3px;
+  color: var(--text-faint);
+}
+
+.tab:hover .tab__close,
+.pane:hover .pane__close {
+  opacity: 1;
+}
+
+.tab__close:hover,
+.pane__close:hover {
+  background: #333a43;
+  color: var(--text);
+}
+
+.tabbar__new {
+  -webkit-app-region: no-drag;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
+}
+
+.tabbar__new:hover {
+  color: var(--text);
+}
+
+/* ----------------------------------------------------------------- body */
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--chrome-bg);
+  border-right: 1px solid var(--chrome-line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebar--hidden {
+  display: none;
+}
+
+.sidebar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--chrome-line);
+}
+
+.sidebar__refresh {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.sidebar__refresh:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
+.sidebar__tree {
+  flex: 1;
+  overflow: auto;
+  padding: 6px 8px 14px;
+}
+
+/* Finder-style rows: 24px tall, 13px system text, a rounded selection pill
+   inset from the sidebar edges rather than a full-bleed bar. */
+.node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px 0 0;
+  border-radius: 6px;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.node:hover {
+  background: #16241660;
+}
+
+.node--selected {
+  background: var(--select);
+  color: #ffffff;
+}
+
+.node--selected .node__twisty {
+  color: #ffffffcc;
+}
+
+.node--revealed {
+  background: #2f6b28;
+  color: #ffffff;
+  animation: revealFlash 1.4s ease-out;
+}
+
+@keyframes revealFlash {
+  0% {
+    background: #59c44a;
+  }
+  100% {
+    background: #2f6b28;
+  }
+}
+
+.node--ignored {
+  opacity: 0.45;
+}
+
+/* Disclosure triangle that rotates, the way Finder's does. */
+.node__twisty {
+  width: 13px;
+  flex: none;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-faint);
+  transition: transform 0.12s ease;
+}
+
+.node__twisty--open {
+  transform: rotate(90deg);
+}
+
+.node__icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: block;
+}
+
+.node__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ----------------------------------------------------------------- grid */
+
+.grid {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: var(--chrome-bg-alt);
+}
+
+.pane {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: var(--term-bg);
+  border: 1px solid var(--chrome-line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.pane--focused {
+  border-color: #40566f;
+}
+
+/* Zoom hides panes with display:none, never visibility/opacity/transform —
+   those still report as intersecting, so xterm's IntersectionObserver would
+   never pause and every hidden pane would keep rendering. */
+.pane--hidden {
+  display: none;
+}
+
+.pane__title {
+  height: var(--titlebar-h);
+  min-height: var(--titlebar-h);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  background: var(--chrome-bg);
+  border-bottom: 1px solid var(--chrome-line);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.pane--focused .pane__title {
+  background: #1d232a;
+  color: var(--text);
+}
+
+.pane__index {
+  color: var(--text-faint);
+}
+
+.pane__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane__badge {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #262d35;
+  color: var(--text-dim);
+}
+
+.pane__spacer {
+  flex: 1;
+}
+
+.pane__mem {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.pane__mem--high {
+  color: var(--warn);
+}
+
+.pane__idle {
+  color: var(--text-faint);
+}
+
+.pane__term {
+  flex: 1;
+  min-height: 0;
+  padding: 2px 0 0 4px;
+}
+
+.pane__exit {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: #1b1f24ee;
+  border-top: 1px solid var(--chrome-line);
+  font-size: 11px;
+}
+
+.pane__exit--bad {
+  border-top-color: var(--danger);
+  color: #ffb4ae;
+}
+
+.btn {
+  padding: 2px 8px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 4px;
+  background: #232a32;
+  color: var(--text);
+  font: inherit;
+}
+
+.btn:hover {
+  background: #2c343d;
+}
+
+.divider {
+  position: absolute;
+  z-index: 5;
+}
+
+.divider--v {
+  cursor: col-resize;
+}
+
+.divider--h {
+  cursor: row-resize;
+}
+
+.divider__line {
+  position: absolute;
+  background: var(--chrome-line);
+}
+
+.divider:hover .divider__line {
+  background: var(--accent);
+}
+
+/* ------------------------------------------------------------ status bar */
+
+.statusbar {
+  height: var(--statusbar-h);
+  min-height: var(--statusbar-h);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  background: var(--chrome-bg);
+  border-top: 1px solid var(--chrome-line);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.statusbar__sep {
+  color: var(--text-faint);
+}
+
+.statusbar__warn {
+  color: var(--warn);
+}
+
+.statusbar__crit {
+  color: var(--danger);
+}
+
+.statusbar__hint {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+/* --------------------------------------------------------------- viewer */
+
+.viewer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: #0e1116;
+}
+
+.viewer__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--chrome-line);
+}
+
+.viewer__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.viewer__body {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 14px;
+  font-family: 'SF Mono Terminal', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  user-select: text;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-faint);
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toast {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: #262d35;
+  border: 1px solid var(--chrome-line);
+  color: var(--text);
+  box-shadow: 0 6px 20px #0008;
+}

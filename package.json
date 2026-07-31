@@ -1,0 +1,52 @@
+{
+  "name": "seashell",
+  "version": "0.1.0",
+  "description": "A terminal window manager for macOS — tiled panes, a built-in file explorer, and clickable file paths.",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "./out/main/index.js",
+  "scripts": {
+    "postinstall": "node scripts/fix-pty-perms.cjs",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "pack:dir": "npm run build && electron-builder --dir",
+    "pack:mac": "npm run build && electron-builder --mac",
+    "pack:universal": "npm run build && electron-builder --mac --universal"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "4.2.0",
+    "@testing-library/react": "16.3.0",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.8",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "5.2.0",
+    "@vitest/coverage-v8": "4.1.10",
+    "@xterm/addon-clipboard": "0.2.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-search": "0.16.0",
+    "@xterm/addon-serialize": "0.14.0",
+    "@xterm/addon-unicode11": "0.9.0",
+    "@xterm/addon-webgl": "0.19.0",
+    "@xterm/headless": "6.0.0",
+    "@xterm/xterm": "6.0.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "happy-dom": "20.11.1",
+    "ignore": "7.0.6",
+    "lru-cache": "11.5.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "shiki": "4.3.1",
+    "typescript": "7.0.2",
+    "vite": "7.3.6",
+    "vitest": "4.1.10",
+    "zod": "4.4.3"
+  }
+}

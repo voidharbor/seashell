@@ -63,3 +63,6 @@ api_key.p8
 # Local scratch
 scratch/
 tmp/
+
+# Generated icon intermediates (icon.icns is committed, the iconset is not)
+build/icon.iconset/

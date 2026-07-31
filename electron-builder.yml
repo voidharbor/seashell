@@ -1,0 +1,46 @@
+appId: dev.seashell.app
+productName: SeaShell
+copyright: Copyright © 2026 SeaShell contributors
+
+directories:
+  output: release
+  buildResources: build
+
+# MUST stay false. It defaults to TRUE, which runs @electron/rebuild against
+# node-pty and compiles a single host-arch binary into node_modules/node-pty/
+# build/Release. node-pty's loader PREFERS build/Release over prebuilds/, so a
+# "universal" build made on an Intel Mac would ship an x86_64-only PTY layer:
+# perfect locally, dead on every Apple Silicon machine. node-pty 1.1.0 is
+# Node-API and already ships both darwin prebuilds, so there is nothing to
+# rebuild in the first place.
+npmRebuild: false
+
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+
+# node-pty is a native module: its .node binary and its spawn-helper executable
+# cannot be read from inside an asar archive, so they must stay unpacked.
+asarUnpack:
+  - node_modules/node-pty/**/*
+
+afterPack: build/afterPack.cjs
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  target:
+    - target: dir
+      arch: [x64]
+  # Lets macOS keep this on the integrated GPU. On a dual-GPU 2019 MBP,
+  # creating a WebGL context can otherwise promote the machine to the discrete
+  # Radeon and pin it there, costing 10-15W and provoking thermal throttling.
+  extendInfo:
+    NSSupportsAutomaticGraphicsSwitching: true
+    NSHighResolutionCapable: true
+  # Unsigned local build. Distribution requires signing + notarization;
+  # arm64 in particular will not launch without at least an ad-hoc signature.
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
