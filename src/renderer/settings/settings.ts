@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
   attentionGlow: true,
   attentionSound: false,
   autoTitlePanes: true,
-  autoColorPanes: false,
+  autoColorPanes: true,
 }
 
 const STORAGE_KEY = 'seashell.settings'

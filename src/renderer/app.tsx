@@ -567,14 +567,6 @@ export function App(): React.JSX.Element {
         </div>
         <div
           className="tabbar__new"
-          title="New pane running claude"
-          style={full ? { opacity: 0.4 } : undefined}
-          onClick={() => !full && newPane('claude')}
-        >
-          ✻
-        </div>
-        <div
-          className="tabbar__new"
           title="New web preview (⌘⇧U)"
           style={full ? { opacity: 0.4 } : undefined}
           onClick={() =>

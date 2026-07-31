@@ -47,6 +47,7 @@ describe('coerceSettings', () => {
   it('shows visual features by default', () => {
     expect(DEFAULT_SETTINGS.attentionGlow).toBe(true)
     expect(DEFAULT_SETTINGS.autoTitlePanes).toBe(true)
+    expect(DEFAULT_SETTINGS.autoColorPanes).toBe(true)
   })
 
   it('leaves the ping opt-in', () => {
