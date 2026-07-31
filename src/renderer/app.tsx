@@ -16,6 +16,7 @@ import {
   widthFromDrag,
 } from './layout/sidebar.js'
 import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
+import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 
@@ -45,6 +46,38 @@ export function App(): React.JSX.Element {
     setSettings(next)
     saveSettings(next)
   }, [])
+
+  useEffect(() => unlockAudio(), [])
+
+  /**
+   * Pings on the *transition* into attention, never on the state.
+   *
+   * Attention is recomputed on every metrics tick, so reacting to "this pane
+   * wants attention" would re-fire every few seconds for as long as an agent
+   * sat waiting. What is worth hearing is the moment it starts asking.
+   *
+   * Sleep gates the sound as well as the glow — `attentionGlow` is what the
+   * moon in the tab bar toggles, and a ping that survived it would defeat the
+   * point of the control.
+   */
+  const prevAttention = useRef(new Map<string, string>())
+  useEffect(() => {
+    const seen = new Map<string, string>()
+    let started = false
+
+    for (const tab of state.tabs) {
+      for (const pane of Object.values(tab.panes)) {
+        const now = pane.attention ?? ''
+        seen.set(pane.id, now)
+        if (now !== '' && (prevAttention.current.get(pane.id) ?? '') === '') started = true
+      }
+    }
+    prevAttention.current = seen
+
+    if (started && settings.attentionGlow && settings.attentionSound) {
+      playAttentionPing()
+    }
+  }, [state.tabs, settings.attentionGlow, settings.attentionSound])
   const [findOpen, setFindOpen] = useState(false)
   const [find, setFind] = useState<{ nonce: number; direction: 'next' | 'prev' }>({
     nonce: 0,
@@ -531,6 +564,36 @@ export function App(): React.JSX.Element {
           onClick={() => !full && dispatch({ type: 'pane.newWeb', url: '' })}
         >
           ◍
+        </div>
+
+        {/* Pushes sleep and settings to the right-hand end of the bar. */}
+        <span className="tabbar__gap" />
+
+        {/*
+          Sleep is the same preference the settings panel exposes, surfaced as
+          one click. The glow exists to interrupt you, so the control that stops
+          it interrupting has to be reachable without opening a panel and
+          reading a list — by the time you have done that, you have already been
+          interrupted.
+        */}
+        <div
+          className={'tabbar__new tabbar__sleep' + (settings.attentionGlow ? '' : ' tabbar__sleep--on')}
+          title={
+            settings.attentionGlow
+              ? 'Sleep — stop panes flashing for attention'
+              : 'Asleep — panes will not flash. Click to wake.'
+          }
+          onClick={() => updateSettings({ ...settings, attentionGlow: !settings.attentionGlow })}
+        >
+          {settings.attentionGlow ? '☾' : '☽'}
+        </div>
+
+        <div
+          className="tabbar__new"
+          title="Settings (⌘,)"
+          onClick={() => setSettingsOpen(true)}
+        >
+          ⚙
         </div>
       </div>
 

@@ -38,7 +38,18 @@ describe('coerceSettings', () => {
     expect(Object.keys(result).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort())
   })
 
-  it('every default is on, so a fresh install shows the features', () => {
-    expect(Object.values(DEFAULT_SETTINGS).every((v) => v === true)).toBe(true)
+  /**
+   * Visual features are on by default so a fresh install actually shows what it
+   * can do. Sound is the exception and stays opt-in: a notification noise
+   * nobody asked for is intrusive in a way a border that pulses is not, and it
+   * fires while the user is in another app entirely.
+   */
+  it('shows visual features by default', () => {
+    expect(DEFAULT_SETTINGS.attentionGlow).toBe(true)
+    expect(DEFAULT_SETTINGS.autoTitlePanes).toBe(true)
+  })
+
+  it('leaves the ping opt-in', () => {
+    expect(DEFAULT_SETTINGS.attentionSound).toBe(false)
   })
 })

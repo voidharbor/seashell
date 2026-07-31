@@ -93,8 +93,11 @@ const STEPS: Step[] = [
       'Panes also name themselves from whatever the running program is doing, so ' +
       'six agents read as six pieces of work rather than six panes called claude. ' +
       'Click the dot in a title bar to colour a pane, or double-click a tab to ' +
-      'rename it. All of it is switchable in Settings.',
+      'rename it. When you want none of it, hit the moon at the top right — that ' +
+      'is sleep, and panes stop asking for you until you wake it. All of it is ' +
+      'switchable in Settings.',
     keys: [
+      ['☾', 'Sleep — stop panes flashing, top right'],
       ['⌘,', 'Settings'],
       ['⌘/', 'Show this tutorial again'],
     ],
@@ -117,7 +120,8 @@ const STEPS: Step[] = [
     body:
       'Zoom scales the terminal text and the whole interface together. Terminal ' +
       'font sizes step through values chosen to stay pixel-aligned, so text never ' +
-      'goes blurry at any zoom level.',
+      'goes blurry at any zoom level. Drag the file explorer’s right edge to ' +
+      'resize it, or double-click that edge to put it back.',
     keys: [
       ['⌘+  ⌘−', 'Zoom in / out'],
       ['⌘0', 'Actual size'],

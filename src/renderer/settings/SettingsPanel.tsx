@@ -23,6 +23,12 @@ const GROUPS: Array<{ heading: string; rows: Row[] }> = [
           'A pane breathes its border while its program sits waiting for input, and pulses briefly when a job finishes. Never the pane you are focused on.',
       },
       {
+        key: 'attentionSound',
+        title: 'Ping when a pane starts glowing',
+        detail:
+          'A short, quiet two-tone chime the moment a pane begins asking — not while it keeps asking. Sleep silences it along with the glow, and rapid pings are collapsed into one.',
+      },
+      {
         key: 'autoTitlePanes',
         title: 'Name panes from the running program',
         detail:

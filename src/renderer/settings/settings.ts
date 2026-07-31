@@ -14,6 +14,14 @@
 export interface Settings {
   /** Pulse a pane's border when it is waiting for input or has just finished. */
   attentionGlow: boolean
+  /**
+   * Play a short ping when a pane starts asking for attention.
+   *
+   * Subordinate to `attentionGlow`, which the tab bar's moon toggles: asleep
+   * means silent as well as still. A sound that kept firing after you had
+   * explicitly asked for quiet would be worse than no sound at all.
+   */
+  attentionSound: boolean
   /** Name panes from the title the running program sets, e.g. an agent's
    *  session summary, instead of the working directory. */
   autoTitlePanes: boolean
@@ -21,6 +29,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   attentionGlow: true,
+  attentionSound: false,
   autoTitlePanes: true,
 }
 
