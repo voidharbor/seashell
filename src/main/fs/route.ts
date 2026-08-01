@@ -22,6 +22,15 @@ import path from 'node:path'
  */
 export const VIEWER_MAX_BYTES = 8 * 1024 * 1024
 
+/** Image extensions the in-pane preview renders. Must stay in step with
+ *  IMAGE_MIME (ipc-router.ts) and IMAGE_EXTS (FilePreview.tsx). */
+// Dot-prefixed to match extOf(), which returns path.extname() verbatim.
+export const VIEWER_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico'])
+
+/** Matches IMAGE_MAX_BYTES in ipc-router.ts — past it the read would be
+ *  refused anyway, so the router hands the file to the OS up front. */
+export const VIEWER_IMAGE_MAX_BYTES = 16 * 1024 * 1024
+
 /** Result of sniffing an extensionless file's first 8192 bytes (spec §8.6). */
 export type SniffResult = 'binary' | 'text'
 
@@ -90,6 +99,25 @@ export function decideRoute(input: RouteInput): OpenRoute {
   if (VIEWER_EXTENSIONS.has(ext)) {
     return input.size > VIEWER_MAX_BYTES ? 'too-large' : 'viewer'
   }
+
+  // Images preview in-pane: the preview already renders them (readImageFile,
+  // fixed mime table) and opening Preview.app for a glance at a screenshot was
+  // the single most jarring hand-off in the app. The right-click menu is the
+  // explicit way out to the default app. Oversized ones still go to the OS —
+  // the ceiling matches IMAGE_MAX_BYTES in ipc-router.ts, and the extension
+  // list must stay in step with IMAGE_MIME there and IMAGE_EXTS in
+  // FilePreview.tsx. SVG stays out on purpose: script-bearing document, shown
+  // as source instead.
+  if (VIEWER_IMAGE_EXTENSIONS.has(ext)) {
+    return input.size > VIEWER_IMAGE_MAX_BYTES ? 'os' : 'viewer'
+  }
+
+  // PDFs render in-pane through Chromium's own PDFium viewer — the same
+  // sandboxed renderer Chrome uses, in a guest process. Josh produces PDFs
+  // constantly (quotes, contracts), which is what promoted this from
+  // "hand it to Preview.app" to a first-class preview. No size gate: PDFium
+  // streams large documents better than the image path ever could.
+  if (ext === '.pdf') return 'viewer'
 
   // Everything else: documents needing a heavy native app (pdf, xlsx, docx,
   // images, archives, ...) and anything unrecognized. No size guard here —

@@ -80,17 +80,40 @@ function createWindow(): void {
     webPreferences.sandbox = true
 
     const src = String(params.src ?? '')
-    if (!/^https?:\/\//i.test(src)) {
-      // A guest is for previewing a web page. file:// would give it the disk.
+    // Parsed, not regexed. A string test on the raw URL is fragment-blind:
+    // file:///secret.html#x.pdf ends in ".pdf" and would have sailed through,
+    // loading arbitrary local HTML in the guest. URL() splits hash and query
+    // off before the suffix check, so only a genuine *.pdf pathname qualifies.
+    let isPdfFile = false
+    try {
+      const u = new URL(src)
+      isPdfFile = u.protocol === 'file:' && /\.pdf$/i.test(decodeURIComponent(u.pathname))
+    } catch {
+      /* not a URL at all — falls through to about:blank */
+    }
+    if (!/^https?:\/\//i.test(src) && !isPdfFile) {
+      // A guest is for previewing a web page — or, the one file:// exception,
+      // a PDF for the in-pane viewer. General file:// would hand the guest the
+      // disk; a .pdf path hands PDFium a document to parse in its sandbox,
+      // which is the same exposure as opening it in Chrome. Anything else
+      // pretending to be a guest gets a blank page.
       params.src = 'about:blank'
     }
   })
 
-  // A guest must not be able to open windows in the host app either.
+  // A guest must not be able to open windows in the host app either, and once
+  // attached it may only ever *navigate* to the web. The initial file://*.pdf
+  // load arrives via the src attribute, which will-navigate does not cover —
+  // so this cannot break the PDF preview, but it does stop a crafted PDF's
+  // link (or a compromised web page) walking the frame onto another file://
+  // and turning the viewer into a local file browser.
   mainWindow.webContents.on('did-attach-webview', (_e, guest) => {
     guest.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
       return { action: 'deny' }
+    })
+    guest.on('will-navigate', (e, url) => {
+      if (!/^https?:\/\//i.test(url)) e.preventDefault()
     })
   })
 

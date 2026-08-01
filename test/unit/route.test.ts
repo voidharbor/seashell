@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decideRoute, VIEWER_MAX_BYTES, type RouteInput } from '../../src/main/fs/route.js'
+import { VIEWER_IMAGE_EXTENSIONS, decideRoute, VIEWER_MAX_BYTES, type RouteInput } from '../../src/main/fs/route.js'
 import { denyOpenPath, isUnderDev, type OpenGuardInput } from '../../src/main/fs/path-guard.js'
 
 type Over = Partial<Omit<RouteInput, 'resolvedPath'>> & { name: string; resolvedPath?: string }
@@ -56,7 +56,9 @@ describe('decideRoute — size guard', () => {
   })
 
   it('does not apply the size guard to os-routed documents', () => {
-    const r = decideRoute(input({ name: 'huge.pdf', size: VIEWER_MAX_BYTES * 10 }))
+    // .docx, not .pdf: PDFs preview in-pane now (PDFium streams, so they carry
+    // no size gate either — asserted in the image/pdf routing suite below).
+    const r = decideRoute(input({ name: 'huge.docx', size: VIEWER_MAX_BYTES * 10 }))
     expect(r).toBe('os')
   })
 
@@ -82,7 +84,8 @@ describe('decideRoute — extensionless sniffing', () => {
 
 describe('decideRoute — default app fallback', () => {
   it('routes documents needing a heavy native app to os', () => {
-    for (const name of ['a.pdf', 'a.xlsx', 'a.docx', 'a.png', 'a.jpg', 'a.mp4', 'a.zip']) {
+    // pdf/png/jpg left this list when the in-pane preview took them over.
+    for (const name of ['a.xlsx', 'a.docx', 'a.mp4', 'a.zip']) {
       expect(decideRoute(input({ name }))).toBe('os')
     }
   })
@@ -153,7 +156,12 @@ describe('decideRoute — DENY routes to reveal, never openPath', () => {
   })
 
   it('does NOT deny a known document-extension file just because it is executable', () => {
-    expect(decideRoute(input({ name: 'photo.png', isExecutable: true }))).toBe('os')
+    // Now routes to the in-pane viewer, which is *stricter* than the old 'os'
+    // answer this asserted: the viewer reads bytes over IPC and never touches
+    // LaunchServices, so the execute bit has nothing left to fire.
+    expect(decideRoute(input({ name: 'photo.png', isExecutable: true }))).toBe('viewer')
+    // The un-previewable equivalent keeps the original property.
+    expect(decideRoute(input({ name: 'sheet.xlsx', isExecutable: true }))).toBe('os')
   })
 
   it('does not deny a non-executable file with an unrecognized extension', () => {
@@ -193,5 +201,39 @@ describe('denyOpenPath — direct unit coverage of the guard itself', () => {
 
   it('denies a directory unconditionally', () => {
     expect(denyOpenPath(guard({ name: 'a-directory', isDir: true }))).toBe(true)
+  })
+})
+
+describe('image routing', () => {
+  const base = { isDir: false, isExecutable: false }
+
+  it('sends images to the in-pane preview', () => {
+    for (const name of ['/a/shot.png', '/a/photo.JPG', '/a/anim.gif', '/a/pic.webp']) {
+      expect(decideRoute({ ...base, resolvedPath: name, size: 500_000 })).toBe('viewer')
+    }
+  })
+
+  it('hands an image past the read ceiling to the OS instead', () => {
+    // Matches IMAGE_MAX_BYTES in ipc-router: past it readImageFile would
+    // refuse anyway, so routing to the viewer would open a broken pane.
+    expect(decideRoute({ ...base, resolvedPath: '/a/huge.png', size: 17 * 1024 * 1024 })).toBe('os')
+  })
+
+  it('never treats SVG as a renderable image', () => {
+    // Script-bearing document. Whatever else happens to it, it must not reach
+    // the data-URL image path.
+    const route = decideRoute({ ...base, resolvedPath: '/a/logo.svg', size: 1000 })
+    expect(['viewer', 'os']).toContain(route)
+    // and if it is 'viewer', that is the TEXT viewer via VIEWER_EXTENSIONS,
+    // which the image test above cannot reach — asserted structurally by the
+    // image set not containing svg:
+    expect(VIEWER_IMAGE_EXTENSIONS.has('.svg')).toBe(false)
+  })
+
+  it('previews pdf in-pane, office documents with the OS', () => {
+    expect(decideRoute({ ...base, resolvedPath: '/a/doc.pdf', size: 1000 })).toBe('viewer')
+    for (const name of ['/a/sheet.xlsx', '/a/word.docx']) {
+      expect(decideRoute({ ...base, resolvedPath: name, size: 1000 })).toBe('os')
+    }
   })
 })

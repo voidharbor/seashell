@@ -1279,3 +1279,43 @@ body.dragging .web__view {
   border-color: var(--danger);
   color: #ffffff;
 }
+
+/* ---------------------------------------------------------- context menu */
+
+.ctx {
+  position: fixed;
+  z-index: 50;
+  min-width: calc(180px * var(--ui-scale));
+  padding: calc(4px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  box-shadow: 0 8px 24px #000a;
+}
+
+.ctx__item {
+  display: block;
+  width: 100%;
+  padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.ctx__item:hover {
+  background: var(--select);
+  color: #ffffff;
+}
+
+.preview__body--pdf {
+  overflow: hidden; /* the PDF viewer scrolls itself */
+  display: flex;
+}
+
+.preview__pdf {
+  flex: 1;
+  border: 0;
+}

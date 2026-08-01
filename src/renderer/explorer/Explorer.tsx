@@ -50,7 +50,35 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set([root]))
   const [selected, setSelected] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(
+    null
+  )
   const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  /**
+   * Context-menu dismissal, ColorPicker's pattern: pointerdown in capture
+   * phase (a click listener fires after focus has already moved, which reads
+   * as a laggy close) plus Escape. Bound only while a menu is open.
+   */
+  useEffect(() => {
+    if (!menu) return
+    const onDown = (e: MouseEvent): void => {
+      if (!(e.target as HTMLElement).closest('.ctx')) setMenu(null)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setMenu(null)
+      }
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [menu])
 
   const load = useCallback(async (dir: string): Promise<void> => {
     const res = await window.seashell.fs.readDir({ path: dir, respectGitignore: true })
@@ -221,6 +249,11 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
           style={{ paddingLeft: 6 + depth * 13 }}
           onClick={() => setSelected(full)}
           onDoubleClick={() => void activate(full, entry.isDir)}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            setSelected(full)
+            setMenu({ x: e.clientX, y: e.clientY, path: full, isDir: entry.isDir })
+          }}
           title={full}
         >
           <span
@@ -283,6 +316,45 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
         </div>
         {expanded.has(root) && renderDir(root, 1)}
       </div>
+
+      {/*
+        Right-click menu. Two verbs, deliberately: in-pane preview owns
+        double-click, so the menu is for the explicit exceptions — hand the
+        file to the OS anyway, or go find it in Finder. Position is fixed at
+        the pointer; the sidebar's own overflow would clip an absolute child.
+      */}
+      {menu && (
+        <div className="ctx" style={{ left: menu.x, top: menu.y }}>
+          {!menu.isDir && (
+            <button
+              className="ctx__item"
+              onClick={() => {
+                const p = menu.path
+                setMenu(null)
+                void window.seashell.open.withDefaultApp({ path: p }).then((res) => {
+                  if (!res.ok && res.error === 'refused-executable') {
+                    props.onToast('That file is executable — revealed in Finder instead')
+                  } else if (!res.ok) {
+                    props.onToast(`Could not open: ${res.error ?? 'unknown error'}`)
+                  }
+                })
+              }}
+            >
+              Open Outside SeaShell
+            </button>
+          )}
+          <button
+            className="ctx__item"
+            onClick={() => {
+              const p = menu.path
+              setMenu(null)
+              void window.seashell.open.revealInFinder({ path: p })
+            }}
+          >
+            Reveal in Finder
+          </button>
+        </div>
+      )}
 
       {/*
         Where the selected thing actually is.

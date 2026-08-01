@@ -12,6 +12,11 @@ const HIGHLIGHT_MAX_BYTES = 512 * 1024
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico'])
 
+/** Rendered by Chromium's own PDFium viewer in a sandboxed guest — the same
+ *  renderer Chrome uses. The webview guard in main only admits file:// URLs
+ *  that end in .pdf, so this branch and that exception are a matched pair. */
+const PDF_EXTS = new Set(['pdf'])
+
 function extOf(p: string): string {
   const base = p.split('/').filter(Boolean).pop() ?? p
   const i = base.lastIndexOf('.')
@@ -47,6 +52,7 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
   const bodyRef = useRef<HTMLDivElement | null>(null)
 
   const isImage = IMAGE_EXTS.has(extOf(props.path))
+  const isPdf = PDF_EXTS.has(extOf(props.path))
   const canHighlight = languageFor(props.path) !== null
 
   useEffect(() => {
@@ -55,6 +61,7 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
     setLines(null)
 
     void (async () => {
+      if (isPdf) return // the webview streams it; nothing to read here
       if (isImage) {
         const res = await window.seashell.fs.readImageFile({ path: props.path })
         if (cancelled) return
@@ -136,6 +143,40 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
     }
     return <pre className="preview__code">{loaded.text}</pre>
   }, [loaded, lines, props.path])
+
+  if (isPdf) {
+    return (
+      <>
+        <div className="preview__toolbar">
+          <button
+            className="btn"
+            onClick={() => void window.seashell.open.revealInFinder({ path: props.path })}
+          >
+            Reveal
+          </button>
+          <button
+            className="btn"
+            onClick={() => void window.seashell.open.withDefaultApp({ path: props.path })}
+          >
+            Open
+          </button>
+        </div>
+        {/* PDFium needs plugins enabled in the guest; everything else stays as
+            locked down as the web preview. The find bar is deliberately absent:
+            the PDF viewer ships its own search. */}
+        <div className="preview__body preview__body--pdf">
+          <webview
+            src={`file://${encodeURI(props.path)}`}
+            plugins
+            partition="persist:seashell-preview"
+            // eslint-disable-next-line react/no-unknown-property
+            webpreferences="plugins=yes,contextIsolation=yes,nodeIntegration=no,sandbox=yes"
+            className="preview__pdf"
+          />
+        </div>
+      </>
+    )
+  }
 
   return (
     <>

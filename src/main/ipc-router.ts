@@ -75,14 +75,18 @@ const ProjectSaveReq = z.object({
 const HttpReq = z.object({ url: z.string().max(4096) })
 
 /** Extension -> mime, for the image preview. Fixed table; never sniffed. */
+// Keys are dot-prefixed because the lookup uses extOf(), which returns
+// path.extname() verbatim. They were dotless once, which made every lookup
+// miss and readImageFile refuse every image — invisible until the router
+// started sending images here at all.
 const IMAGE_MIME: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  bmp: 'image/bmp',
-  ico: 'image/x-icon',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
   // SVG is deliberately absent. It is a script-bearing document, not a picture;
   // previewing one as an image would be handing an untrusted file a rendering
   // context. SVGs fall through to the text path and are shown as source.
