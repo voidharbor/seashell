@@ -1,0 +1,31 @@
+# Guards on every push, per the design's §15.8: tests and typecheck run here,
+# releases are built by release.yml (Linux/Windows) or locally (macOS, where
+# any future signing material lives).
+#
+# The matrix is the point. node-pty compiles natively on the Linux runner and
+# loads real prebuilds on Windows, so a green run here is the only automated
+# evidence the PTY layer even loads off-Mac — nothing Windows- or
+# Linux-specific can be executed on the Intel Mac this project is developed on.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test

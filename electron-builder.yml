@@ -72,3 +72,16 @@ win:
   target:
     - target: dir
       arch: [x64]
+
+# Linux. Never built from this Mac: node-pty ships no linux prebuilds, so the
+# native module must be compiled on a Linux host at `npm ci` time (Node-API, so
+# the runner's node ABI is fine for Electron). That is what the release
+# workflow's ubuntu job exists for. AppImage because "download one file and run
+# it" is the closest Linux gets to a dmg.
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  icon: icon/icon-512.png
+  category: Development
+  artifactName: ${productName}-${version}-linux-x86_64.${ext}

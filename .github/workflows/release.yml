@@ -1,0 +1,77 @@
+# Builds the artifacts this Mac cannot produce honestly, and attaches them to a
+# GitHub release.
+#
+#  - Linux: node-pty has no linux prebuilds; the native module is compiled here
+#    by `npm ci` on the ubuntu runner (Node-API, so the runner's node ABI works
+#    inside Electron). An AppImage cross-built from macOS would package a PTY
+#    layer that does not exist — this job is the only honest source of one.
+#  - Windows: built natively rather than cross-built, and only after the test
+#    suite has passed on an actual Windows host.
+#
+# macOS is deliberately absent: those builds stay local, per §15.8, so any
+# future signing identity never leaves the machine.
+#
+# Runs on tag push, or by hand against an existing tag/release:
+#   gh workflow run release.yml -f tag=v0.1.1
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: existing tag to build and upload assets for
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Nothing red gets attached to a release, on any platform.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx electron-builder --linux
+      # --clobber so a re-run replaces its own asset instead of failing on it.
+      - run: gh release upload "$TAG" release/*.AppImage --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx electron-builder --win
+      # Same asset name the local cross-build used, so this native-built zip
+      # replaces it rather than sitting beside it confusing downloaders.
+      - shell: pwsh
+        run: |
+          $ver = (Get-Content package.json | ConvertFrom-Json).version
+          Compress-Archive -Path release/win-unpacked -DestinationPath "release/SeaShell-$ver-windows-x64.zip"
+          gh release upload "$env:TAG" "release/SeaShell-$ver-windows-x64.zip" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
