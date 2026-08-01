@@ -103,6 +103,13 @@ const STEPS: Step[] = [
     ],
   },
   {
+    title: 'Lookout',
+    body:
+      'When an agent pane stops to ask you something, a card appears in the ' +
+      "corner — Approve answers the pane without leaving the one you're in. " +
+      'Smart drafted replies come from the c-assistant plugin.',
+  },
+  {
     title: 'Previews are panes, not windows',
     body:
       'Open a file from the explorer and it becomes a preview pane, tiled next to ' +
