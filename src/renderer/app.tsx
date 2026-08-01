@@ -33,6 +33,7 @@ import { loadSettings, saveSettings, type Settings } from './settings/settings.j
 import { extractQuestion } from './lookout/extract.js'
 import { planDetections } from './lookout/detect.js'
 import { readPaneTail } from './lookout/tail.js'
+import { lookoutBadgeCount } from './lookout/badge.js'
 import { CardStack } from './lookout/CardStack.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
@@ -728,12 +729,11 @@ export function App(): React.JSX.Element {
   const panesAreZoomed = state.tabs.some((t) =>
     Object.values(t.panes).some((p) => p.zoomIndex !== undefined)
   )
-  // You are already looking at the focused pane's card, so it is suppressed
-  // from the stack and does not count toward the badge either.
+  // Suppression (hiding the focused pane's card from the stack, below) is a
+  // visibility rule only — the badge counts every active card regardless of
+  // pane, so it does not move just because focus does.
   const suppressedPaneId = activeTab?.focusedPaneId ?? null
-  const lookoutCount = lookoutCards.filter(
-    (c) => c.state === 'active' && c.paneId !== suppressedPaneId
-  ).length
+  const lookoutCount = lookoutBadgeCount(lookoutCards)
 
   return (
     <div className="app">

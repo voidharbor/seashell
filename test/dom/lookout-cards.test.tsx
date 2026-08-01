@@ -30,10 +30,17 @@ describe('CardStack', () => {
     expect(screen.queryByText(/ship the release/)).toBeNull()
   })
   it('stale cards disable their buttons', () => {
+    const onAction = vi.fn()
     render(<CardStack cards={[{ ...card, state: 'stale' as const }]} suppressedPaneId={null}
-      pluginInstalled open={false} screenMode={() => 'input'} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
+      pluginInstalled open={false} screenMode={() => 'input'} onAction={onAction} onGotoPane={() => {}} onClose={() => {}} />)
     expect(screen.getByText(/session moved on/i)).toBeTruthy()
     expect((screen.getByText(/approve/i) as HTMLButtonElement).disabled).toBe(true)
+    // Only send affordances are disabled — dismiss never sends, so a stale
+    // card must not become permanently stuck in the stack.
+    const denyButton = screen.getByText(/deny/i) as HTMLButtonElement
+    expect(denyButton.disabled).toBe(false)
+    fireEvent.click(denyButton)
+    expect(onAction).toHaveBeenCalledWith({ cardId: 'card-1', action: 'dismiss' })
   })
   it('empty open stack shows install commands when the plugin is absent', () => {
     render(<CardStack cards={[]} suppressedPaneId={null} pluginInstalled={false} open

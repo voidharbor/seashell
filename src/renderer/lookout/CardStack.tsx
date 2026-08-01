@@ -76,20 +76,20 @@ interface CardItemProps {
   onGotoPane(paneId: string): void
 }
 
-/** Go to pane + a bare dismiss — the fallback button pair shown whenever a
- *  card has nothing safe to send (a draft-less push card by design, or any
- *  card sitting on a non-input screen). */
-function gotoPaneAndDismiss(
-  disabled: boolean,
-  gotoPane: () => void,
-  dismiss: () => void
-): React.ReactNode {
+/**
+ * Go to pane + a bare dismiss — the fallback button pair shown whenever a
+ * card has nothing safe to send (a draft-less push card by design, or any
+ * card sitting on a non-input screen). Never disabled, even on a stale card:
+ * neither one fires anything into the pane's conversation, so staleness has
+ * nothing to guard against here.
+ */
+function gotoPaneAndDismiss(gotoPane: () => void, dismiss: () => void): React.ReactNode {
   return (
     <>
-      <button className="btn" disabled={disabled} onClick={gotoPane}>
+      <button className="btn" onClick={gotoPane}>
         Go to pane
       </button>
-      <button className="btn" disabled={disabled} onClick={dismiss}>
+      <button className="btn" onClick={dismiss}>
         ✕
       </button>
     </>
@@ -105,9 +105,12 @@ function gotoPaneAndDismiss(
  * edited draft) renders only while `screenMode` reads 'input'; 'selector' and
  * an unreadable pane (null) both fall back to the same look-only view. A
  * stale card is a separate, stronger gate — it always shows its normal
- * button shape (so the layout does not jump) but every button is disabled
- * and labelled `session moved on`, regardless of what screenMode currently
- * reads, because the card can never fire into a changed conversation.
+ * button shape (so the layout does not jump) and is labelled
+ * `session moved on`, but only its *send* affordances (Approve, Continue /
+ * Yes / No) are disabled, because those are the only buttons that fire
+ * anything into a conversation that has since moved on. `Go to pane` and the
+ * dismiss button stay live on a stale card — neither one sends, and a card
+ * whose own dismiss button is disabled would be stuck in the stack forever.
  *
  * `screenMode` is re-read a second time inside `send`, at the moment of the
  * click, rather than trusting the `interactive` value computed at render.
@@ -123,8 +126,8 @@ function CardItem(props: CardItemProps): React.JSX.Element {
   const stale = card.state === 'stale'
   const interactive = props.screenMode(card.paneId) === 'input'
   const hasDraft = card.draft !== null
-  // A stale card keeps its normal button shape (disabled) instead of
-  // collapsing to the look-only fallback — see the doc comment above.
+  // A stale card keeps its normal button shape (send buttons disabled)
+  // instead of collapsing to the look-only fallback — see the doc above.
   const showShape = stale || interactive
   const editable = interactive && !stale
 
@@ -159,14 +162,14 @@ function CardItem(props: CardItemProps): React.JSX.Element {
           <button className="btn btn--primary" disabled={stale} onClick={() => send(text)}>
             Approve ✓
           </button>
-          <button className="btn" disabled={stale} onClick={dismiss}>
+          <button className="btn" onClick={dismiss}>
             Deny ✕
           </button>
         </>
       )
     } else {
       hintNode = <div className="card__hint">{SELECTOR_HINT}</div>
-      actions = gotoPaneAndDismiss(false, gotoPane, dismiss)
+      actions = gotoPaneAndDismiss(gotoPane, dismiss)
     }
   } else if (card.source === 'detector') {
     if (showShape) {
@@ -182,23 +185,24 @@ function CardItem(props: CardItemProps): React.JSX.Element {
           <button className="btn" disabled={stale} onClick={() => send('no')}>
             No
           </button>
-          <button className="btn" disabled={stale} onClick={gotoPane}>
+          <button className="btn" onClick={gotoPane}>
             Go to pane
           </button>
-          <button className="btn" disabled={stale} onClick={dismiss}>
+          <button className="btn" onClick={dismiss}>
             ✕
           </button>
         </>
       )
     } else {
       hintNode = <div className="card__hint">{SELECTOR_HINT}</div>
-      actions = gotoPaneAndDismiss(false, gotoPane, dismiss)
+      actions = gotoPaneAndDismiss(gotoPane, dismiss)
     }
   } else {
     // Draft-less push card — money/legal/irreversible never one-clicks, so
-    // there was never a send affordance here to gate on screen mode.
+    // there was never a send affordance here to gate on screen mode or
+    // staleness; Go to pane / dismiss stay live even once stale.
     if (stale) hintNode = <div className="card__hint">{STALE_LABEL}</div>
-    actions = gotoPaneAndDismiss(stale, gotoPane, dismiss)
+    actions = gotoPaneAndDismiss(gotoPane, dismiss)
   }
 
   return (
