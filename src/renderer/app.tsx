@@ -332,13 +332,13 @@ export function App(): React.JSX.Element {
    * so instead of failing quietly.
    */
   const revealPath = useCallback(
-    (p: string) => {
+    (p: string, isDir: boolean) => {
       const root = state.explorerRoot
       if (root && !(p === root || p.startsWith(root.endsWith('/') ? root : `${root}/`))) {
         dispatch({ type: 'toast', message: `${p} is outside the file explorer` })
         return
       }
-      dispatch({ type: 'explorer.reveal', path: p })
+      dispatch({ type: 'explorer.reveal', path: p, isDir })
     },
     [state.explorerRoot]
   )
@@ -876,7 +876,7 @@ export function App(): React.JSX.Element {
                   onFocus={() => dispatch({ type: 'pane.focus', paneId: r.paneId })}
                   onClose={() => void closePane(r.paneId)}
                   onZoom={() => dispatch({ type: 'pane.zoom', paneId: r.paneId })}
-                  onReveal={(p) => revealPath(p)}
+                  onReveal={(p, isDir) => revealPath(p, isDir)}
                   onSpawned={(pid) => dispatch({ type: 'pane.spawned', paneId: r.paneId, pid })}
                   onRestart={() => dispatch({ type: 'pane.restarting', paneId: r.paneId })}
                   onUrlChange={(url) => dispatch({ type: 'pane.setUrl', paneId: r.paneId, url })}

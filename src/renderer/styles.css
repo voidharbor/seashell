@@ -276,6 +276,40 @@ body.dragging .sidebar__grip {
   flex: 1;
   overflow: auto;
   padding: 6px 8px 14px;
+  min-height: 0;
+}
+
+/* Where the selected thing actually is.
+
+   `flex: none` with a fixed height is the point: the tree is the flexing child,
+   and a strip that grew or reflowed on every selection change would shift the
+   rows under the pointer. One line, never wrapped, for the same reason.
+
+   The left truncation is what makes it useful — clipping the right would eat
+   the filename, which is the part being looked for. `direction: rtl` moves the
+   ellipsis to the front; see LEFT_TO_RIGHT_MARK in Explorer.tsx for why the
+   text needs a prefix to survive that. */
+.sidebar__path {
+  flex: none;
+  height: calc(22px * var(--ui-scale));
+  line-height: calc(22px * var(--ui-scale));
+  padding: 0 calc(8px * var(--ui-scale));
+  border-top: 1px solid var(--chrome-line);
+  background: var(--chrome-bg-alt);
+  color: var(--text-dim);
+  font-size: calc(11px * var(--ui-scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  user-select: text;
+  cursor: default;
+}
+
+.sidebar__path:hover {
+  color: var(--text);
+  background: var(--chrome-line);
 }
 
 /* Finder-style rows: 24px tall, 13px system text, a rounded selection pill

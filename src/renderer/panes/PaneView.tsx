@@ -63,7 +63,8 @@ export interface PaneViewProps {
   onFocus: () => void
   onClose: () => void
   onZoom: () => void
-  onReveal: (path: string) => void
+  /** `isDir` decides whether the explorer opens the folder or merely selects it. */
+  onReveal: (path: string, isDir: boolean) => void
   onSpawned: (pid: number) => void
   onRestart: () => void
   onUrlChange: (url: string) => void
@@ -260,7 +261,10 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
           .statBatch({ cwd: cwdRef.current, candidates: [candidate] })
           .then((res) => {
             const hit = res.results[0]
-            if (hit) revealRef.current(hit.resolved)
+            // `kind` is forwarded, not dropped. Without it the explorer cannot
+            // tell a folder from a file, so a revealed directory was selected
+            // and scrolled to but never actually opened.
+            if (hit) revealRef.current(hit.resolved, hit.kind === 'dir')
           })
       },
     })

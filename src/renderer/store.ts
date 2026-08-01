@@ -96,13 +96,26 @@ export interface TabState {
   panes: Record<string, PaneState>
 }
 
+/**
+ * A path to reveal, and whether it is a directory.
+ *
+ * The kind travels with the path because the explorer cannot work it out for
+ * itself — it has no stat, only what it was handed. `statBatch` has always
+ * returned it and the renderer used to drop it one layer too early, which is
+ * why revealing a folder selected the row but never opened it.
+ */
+export interface RevealTarget {
+  path: string
+  isDir: boolean
+}
+
 export interface AppState {
   tabs: TabState[]
   activeTabId: string
   sidebarVisible: boolean
   explorerRoot: string
   /** Path revealed by a double-click in a terminal — highlighted in the tree. */
-  revealPath: string | null
+  revealPath: RevealTarget | null
   system: SystemMetrics | null
   toast: string | null
 }
@@ -239,7 +252,7 @@ export type Action =
   | { type: 'layout.rebalance' }
   | { type: 'explorer.toggle' }
   | { type: 'explorer.setRoot'; root: string }
-  | { type: 'explorer.reveal'; path: string | null }
+  | { type: 'explorer.reveal'; path: string | null; isDir?: boolean }
   | { type: 'metrics'; panes: PaneMetrics[]; system: SystemMetrics }
   | { type: 'toast'; message: string | null }
 
@@ -597,7 +610,12 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, explorerRoot: action.root }
 
     case 'explorer.reveal':
-      return { ...state, revealPath: action.path, sidebarVisible: true }
+      return {
+        ...state,
+        revealPath:
+          action.path === null ? null : { path: action.path, isDir: action.isDir ?? false },
+        sidebarVisible: true,
+      }
 
     /**
      * Metrics arrive every few seconds forever, so this is the one reducer case

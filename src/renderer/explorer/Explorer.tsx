@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FsDirEntry } from '../../shared/ipc.js'
+import type { RevealTarget } from '../store.js'
+import { expandChain } from './chain.js'
 import { FileIcon, FolderIcon } from './icons.js'
+
+/**
+ * U+200E, written as an escape because it is invisible in source.
+ *
+ * The path strip truncates from the left via `direction: rtl`, which also
+ * changes how the bidi algorithm places the path's leading `/` — a neutral
+ * character with no strong character before it takes the paragraph direction
+ * and gets rendered at the far end, so `/Users/j/a.ts` displays as
+ * `Users/j/a.ts/`. Putting a strong left-to-right character first makes every
+ * separator inherit that direction and the path renders as written.
+ */
+const LEFT_TO_RIGHT_MARK = '\u200e'
 
 function extOf(name: string): string {
   const i = name.lastIndexOf('.')
@@ -22,28 +36,12 @@ export interface ExplorerProps {
   /** Used only to show "Home" instead of a long absolute path in the header. */
   home: string
   /** Path to expand to and highlight — set by a double-click in a terminal. */
-  revealPath: string | null
+  revealPath: RevealTarget | null
   /** Bumped by ⌘R. Re-reads every directory currently expanded. */
   refreshNonce: number
   onRevealHandled: () => void
   onOpenInViewer: (path: string) => void
   onToast: (message: string) => void
-}
-
-function parentOf(p: string): string {
-  const i = p.lastIndexOf('/')
-  return i <= 0 ? '/' : p.slice(0, i)
-}
-
-function ancestorsOf(p: string, root: string): string[] {
-  const out: string[] = []
-  let cur = parentOf(p)
-  while (cur.startsWith(root) && cur.length >= root.length) {
-    out.unshift(cur)
-    if (cur === root) break
-    cur = parentOf(cur)
-  }
-  return out
 }
 
 export function Explorer(props: ExplorerProps): React.JSX.Element {
@@ -67,6 +65,9 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
   useEffect(() => {
     setExpanded(new Set([root]))
     setDirs({})
+    // A selection from the previous root is not a selection under this one, and
+    // leaving it would strand the path strip on a path no longer in the tree.
+    setSelected(null)
     void load(root)
   }, [root, load])
 
@@ -116,27 +117,30 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
    */
   useEffect(() => {
     if (!revealPath) return
+    const target = revealPath.path
     let cancelled = false
 
     void (async () => {
-      const chain = ancestorsOf(revealPath, root)
+      // A directory is expanded, not merely selected — the chain includes the
+      // folder itself. A file still expands nothing past its parent.
+      const chain = expandChain(target, root, revealPath.isDir)
       for (const dir of chain) {
         if (cancelled) return
         if (!dirs[dir]) await load(dir)
       }
       if (cancelled) return
       setExpanded((prev) => new Set([...prev, ...chain]))
-      setSelected(revealPath)
-      setRevealed(revealPath)
+      setSelected(target)
+      setRevealed(target)
       props.onRevealHandled()
 
       requestAnimationFrame(() => {
         const el = scrollRef.current?.querySelector<HTMLElement>(
-          `[data-path="${CSS.escape(revealPath)}"]`
+          `[data-path="${CSS.escape(target)}"]`
         )
         el?.scrollIntoView({ block: 'center' })
       })
-      setTimeout(() => setRevealed((r) => (r === revealPath ? null : r)), 2500)
+      setTimeout(() => setRevealed((r) => (r === target ? null : r)), 2500)
     })()
 
     return () => {
@@ -239,6 +243,10 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
     return out
   }
 
+  // Nothing selected is the normal case on launch, and the root is the honest
+  // answer to "where am I" — never a leftover path from a previous selection.
+  const shownPath = selected ?? root
+
   return (
     <div className="sidebar">
       <div className="sidebar__head">
@@ -267,6 +275,39 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
           <span className="node__name">{displayRoot(root, props.home)}</span>
         </div>
         {expanded.has(root) && renderDir(root, 1)}
+      </div>
+
+      {/*
+        Where the selected thing actually is.
+
+        Until now the only way to see a full path was the native `title` tooltip
+        on each row: you had to hover and wait, it vanished the moment you
+        moved, and it could not be copied. Selecting a row should simply tell
+        you.
+
+        Deliberately the last flex child and `flex: none` — the tree is what
+        flexes. A strip that reflowed the tree on every selection change would
+        be worse than no strip at all.
+      */}
+      <div
+        className="sidebar__path"
+        title="Click to copy"
+        onClick={() => {
+          void navigator.clipboard.writeText(shownPath).then(
+            // A silent copy reads as a dead click, so it always says so.
+            () => props.onToast('Copied path'),
+            () => props.onToast('Could not copy the path')
+          )
+        }}
+      >
+        {/*
+          Truncates from the *left*, so the filename — the part being looked
+          for — always survives. The leading marker forces the first strong
+          character to be left-to-right: without it the `direction: rtl` that
+          moves the ellipsis to the front also drags the path's leading slash
+          around to the end, rendering `Users/j/a.ts/`.
+        */}
+        {LEFT_TO_RIGHT_MARK + shownPath}
       </div>
     </div>
   )
