@@ -46,14 +46,32 @@ export class PtyManager {
 
   constructor(private readonly getWindow: () => BrowserWindow | null) {}
 
+  /**
+   * The flush loop exists only while there is something to flush.
+   *
+   * It used to be armed by the first spawn and cleared only by the last close,
+   * which meant an 8ms interval — 125 wakeups a second — ran in the main
+   * process for the entire life of the app, whether or not any pane had
+   * produced a byte. A terminal doing nothing should cost nothing, so the loop
+   * is now started by arriving data and stops itself the moment the buffers are
+   * empty. Latency is unchanged: a chunk still waits at most one interval.
+   */
   private ensureFlushLoop(): void {
     if (this.flushTimer) return
     this.flushTimer = setInterval(() => {
-      if (!this.batcher.shouldFlush(Date.now())) return
-      const event = this.batcher.flush()
-      if (!event || event.batches.length === 0) return
-      this.getWindow()?.webContents.send(CH.ptyData, event)
+      if (this.batcher.shouldFlush(Date.now())) {
+        const event = this.batcher.flush()
+        if (event && event.batches.length > 0) {
+          this.getWindow()?.webContents.send(CH.ptyData, event)
+        }
+      }
+      if (!this.batcher.hasPending()) this.stopFlushLoop()
     }, ACTIVE_FLUSH_INTERVAL_MS)
+  }
+
+  private stopFlushLoop(): void {
+    if (this.flushTimer) clearInterval(this.flushTimer)
+    this.flushTimer = null
   }
 
   /**
@@ -138,7 +156,6 @@ export class PtyManager {
     }
     this.panes.set(req.paneId, rec)
     this.batcher.setPaneActive(req.paneId, true)
-    this.ensureFlushLoop()
 
     proc.onData((chunk: string | Buffer) => {
       const text =
@@ -146,6 +163,7 @@ export class PtyManager {
       if (text) {
         rec.bytesOut += text.length
         this.batcher.push(req.paneId, text, Date.now())
+        this.ensureFlushLoop()
       }
     })
 
@@ -253,10 +271,7 @@ export class PtyManager {
 
     this.panes.delete(paneId)
     this.batcher.removePane(paneId)
-    if (this.panes.size === 0 && this.flushTimer) {
-      clearInterval(this.flushTimer)
-      this.flushTimer = null
-    }
+    if (this.panes.size === 0) this.stopFlushLoop()
 
     // Never pretend the pane is clean when it isn't.
     return { ok: survivors === 0, survivors }

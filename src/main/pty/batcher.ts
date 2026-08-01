@@ -119,25 +119,58 @@ export class PtyBatcher {
 
     if (buf.pendingBytes + data.length > this.maxBufferedBytesPerPane) {
       buf.overflowDroppedBytes += data.length
+      // Arm anyway. The notice owed to this pane is real output that has to
+      // reach the user, and a drop buffers no chunk and moves no byte counter —
+      // so without arming here it would sit until some *other* write happened
+      // to arm the timer, which for a single overflowing pane may be never.
+      this.arm(buf, nowMs)
       return false
     }
 
     buf.chunks.push(data)
     buf.pendingBytes += data.length
     this.totalPendingBytes += data.length
+    this.arm(buf, nowMs)
 
+    return true
+  }
+
+  /**
+   * First pending byte overall arms the timer. An active-tab pane's data
+   * arriving after a background-tab deadline is already armed tightens the
+   * deadline instead of waiting for the slower one, so a pane the user is
+   * actually looking at is never held hostage by a quieter background pane's
+   * longer interval.
+   */
+  private arm(buf: PaneBuffer, nowMs: number): void {
     const interval = buf.active ? ACTIVE_FLUSH_INTERVAL_MS : BACKGROUND_FLUSH_INTERVAL_MS
     const candidateDeadline = nowMs + interval
     if (this.armedDeadlineMs === undefined || candidateDeadline < this.armedDeadlineMs) {
-      // First pending byte overall arms the timer. An active-tab pane's data
-      // arriving after a background-tab deadline is already armed tightens
-      // the deadline instead of waiting for the slower one, so a pane the
-      // user is actually looking at is never held hostage by a quieter
-      // background pane's longer interval.
       this.armedDeadlineMs = candidateDeadline
     }
+  }
 
-    return true
+  /**
+   * Whether anything at all is waiting to go out.
+   *
+   * Exists so the caller's flush loop can stop existing when there is nothing
+   * to flush. The loop runs at the active-pane deadline — 8ms — so leaving it
+   * armed for the lifetime of the app is 125 timer wakeups a second in the main
+   * process forever, including for a window full of panes all sitting quietly
+   * at a prompt. `shouldFlush` cannot answer this: it is deliberately false
+   * while data sits inside its deadline, which is exactly when the loop must
+   * keep running.
+   *
+   * The armed deadline is a complete answer, and deliberately the only one:
+   * every `push` arms, including one that drops a chunk, and `flush` disarms.
+   * So "armed" means exactly "something is owed and a flush will eventually
+   * satisfy it". Answering from the buffers instead would be worse than
+   * redundant — a state that is pending but *unarmed* is one `shouldFlush` can
+   * never turn true, so the loop would spin at 8ms forever without ever
+   * draining it.
+   */
+  hasPending(): boolean {
+    return this.armedDeadlineMs !== undefined
   }
 
   /**

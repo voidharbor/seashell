@@ -149,3 +149,71 @@ describe('PtyBatcher overflow', () => {
     expect(result?.batches[0]?.data).toContain('dropped')
   })
 })
+
+/**
+ * The flush loop's lifetime.
+ *
+ * The loop runs at the active deadline — 8ms — so whether it is running at all
+ * is a real cost, not a detail: it used to be armed by the first spawn and
+ * cleared only by the last close, which is 125 timer wakeups a second in the
+ * main process for the whole life of the app, including a window full of panes
+ * all sitting quietly at a prompt.
+ *
+ * `shouldFlush` cannot answer "is the loop still needed", because it is
+ * deliberately false while data waits inside its deadline — precisely when the
+ * loop must keep running. Hence a separate question.
+ */
+describe('PtyBatcher.hasPending', () => {
+  it('is false for a batcher nobody has written to', () => {
+    expect(new PtyBatcher().hasPending()).toBe(false)
+  })
+
+  it('is true while data waits inside its deadline', () => {
+    const batcher = new PtyBatcher()
+    batcher.push('pane-1', 'hello', 0)
+    // Not yet due to flush, and yet the loop must not stop.
+    expect(batcher.shouldFlush(1)).toBe(false)
+    expect(batcher.hasPending()).toBe(true)
+  })
+
+  it('is false again once everything has been drained', () => {
+    const batcher = new PtyBatcher()
+    batcher.push('pane-1', 'hello', 0)
+    batcher.flush()
+    expect(batcher.hasPending()).toBe(false)
+  })
+
+  it('stays true for an overflow notice that owes a pane an explanation', () => {
+    const batcher = new PtyBatcher({ maxBufferedBytesPerPane: 8 })
+    // Dropped outright: no chunk buffered and no byte counted.
+    expect(batcher.push('pane-1', 'x'.repeat(64), 0)).toBe(false)
+    // The notice still has to reach the user, so the loop must stay alive and
+    // the deadline must be reachable — otherwise a single overflowing pane
+    // waits for some unrelated write that may never come.
+    expect(batcher.hasPending()).toBe(true)
+    // A pane defaults to the background deadline until told otherwise.
+    expect(batcher.shouldFlush(BACKGROUND_FLUSH_INTERVAL_MS)).toBe(true)
+    expect(batcher.flush()?.batches[0]?.data).toContain('dropped')
+    expect(batcher.hasPending()).toBe(false)
+  })
+
+  it('never reports work that no flush could ever drain', () => {
+    // The loop stops when this goes false and spins when it is true, so a
+    // "pending but unflushable" state would spin at 8ms forever.
+    const batcher = new PtyBatcher({ maxBufferedBytesPerPane: 8 })
+    batcher.push('pane-1', 'x'.repeat(64), 0)
+    batcher.push('pane-2', 'ok', 0)
+    expect(batcher.hasPending()).toBe(true)
+    expect(batcher.shouldFlush(BACKGROUND_FLUSH_INTERVAL_MS)).toBe(true)
+    batcher.flush()
+    expect(batcher.hasPending()).toBe(false)
+  })
+
+  it('goes quiet after a burst rather than staying armed', () => {
+    const batcher = new PtyBatcher()
+    for (let i = 0; i < 50; i++) batcher.push('pane-1', 'line\r\n', i)
+    expect(batcher.hasPending()).toBe(true)
+    batcher.flush()
+    expect(batcher.hasPending()).toBe(false)
+  })
+})

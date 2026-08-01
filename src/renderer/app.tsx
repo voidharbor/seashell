@@ -576,30 +576,46 @@ export function App(): React.JSX.Element {
     return () => ro.disconnect()
   }, [ready])
 
+  /**
+   * Geometry depends on the *shape* of the active tab, never on its numbers.
+   *
+   * These three memos used to list `activeTab` itself, which changes identity
+   * on every metrics tick — so a pane's memory reading ticking over made the
+   * window recompute its entire layout, several times a minute, forever. The
+   * reducer now holds a tab's identity steady when nothing about it changed,
+   * but that alone cannot help here: RSS and CPU genuinely do move every sweep.
+   * Depending on what is actually read is what makes the layout independent of
+   * numbers that were never an input to it.
+   */
+  const tree = activeTab?.tree
+  const zoomedPaneId = activeTab?.zoomedPaneId ?? null
+  // A plain find over at most six entries — cheaper than the re-render it
+  // avoids, and it reduces to a stable string the memo below can depend on.
+  const termPaneId = activeTab
+    ? Object.values(activeTab.panes).find((p) => p.kind === 'term')?.id
+    : undefined
+
   const cell = useMemo(() => {
     // Measure from a terminal pane specifically — a preview pane has no cell
     // geometry, and the first pane in insertion order may well be one.
-    const termId = activeTab
-      ? Object.values(activeTab.panes).find((p) => p.kind === 'term')?.id
-      : undefined
-    const t = termId ? terminals.get(termId) : undefined
+    const t = termPaneId ? terminals.get(termPaneId) : undefined
     const core = t
       ? (t.term as unknown as {
           _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } }
         })._core?._renderService?.dimensions?.css?.cell
       : undefined
     return core ? { cellW: core.width, cellH: core.height } : CELL_FALLBACK
-  }, [activeTab, gridSize, zoomIndex])
+  }, [termPaneId, gridSize, zoomIndex])
 
   const rects = useMemo(() => {
-    if (!activeTab || gridSize.width === 0) return []
-    return computeLayout(activeTab.tree, gridSize, cell)
-  }, [activeTab, gridSize, cell])
+    if (!tree || gridSize.width === 0) return []
+    return computeLayout(tree, gridSize, cell)
+  }, [tree, gridSize, cell])
 
   const dividers = useMemo(() => {
-    if (!activeTab || rects.length === 0 || activeTab.zoomedPaneId) return []
-    return deriveDividers(activeTab.tree, rects, gridSize)
-  }, [activeTab, rects, gridSize])
+    if (!tree || rects.length === 0 || zoomedPaneId) return []
+    return deriveDividers(tree, rects, gridSize)
+  }, [tree, rects, gridSize, zoomedPaneId])
 
   /**
    * Divider drag. Dragging marks the tab non-pristine, which stops auto-arrange
