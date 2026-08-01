@@ -231,7 +231,12 @@ export function App(): React.JSX.Element {
 
   const lookoutReported = useRef<Set<string>>(new Set())
   useEffect(() => {
-    if (!settings.lookoutCards) return
+    if (!settings.lookoutCards) {
+      // Disabled means unwatched: drop the reported memory so re-enabling
+      // re-arms every pane from scratch instead of trusting stale bookkeeping.
+      lookoutReported.current = new Set()
+      return
+    }
     const panes = state.tabs.flatMap((t) =>
       Object.values(t.panes)
         .filter((p) => p.kind === 'term')
