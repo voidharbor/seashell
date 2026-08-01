@@ -191,6 +191,36 @@ function processRun(text: string, charStart: number[], charEnd: number[]): PathC
     hi--
   }
 
+  /**
+   * Step 1b: the `Name(path)` form — `Write(src/x.ts)`, `Read(notes.txt)`.
+   *
+   * Agents print this constantly, and neither neighbouring step catches it.
+   * Step 1 only strips brackets that *wrap* the whole run, and this one starts
+   * with a label; step 2 only strips a trailing bracket that has no opener, and
+   * here the parentheses balance. So the label stayed glued to the path and the
+   * whole run was rejected as not-a-path.
+   *
+   * The label must be a bare identifier. Anything path-shaped before the
+   * parenthesis means the bracket belongs to the filename itself — `src/helper(a).ts`
+   * is a real file and must survive intact.
+   */
+  if (hi - lo > 2 && text[hi - 1] === ')') {
+    const openIdx = text.indexOf('(', lo)
+    if (openIdx > lo && openIdx < hi - 1) {
+      const label = text.slice(lo, openIdx)
+      let opens = 0
+      let closes = 0
+      for (let k = lo; k < hi; k++) {
+        if (text[k] === '(') opens++
+        else if (text[k] === ')') closes++
+      }
+      if (opens === 1 && closes === 1 && /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(label) && !label.includes('/')) {
+        lo = openIdx + 1
+        hi -= 1
+      }
+    }
+  }
+
   // Step 2: strip ONE trailing ) ] } only when it has no matching opener
   // within the run (a markdown-link artifact like "(see src/x.ts)" splits,
   // on whitespace, into a run "src/x.ts)" whose ")" is unmatched).

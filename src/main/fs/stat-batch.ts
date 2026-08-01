@@ -12,6 +12,7 @@
 
 import { promises as fsp } from 'node:fs'
 import type { Stats } from 'node:fs'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import type { FsStatBatchRequest, FsStatBatchResponse, FsStatBatchResult } from '../../shared/ipc.js'
 
@@ -44,8 +45,27 @@ export async function statBatch(req: FsStatBatchRequest): Promise<FsStatBatchRes
   return { results }
 }
 
+/**
+ * Expands a leading `~`.
+ *
+ * The tokenizer cannot do this — it is deliberately pure and may not import
+ * `os` — so the expansion has to happen on this side, and it was simply missing.
+ * `path.resolve` treats `~` as an ordinary directory name, so `~/notes.txt`
+ * resolved to `<cwd>/~/notes.txt` and missed every time. Agents print `~/…`
+ * paths constantly, so this was most of the misses.
+ *
+ * Only a bare `~` or a `~/` prefix is expanded. `~user` is another person's home
+ * directory, which needs a passwd lookup and is not something to guess at, and
+ * `~foo` in the middle of a path is just a character.
+ */
+function expandHome(candidate: string): string {
+  if (candidate === '~') return os.homedir()
+  if (candidate.startsWith('~/')) return path.join(os.homedir(), candidate.slice(2))
+  return candidate
+}
+
 async function statOne(cwdAbs: string, candidate: string, i: number): Promise<FsStatBatchResult | undefined> {
-  const resolved = path.resolve(cwdAbs, candidate)
+  const resolved = path.resolve(cwdAbs, expandHome(candidate))
   // path.resolve() against an absolute cwd always yields an absolute path;
   // this check is a defensive backstop, not something expected to ever trip.
   if (!path.isAbsolute(resolved)) return undefined

@@ -95,3 +95,56 @@ describe('explorer root boundary', () => {
     expect(insideRoot('/Users/joshwald2/a.ts', '/Users/joshwald')).toBe(false)
   })
 })
+
+/**
+ * Two defects found by measuring a real screenful of agent output, after a
+ * report that only some paths revealed.
+ *
+ * Both had the same shape: the path was correct on screen and correct in the
+ * user's head, and one layer in the middle quietly disagreed.
+ */
+describe('tilde paths', () => {
+  it('expands a leading ~, which nothing did before', async () => {
+    const home = os.homedir()
+    const res = await statBatch({ cwd: '/tmp', candidates: ['~'] })
+    expect(res.results[0]?.resolved).toBe(await fs.realpath(home))
+  })
+
+  it('resolves ~/file regardless of the pane cwd', async () => {
+    const name = `.seashell-tilde-${process.pid}`
+    const file = path.join(os.homedir(), name)
+    await fs.writeFile(file, 'x', 'utf8')
+    // cwd deliberately elsewhere: a ~ path must not depend on it.
+    const res = await statBatch({ cwd: '/tmp', candidates: [`~/${name}`] })
+    expect(await fs.realpath(res.results[0]!.resolved)).toBe(await fs.realpath(file))
+    await fs.rm(file, { force: true })
+  })
+
+  it('does not guess at another user\'s home', async () => {
+    // ~user needs a passwd lookup and is not something to invent.
+    const res = await statBatch({ cwd: '/tmp', candidates: ['~nonexistentuser/x'] })
+    expect(res.results).toHaveLength(0)
+  })
+})
+
+describe('the Name(path) form agents print', () => {
+  it('unwraps the label', () => {
+    expect(tokenizeLine('Write(doubleclick-test.txt)').map((c) => c.path)).toEqual([
+      'doubleclick-test.txt',
+    ])
+    expect(tokenizeLine('Read(src/renderer/app.tsx)').map((c) => c.path)).toEqual([
+      'src/renderer/app.tsx',
+    ])
+  })
+
+  it('leaves parentheses that belong to the filename alone', () => {
+    // A real file can contain brackets; the label rule must not eat them.
+    expect(tokenizeLine('run src/helper(a).ts now').map((c) => c.path)).toEqual([
+      'src/helper(a).ts',
+    ])
+  })
+
+  it('does not turn a command invocation into a path', () => {
+    expect(tokenizeLine('Bash(ls -la)')).toHaveLength(0)
+  })
+})
