@@ -23,11 +23,13 @@ interface Fakes {
   deps: ControlServerDeps
   writes: Array<[string, string]>
   foregroundCalls: string[]
+  postCardCalls: Array<{ paneId: string; question: string; draft: string | null }>
 }
 
 function makeFakes(over: Partial<ControlServerDeps> = {}): Fakes {
   const writes: Array<[string, string]> = []
   const foregroundCalls: string[] = []
+  const postCardCalls: Array<{ paneId: string; question: string; draft: string | null }> = []
   const deps: ControlServerDeps = {
     socketPath: sockPath(),
     writeToPane: (paneId, text) => {
@@ -39,9 +41,13 @@ function makeFakes(over: Partial<ControlServerDeps> = {}): Fakes {
       foregroundCalls.push(tty)
       return Promise.resolve(true)
     },
+    postCard: (req) => {
+      postCardCalls.push(req)
+      return null
+    },
     ...over,
   }
-  return { deps, writes, foregroundCalls }
+  return { deps, writes, foregroundCalls, postCardCalls }
 }
 
 async function start(deps: ControlServerDeps): Promise<void> {
@@ -70,6 +76,9 @@ function request(socketPath: string, payload: string): Promise<string> {
 
 const typeReq = (over: Record<string, unknown> = {}): string =>
   JSON.stringify({ cmd: 'type', paneId: 'pane-1', text: 'yes go ahead', ...over }) + '\n'
+
+const cardReq = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({ cmd: 'card', paneId: 'pane-1', question: 'ship it?', ...over }) + '\n'
 
 /**
  * The whole suite binds real Unix domain sockets, which Node cannot reliably
@@ -107,6 +116,50 @@ describe.skipIf(process.platform === 'win32')('control server', () => {
     expect(res.error).toMatch(/pane/i)
     expect(foregroundCalls).toEqual([])
     expect(writes).toEqual([])
+  })
+
+  it('routes a card to postCard after the foreground check', async () => {
+    const { deps, foregroundCalls, postCardCalls } = makeFakes()
+    await start(deps)
+    const res = JSON.parse(await request(deps.socketPath, cardReq({ draft: 'yes go' })))
+    expect(res).toEqual({ ok: true })
+    expect(foregroundCalls).toEqual(['ttys004'])
+    expect(postCardCalls).toEqual([{ paneId: 'pane-1', question: 'ship it?', draft: 'yes go' }])
+  })
+
+  it('validateOnly runs every check but creates nothing', async () => {
+    const { deps, foregroundCalls, postCardCalls } = makeFakes()
+    await start(deps)
+    const res = JSON.parse(await request(deps.socketPath, cardReq({ validateOnly: true })))
+    expect(res).toEqual({ ok: true })
+    expect(foregroundCalls).toEqual(['ttys004'])
+    expect(postCardCalls).toEqual([])
+  })
+
+  it('card for an unknown pane is refused before postCard', async () => {
+    const { deps, foregroundCalls, postCardCalls } = makeFakes()
+    await start(deps)
+    const res = JSON.parse(await request(deps.socketPath, cardReq({ paneId: 'pane-404' })))
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/unknown or exited pane/i)
+    expect(foregroundCalls).toEqual([])
+    expect(postCardCalls).toEqual([])
+  })
+
+  it('card is refused when foreground is not claude', async () => {
+    const { deps, postCardCalls } = makeFakes({ checkForeground: () => Promise.resolve(false) })
+    await start(deps)
+    const res = JSON.parse(await request(deps.socketPath, cardReq()))
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/foreground/i)
+    expect(postCardCalls).toEqual([])
+  })
+
+  it('postCard refusal surfaces as the error', async () => {
+    const { deps } = makeFakes({ postCard: () => 'lookout disabled' })
+    await start(deps)
+    const res = JSON.parse(await request(deps.socketPath, cardReq()))
+    expect(res).toEqual({ ok: false, error: 'lookout disabled' })
   })
 
   it('rejects malformed JSON at the boundary', async () => {

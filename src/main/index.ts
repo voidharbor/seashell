@@ -1,13 +1,14 @@
 import { app, BrowserWindow, net, protocol, shell } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { buildMenu } from './menu.js'
 import { registerIpc } from './ipc-router.js'
 import { PtyManager } from './pty/manager.js'
 import { MetricsMonitor } from './monitor/monitor.js'
 import { startControlServer, type ControlServer } from './control/server.js'
-import { foregroundIsClaude } from './control/foreground.js'
+import { checkTtyForeground } from './control/foreground-check.js'
+import { CardStore } from './lookout/card-store.js'
+import { CH } from '../shared/ipc.js'
 
 const isDev = !app.isPackaged
 const dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -188,17 +189,50 @@ app.whenReady().then(() => {
    * terminal down with it.
    */
   const pm = ptyManager
+
+  /**
+   * Lookout card store — see
+   * docs/superpowers/specs/2026-08-01-lookout-approval-cards-design.md. Fed
+   * for now only by pushed cards from the control socket below; the detector
+   * lane (renderer) wires in as its own task.
+   */
+  const cardStore = new CardStore({
+    bytesOut: (paneId) => pm.bytesOutOf(paneId),
+    emit: (cards) => mainWindow?.webContents.send(CH.lookoutCards, { cards }),
+    now: Date.now,
+  })
+
+  /**
+   * The sweep timer exists only while a card does — same reasoning and shape
+   * as the pty flush loop's ensureFlushLoop/stopFlushLoop in pty/manager.ts:
+   * a wakeup every 2s for the app's whole life would cost far more than the
+   * staleness check it buys while the card stack is empty, which is most of
+   * the time.
+   */
+  const LOOKOUT_SWEEP_INTERVAL_MS = 2000
+  let sweepTimer: ReturnType<typeof setInterval> | null = null
+  const ensureSweepLoop = (): void => {
+    if (sweepTimer) return
+    sweepTimer = setInterval(() => {
+      cardStore.sweep()
+      if (cardStore.cards().length === 0) stopSweepLoop()
+    }, LOOKOUT_SWEEP_INTERVAL_MS)
+  }
+  const stopSweepLoop = (): void => {
+    if (sweepTimer) clearInterval(sweepTimer)
+    sweepTimer = null
+  }
+
   void startControlServer({
     socketPath: path.join(app.getPath('userData'), 'control.sock'),
     writeToPane: (paneId, text) => pm.writeIfLive(paneId, text),
     paneTty: (paneId) => pm.paneTty(paneId),
-    checkForeground: (ttyName) =>
-      new Promise((resolve) => {
-        // `+` in STAT marks the tty's foreground process group.
-        execFile('ps', ['-t', ttyName, '-o', 'stat=,command='], (err, stdout) => {
-          resolve(!err && foregroundIsClaude(stdout))
-        })
-      }),
+    checkForeground: checkTtyForeground,
+    postCard: (req) => {
+      const created = cardStore.createFromPush(req.paneId, req.question, req.draft)
+      if (created) ensureSweepLoop()
+      return created ? null : 'lookout disabled or pane not eligible'
+    },
   }).then(
     (server) => {
       controlServer = server
