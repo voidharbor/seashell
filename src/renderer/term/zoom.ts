@@ -85,6 +85,18 @@ export function saveZoomIndex(index: number): void {
   }
 }
 
+/**
+ * Human-readable label for a rung, as a percentage of the default font size.
+ *
+ * The ladder is a set of residual-clean pixel sizes, not a percentage curve, so
+ * these are labels on fixed rungs rather than values anyone can type. Rounded to
+ * 5% because the exact ratios (69.2%, 123.1%, 130.8%…) read as noise in a badge.
+ */
+export function zoomPercent(index: number): number {
+  const base = ZOOM_LEVELS[DEFAULT_ZOOM_INDEX]!.font
+  return Math.round((levelAt(index).font / base) * 20) * 5
+}
+
 /** Publishes the chrome multiplier that every dimension in styles.css derives from. */
 export function applyUiScale(index: number): void {
   document.documentElement.style.setProperty('--ui-scale', String(levelAt(index).ui))

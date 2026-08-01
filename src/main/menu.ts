@@ -90,13 +90,17 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
     {
       label: 'View',
       submenu: [
-        item('Toggle Zoom', 'Cmd+Return', 'pane.zoom'),
+        // Not "Toggle Zoom": it sat directly above Zoom In / Zoom Out, which made
+        // "zoom" ambiguous between filling the tab and changing text size.
+        item('Full-Screen Pane', 'Cmd+Return', 'pane.zoom'),
         item('Rebalance Panes', 'Cmd+Shift+R', 'layout.rebalance'),
         { type: 'separator' },
         // No accelerators on these three, deliberately — see the note below.
-        { label: 'Zoom In\t⌘+', click: send('ui.zoomIn') },
-        { label: 'Zoom Out\t⌘−', click: send('ui.zoomOut') },
+        { label: 'Zoom In\t⌘=', click: send('ui.zoomIn') },
+        { label: 'Zoom Out\t⌘-', click: send('ui.zoomOut') },
         { label: 'Actual Size\t⌘0', click: send('ui.zoomReset') },
+        // No menu items for the pane pair: they act on the focused pane, which
+        // is a renderer concept, and the chords are listed in the tutorial.
         { type: 'separator' },
         item('Toggle File Explorer', 'Cmd+B', 'explorer.toggle'),
         item('Refresh Explorer', 'Cmd+R', 'explorer.refresh'),

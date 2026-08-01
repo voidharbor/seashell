@@ -180,6 +180,24 @@ body {
   -webkit-app-region: drag;
 }
 
+/* Sits in the drag region, so it must opt back out or the click never lands. */
+.tabbar__zoom {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  padding: 0 calc(6px * var(--ui-scale));
+}
+
+.tabbar__zoom:hover {
+  color: var(--text);
+}
+
+/* Marks "the overall level is not the whole story — some pane differs". */
+.tabbar__zoom-mixed {
+  color: var(--text-faint);
+}
+
 /* Asleep is the state worth showing, so it is the one that gets colour. The
    awake state stays neutral — a permanently lit indicator for "things are
    normal" is just noise on a bar you look at all day. */
@@ -550,6 +568,14 @@ body.dragging .sidebar__grip {
 
 .pane__mem--high {
   color: var(--warn);
+}
+
+/* Shown only while a pane overrides the global zoom, so it reads as a state
+   marker rather than a permanent readout. */
+.pane__zoom {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  padding: 0 calc(4px * var(--ui-scale));
 }
 
 .pane__idle {

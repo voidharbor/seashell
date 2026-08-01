@@ -8,6 +8,7 @@ import { createInitialTree } from './layout/tree.js'
 import { insertPane, rebalance } from './layout/auto-arrange.js'
 import { dfsPaneOrder, removePane } from './layout/tree.js'
 import { MAX_PANES_PER_TAB } from './layout/types.js'
+import { clampIndex } from './term/zoom.js'
 
 /** What a pane was launched as. Panes are always rooted at `/bin/zsh -l`; this
  *  records what the user asked for so a restart reproduces it. */
@@ -46,6 +47,12 @@ export interface PaneState {
   url?: string
   /** Colour tag key from the pane palette. Undefined means untagged. */
   color?: PaneColorKey
+  /**
+   * Zoom rung for this pane's text alone, absolute rather than an offset.
+   * Undefined means "follow the global level"; a global zoom clears it back to
+   * undefined on every pane, which is what makes Reset mean all-panes-to-100%.
+   */
+  zoomIndex?: number
   pid: number | null
   status: 'starting' | 'live' | 'exited'
   exit?: { code: number; signal: number | null }
@@ -214,6 +221,8 @@ export type Action =
   | { type: 'pane.focus'; paneId: string }
   | { type: 'pane.cycle'; delta: number }
   | { type: 'pane.zoom'; paneId?: string }
+  | { type: 'pane.zoomText'; delta: number; base: number; paneId?: string }
+  | { type: 'pane.clearTextZoom' }
   | { type: 'pane.spawned'; paneId: string; pid: number }
   | { type: 'pane.exited'; paneId: string; code: number; signal: number | null }
   | { type: 'pane.restarting'; paneId: string }
@@ -481,6 +490,34 @@ export function reducer(state: AppState, action: Action): AppState {
         zoomedPaneId: t.zoomedPaneId === target ? null : target,
       }))
     }
+
+    /**
+     * Text zoom for one pane. `base` is the current global rung, used when the
+     * pane is still following it — so the first ⌘⇧+ steps up from what you can
+     * actually see, not from the ladder default.
+     */
+    case 'pane.zoomText': {
+      const tab = activeTab(state)
+      if (!tab) return state
+      const target = action.paneId ?? tab.focusedPaneId
+      if (!target) return state
+      return mapPane(state, target, (p) => ({
+        ...p,
+        zoomIndex: clampIndex((p.zoomIndex ?? action.base) + action.delta),
+      }))
+    }
+
+    /** Global zoom owns every pane: clearing the overrides is what Reset means. */
+    case 'pane.clearTextZoom':
+      return {
+        ...state,
+        tabs: state.tabs.map((t) => ({
+          ...t,
+          panes: Object.fromEntries(
+            Object.entries(t.panes).map(([id, p]) => [id, { ...p, zoomIndex: undefined }])
+          ),
+        })),
+      }
 
     case 'pane.spawned':
       return mapPane(state, action.paneId, (p) => ({ ...p, pid: action.pid, status: 'live' }))

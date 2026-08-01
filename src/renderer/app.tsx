@@ -8,7 +8,15 @@ import { PaneView, forgetSpawn, terminals } from './panes/PaneView.js'
 import { Explorer } from './explorer/Explorer.js'
 import { StatusBar } from './status/StatusBar.js'
 import { loadTerminalFont } from './term/terminal.js'
-import { applyUiScale, clampIndex, levelAt, loadZoomIndex, saveZoomIndex } from './term/zoom.js'
+import {
+  applyUiScale,
+  clampIndex,
+  DEFAULT_ZOOM_INDEX,
+  levelAt,
+  loadZoomIndex,
+  saveZoomIndex,
+  zoomPercent,
+} from './term/zoom.js'
 import {
   SIDEBAR_DEFAULT,
   loadSidebarWidth,
@@ -117,6 +125,10 @@ export function App(): React.JSX.Element {
     applyUiScale(zoomIndex)
     saveZoomIndex(zoomIndex)
   }, [zoomIndex])
+
+  // The zoom key listener is bound once and must read the live global rung.
+  const zoomIndexRef = useRef(zoomIndex)
+  zoomIndexRef.current = zoomIndex
 
   // Same reasoning as the zoom scale: the sidebar width is a CSS variable, so
   // it has to be published before paint or the first frame is the wrong width.
@@ -408,14 +420,19 @@ export function App(): React.JSX.Element {
         case 'app.settings':
           setSettingsOpen(true)
           break
+        // The menu's zoom items are global, so they also clear per-pane
+        // overrides — otherwise a pane that had been zoomed would ignore them.
         case 'ui.zoomIn':
           setZoomIndex((i) => clampIndex(i + 1))
+          dispatch({ type: 'pane.clearTextZoom' })
           break
         case 'ui.zoomOut':
           setZoomIndex((i) => clampIndex(i - 1))
+          dispatch({ type: 'pane.clearTextZoom' })
           break
         case 'ui.zoomReset':
-          setZoomIndex(2)
+          setZoomIndex(DEFAULT_ZOOM_INDEX)
+          dispatch({ type: 'pane.clearTextZoom' })
           break
         case 'edit.find':
           openFind()
@@ -462,9 +479,20 @@ export function App(): React.JSX.Element {
   /**
    * Zoom keys are bound here rather than as menu accelerators.
    *
-   * "Zoom in" has two physical spellings — ⌘= and ⌘+ (shifted) — and an
-   * Electron menu item takes exactly one accelerator, so a menu binding leaves
-   * whichever form the user actually presses dead. See the note in menu.ts.
+   * An Electron menu item takes exactly one accelerator, and these chords come
+   * in shifted/unshifted pairs that must behave differently, so a menu binding
+   * would leave one form of each dead. See the note in menu.ts.
+   *
+   * SHIFT IS THE WHOLE DISTINCTION, and it is not optional punctuation: on a US
+   * layout `+` *is* Shift+`=` and `_` *is* Shift+`-`, so these are four separate
+   * `e.key` values off two physical keys.
+   *
+   *   ⌘=  → global zoom in      ⌘+  (⌘⇧=) → focused pane only
+   *   ⌘-  → global zoom out     ⌘_  (⌘⇧-) → focused pane only
+   *
+   * Consequence worth knowing: global zoom-in is ⌘= and NOT ⌘+, because ⌘+
+   * cannot be typed without Shift and Shift now means "this pane". Every label
+   * in the UI says ⌘= for that reason.
    *
    * This is safe to do at the document level because xterm's key handler
    * returns false for every Cmd chord except Cmd+A without calling
@@ -473,15 +501,27 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (!e.metaKey || e.ctrlKey || e.altKey) return
-      if (e.key === '=' || e.key === '+') {
+      // Read through a ref: this listener is bound once, and a stale closure
+      // would make every pane zoom step from the level at mount.
+      const base = zoomIndexRef.current
+      if (e.key === '=') {
         e.preventDefault()
         setZoomIndex((i) => clampIndex(i + 1))
-      } else if (e.key === '-' || e.key === '_') {
+        dispatch({ type: 'pane.clearTextZoom' })
+      } else if (e.key === '-') {
         e.preventDefault()
         setZoomIndex((i) => clampIndex(i - 1))
+        dispatch({ type: 'pane.clearTextZoom' })
+      } else if (e.key === '+') {
+        e.preventDefault()
+        dispatch({ type: 'pane.zoomText', delta: 1, base })
+      } else if (e.key === '_') {
+        e.preventDefault()
+        dispatch({ type: 'pane.zoomText', delta: -1, base })
       } else if (e.key === '0') {
         e.preventDefault()
-        setZoomIndex(2)
+        setZoomIndex(DEFAULT_ZOOM_INDEX)
+        dispatch({ type: 'pane.clearTextZoom' })
       }
     }
     window.addEventListener('keydown', onKey)
@@ -587,6 +627,11 @@ export function App(): React.JSX.Element {
   const order = activeTab ? dfsPaneOrder(activeTab.tree) : []
   const full = activeTab ? Object.keys(activeTab.panes).length >= MAX_PANES_PER_TAB : false
   const fontSize = levelAt(zoomIndex).font
+  // Any pane anywhere overriding the global level — drives the "*" and keeps the
+  // reset control reachable even when the overall level is already 100%.
+  const panesAreZoomed = state.tabs.some((t) =>
+    Object.values(t.panes).some((p) => p.zoomIndex !== undefined)
+  )
 
   return (
     <div className="app">
@@ -659,6 +704,24 @@ export function App(): React.JSX.Element {
 
         {/* Pushes sleep and settings to the right-hand end of the bar. */}
         <span className="tabbar__gap" />
+
+        {/*
+          The overall level, and the way back from any combination of per-pane
+          zooms. Shown only when something is off-default: at 100% with no pane
+          overrides there is nothing to say and nothing to reset.
+        */}
+        {(zoomIndex !== DEFAULT_ZOOM_INDEX || panesAreZoomed) && (
+          <div
+            className="tabbar__zoom"
+            title="Overall zoom (⌘= / ⌘-). Click to reset every pane to 100%."
+            onClick={() => {
+              setZoomIndex(DEFAULT_ZOOM_INDEX)
+              dispatch({ type: 'pane.clearTextZoom' })
+            }}
+          >
+            {zoomPercent(zoomIndex)}%{panesAreZoomed && <span className="tabbar__zoom-mixed">*</span>}
+          </div>
+        )}
 
         {/*
           Sleep is the same preference the settings panel exposes, surfaced as
@@ -767,7 +830,8 @@ export function App(): React.JSX.Element {
                   rect={rect}
                   focused={isFocused}
                   hidden={isHidden}
-                  fontSize={fontSize}
+                  fontSize={pane.zoomIndex === undefined ? fontSize : levelAt(pane.zoomIndex).font}
+                  zoomIndex={pane.zoomIndex}
                   findOpen={findOpen && isFocused}
                   findNonce={find.nonce}
                   findDirection={find.direction}

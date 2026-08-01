@@ -4,6 +4,7 @@ import {
   ZOOM_LEVELS,
   clampIndex,
   levelAt,
+  zoomPercent,
 } from '../../src/renderer/term/zoom.js'
 
 /**
@@ -72,5 +73,30 @@ describe('clampIndex', () => {
     for (const raw of [-100, -1, 0, 3, 99, 1e9]) {
       expect(levelAt(clampIndex(raw))).toBeDefined()
     }
+  })
+})
+
+describe('zoomPercent', () => {
+  it('calls the shipped default 100%', () => {
+    expect(zoomPercent(DEFAULT_ZOOM_INDEX)).toBe(100)
+  })
+
+  it('lands on round multiples of 5 at every rung', () => {
+    // The raw ratios are values like 69.2 and 130.8; a badge showing those
+    // reads as noise, so every rung must round cleanly.
+    for (let i = 0; i < ZOOM_LEVELS.length; i += 1) {
+      expect(zoomPercent(i) % 5).toBe(0)
+    }
+  })
+
+  it('rises monotonically with the rung', () => {
+    for (let i = 1; i < ZOOM_LEVELS.length; i += 1) {
+      expect(zoomPercent(i)).toBeGreaterThan(zoomPercent(i - 1))
+    }
+  })
+
+  it('clamps rather than throwing on an out-of-range rung', () => {
+    expect(zoomPercent(-5)).toBe(zoomPercent(0))
+    expect(zoomPercent(999)).toBe(zoomPercent(ZOOM_LEVELS.length - 1))
   })
 })

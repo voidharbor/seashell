@@ -7,6 +7,7 @@ import { paneColorHex, type PaneColorKey } from './colors.js'
 import { FilePreview } from '../viewer/FilePreview.js'
 import { FindBar } from '../find/FindBar.js'
 import type { PaneState } from '../store.js'
+import { zoomPercent } from '../term/zoom.js'
 
 /** Live terminals by pane id, so incoming PTY batches can be routed without
  *  every pane holding its own IPC subscription. */
@@ -46,6 +47,8 @@ export interface PaneViewProps {
   hidden: boolean
   /** Terminal font size for the current zoom level. */
   fontSize: number
+  /** Set only when this pane overrides the global zoom; drives the badge. */
+  zoomIndex?: number
   findOpen: boolean
   findNonce: number
   findDirection: 'next' | 'prev'
@@ -119,6 +122,14 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
         </span>
         <span className="pane__badge">{badgeFor(pane)}</span>
         <span className="pane__spacer" />
+        {/* Only when this pane differs from the global level — six panes all
+            reading 100% would be noise, and the number is only interesting as a
+            reminder that this one is deliberately out of step. */}
+        {props.zoomIndex !== undefined && (
+          <span className="pane__zoom" title="Pane text zoom (⌘+ / ⌘_). ⌘0 resets every pane.">
+            {zoomPercent(props.zoomIndex)}%
+          </span>
+        )}
         {showMem && (
           <span className={'pane__mem' + (mem > 1e9 ? ' pane__mem--high' : '')}>
             ~{formatBytes(mem)}

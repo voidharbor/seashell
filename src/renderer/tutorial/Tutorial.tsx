@@ -49,7 +49,7 @@ const STEPS: Step[] = [
     keys: [
       ['⌘T', 'New tab'],
       ['⌘D', 'New pane'],
-      ['⌘⏎', 'Zoom the focused pane in and out'],
+      ['⌘⏎', 'Full-screen the focused pane, and back'],
     ],
   },
   {
@@ -116,15 +116,34 @@ const STEPS: Step[] = [
     ],
   },
   {
+    title: 'Save a layout as a project',
+    body:
+      'A project reopens a shape, not a session. Save what is open and you get ' +
+      'back the tabs, how they were split, each pane’s directory and what it was ' +
+      'launched as. What does not come back: the processes, which died with the ' +
+      'app, and the scrollback, which is left out deliberately — a terminal ' +
+      'buffer routinely holds keys and customer data, and that is not worth ' +
+      'writing to a file to save you a scroll.',
+    keys: [
+      ['⌘⇧P', 'Open projects'],
+      ['⌘S', 'Save what is open'],
+    ],
+  },
+  {
     title: 'Make it comfortable',
     body:
-      'Zoom scales the terminal text and the whole interface together. Terminal ' +
-      'font sizes step through values chosen to stay pixel-aligned, so text never ' +
-      'goes blurry at any zoom level. Drag the file explorer’s right edge to ' +
-      'resize it, or double-click that edge to put it back.',
+      'Zoom comes in two sizes. ⌘= and ⌘- scale every pane and the interface ' +
+      'together. Add Shift — ⌘+ and ⌘_ — and only the focused pane changes, so ' +
+      'you can keep a log tail small beside an editor you can actually read; that ' +
+      'pane then shows its own percentage, and the overall level appears at the ' +
+      'top right where clicking it puts everything back to 100%. Note ⌘= rather ' +
+      'than ⌘+ for the global pair: + cannot be typed without Shift, and Shift is ' +
+      'what means "this pane". Font sizes step through values chosen to stay ' +
+      'pixel-aligned, so text never goes blurry at any level.',
     keys: [
-      ['⌘+  ⌘−', 'Zoom in / out'],
-      ['⌘0', 'Actual size'],
+      ['⌘=  ⌘-', 'Zoom everything in / out'],
+      ['⌘+  ⌘_', 'Zoom the focused pane only'],
+      ['⌘0', 'Every pane back to 100%'],
       ['⌘B', 'Show or hide the file explorer'],
     ],
   },
