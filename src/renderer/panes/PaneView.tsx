@@ -195,6 +195,17 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
   const titleRef = useRef(props.onTitle)
   titleRef.current = props.onTitle
 
+  /**
+   * The pane's live working directory, for resolving relative paths on
+   * double-click. Read through a ref because the terminal is constructed once
+   * and must not be rebuilt every time the user cd's. The monitor's cwd is
+   * preferred over the spawn-time one — it is what the shell is actually in
+   * now, which is the only directory a relative path in its output means
+   * anything against.
+   */
+  const cwdRef = useRef(pane.cwd)
+  cwdRef.current = pane.metrics?.cwd || pane.cwd
+
   const generation = pane.generation ?? 0
 
   useEffect(() => {
@@ -209,9 +220,31 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
       onResize: (cols, rows) => window.seashell.pty.resize({ paneId: pane.id, cols, rows }),
       onHttpLink: (url) => void window.seashell.open.externalHttp({ url }),
       onTitle: (title) => titleRef.current(title),
+      /**
+       * Resolve the candidate before revealing it.
+       *
+       * The tokenizer returns text exactly as it appeared on screen, and almost
+       * everything a program prints is *relative* — `src/renderer/app.tsx:645`,
+       * not an absolute path. Handing that straight to the explorer could never
+       * work: the reveal walks parent directories while they still start with
+       * the explorer root, and a relative string never does. It expanded
+       * nothing, selected nothing, and looked exactly like a dead double-click.
+       *
+       * `statBatch` is the round trip built for this. It resolves the candidate
+       * against the pane's current directory, follows symlinks to a canonical
+       * path, and — the part that matters — omits anything that does not exist.
+       * So a double-click on prose that merely looks like a path resolves to
+       * nothing and stays silent, while a real file reveals.
+       */
       onDoubleClick: (x, y) => {
         const candidate = pathAtPoint(t.term, x, y)
-        if (candidate) revealRef.current(candidate)
+        if (!candidate) return
+        void window.seashell.fs
+          .statBatch({ cwd: cwdRef.current, candidates: [candidate] })
+          .then((res) => {
+            const hit = res.results[0]
+            if (hit) revealRef.current(hit.resolved)
+          })
       },
     })
     terminals.set(pane.id, t)

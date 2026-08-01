@@ -322,6 +322,26 @@ export function App(): React.JSX.Element {
     [refreshProjects]
   )
 
+  /**
+   * Reveals a resolved path in the explorer.
+   *
+   * The tree can only expand to something beneath its root, so a real file
+   * outside it — /tmp, /opt, another volume — would expand nothing and select
+   * nothing. That is indistinguishable from a broken double-click, so it says
+   * so instead of failing quietly.
+   */
+  const revealPath = useCallback(
+    (p: string) => {
+      const root = state.explorerRoot
+      if (root && !(p === root || p.startsWith(root.endsWith('/') ? root : `${root}/`))) {
+        dispatch({ type: 'toast', message: `${p} is outside the file explorer` })
+        return
+      }
+      dispatch({ type: 'explorer.reveal', path: p })
+    },
+    [state.explorerRoot]
+  )
+
   const closeAllPreviews = useCallback(() => {
     if (!activeTab) return
     const previews = Object.values(activeTab.panes).filter((p) => p.kind !== 'term')
@@ -839,7 +859,7 @@ export function App(): React.JSX.Element {
                   onFocus={() => dispatch({ type: 'pane.focus', paneId: r.paneId })}
                   onClose={() => void closePane(r.paneId)}
                   onZoom={() => dispatch({ type: 'pane.zoom', paneId: r.paneId })}
-                  onReveal={(p) => dispatch({ type: 'explorer.reveal', path: p })}
+                  onReveal={(p) => revealPath(p)}
                   onSpawned={(pid) => dispatch({ type: 'pane.spawned', paneId: r.paneId, pid })}
                   onRestart={() => dispatch({ type: 'pane.restarting', paneId: r.paneId })}
                   onUrlChange={(url) => dispatch({ type: 'pane.setUrl', paneId: r.paneId, url })}
