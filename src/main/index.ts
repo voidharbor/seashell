@@ -8,6 +8,8 @@ import { MetricsMonitor } from './monitor/monitor.js'
 import { startControlServer, type ControlServer } from './control/server.js'
 import { checkTtyForeground } from './control/foreground-check.js'
 import { CardStore } from './lookout/card-store.js'
+import { approveCard } from './lookout/approve.js'
+import { lookoutPluginInstalled } from './lookout/plugin-detect.js'
 import { CH } from '../shared/ipc.js'
 
 const isDev = !app.isPackaged
@@ -180,7 +182,6 @@ app.whenReady().then(() => {
 
   ptyManager = new PtyManager(() => mainWindow)
   metrics = new MetricsMonitor(ptyManager, () => mainWindow)
-  registerIpc(ptyManager)
 
   /**
    * Pane-delivery control socket for /c-assistant — see
@@ -200,6 +201,22 @@ app.whenReady().then(() => {
     bytesOut: (paneId) => pm.bytesOutOf(paneId),
     emit: (cards) => mainWindow?.webContents.send(CH.lookoutCards, { cards }),
     now: Date.now,
+  })
+
+  // Registered once pm and cardStore both exist: the approve closure needs both.
+  registerIpc(ptyManager, {
+    store: cardStore,
+    approve: (r) =>
+      approveCard(
+        {
+          store: cardStore,
+          paneTty: (id) => pm.paneTty(id),
+          checkForeground: checkTtyForeground,
+          writeIfLive: (id, d) => pm.writeIfLive(id, d),
+        },
+        r
+      ),
+    pluginInstalled: lookoutPluginInstalled,
   })
 
   /**
