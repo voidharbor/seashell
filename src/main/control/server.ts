@@ -77,6 +77,11 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
       const parsed = parseControlRequest(line)
       if (!parsed.ok) return { ok: false, error: parsed.error }
 
+      // Only type requests are handled here; card command handling is in a later task.
+      if (parsed.req.cmd !== 'type') {
+        return { ok: false, error: 'card command not yet implemented' }
+      }
+
       const tty = deps.paneTty(parsed.req.paneId)
       if (tty === null) return { ok: false, error: 'unknown or exited pane' }
 

@@ -58,3 +58,41 @@ describe('parseControlRequest', () => {
     if (!r.ok) expect(r.error).toMatch(/long/i)
   })
 })
+
+describe('card command', () => {
+  it('parses a minimal card', () => {
+    const r = parseControlRequest(
+      JSON.stringify({ cmd: 'card', paneId: 'p1', question: 'deploy now?' })
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok && r.req.cmd === 'card') {
+      expect(r.req.draft).toBeNull()
+      expect(r.req.validateOnly).toBe(false)
+    }
+  })
+  it('parses draft and validateOnly', () => {
+    const r = parseControlRequest(
+      JSON.stringify({ cmd: 'card', paneId: 'p1', question: 'ok?', draft: 'yes ship it', validateOnly: true })
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok && r.req.cmd === 'card') {
+      expect(r.req.draft).toBe('yes ship it')
+      expect(r.req.validateOnly).toBe(true)
+    }
+  })
+  it('rejects control characters in question and draft', () => {
+    expect(parseControlRequest(JSON.stringify({ cmd: 'card', paneId: 'p1', question: 'a\nb' })).ok).toBe(false)
+    expect(parseControlRequest(JSON.stringify({ cmd: 'card', paneId: 'p1', question: 'ok?', draft: 'a\tb' })).ok).toBe(false)
+  })
+  it('rejects an over-long question', () => {
+    const r = parseControlRequest(JSON.stringify({ cmd: 'card', paneId: 'p1', question: 'x'.repeat(2001) }))
+    expect(r.ok).toBe(false)
+  })
+  it('rejects a non-string draft', () => {
+    expect(parseControlRequest(JSON.stringify({ cmd: 'card', paneId: 'p1', question: 'ok?', draft: 7 })).ok).toBe(false)
+  })
+  it('still parses type exactly as before', () => {
+    const r = parseControlRequest(JSON.stringify({ cmd: 'type', paneId: 'p1', text: 'hello' }))
+    expect(r.ok).toBe(true)
+  })
+})
