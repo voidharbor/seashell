@@ -212,7 +212,8 @@ export class CardStore {
   markStale(cardId: string): void
   remove(cardId: string): void
   /** Re-checks every active card; flips stale / drops gone panes; emits on change.
-   *  Called on a timer that runs only while cards exist (armed internally). */
+   *  The store owns no timer: the index.ts wiring (Task 4) calls this on a
+   *  short interval armed only while cards exist, ensureFlushLoop-style. */
   sweep(): void
 }
 ```
