@@ -126,13 +126,17 @@ export class CardStore {
     return card ? toPublicCard(card) : undefined
   }
 
-  /** True while the pane's output has advanced < STALE_OUTPUT_BYTES since creation. */
+  /** True while the pane's output has advanced < STALE_OUTPUT_BYTES since
+   *  creation. A negative delta (current below the baseline) means the
+   *  counter went backwards: this is a different pty wearing the same pane
+   *  id (the pane restarted), not a quiet one, so it can never be fresh. */
   isFresh(card: LookoutCard): boolean {
     const stored = this.findById(card.id)
     if (!stored) return false
     const current = this.deps.bytesOut(stored.paneId)
     if (current === null) return false
-    return current - stored.bytesOutAtCreate < STALE_OUTPUT_BYTES
+    const delta = current - stored.bytesOutAtCreate
+    return delta >= 0 && delta < STALE_OUTPUT_BYTES
   }
 
   markStale(cardId: string): void {
@@ -149,7 +153,11 @@ export class CardStore {
     this.emitChange()
   }
 
-  /** Re-checks every active card; flips stale / drops gone panes; emits on change.
+  /** Re-checks every active card; flips stale / drops dead panes; emits on
+   *  change. Also forgets dismissal memory for any pane that has exited —
+   *  a card already dismissed before its pane died leaves byPane with
+   *  nothing to sweep here, so that leak needs its own pass rather than
+   *  riding along with dropDeadCard below.
    *  The store owns no timer: the index.ts wiring calls this on a short
    *  interval armed only while cards exist, ensureFlushLoop-style. */
   sweep(): void {
@@ -157,17 +165,31 @@ export class CardStore {
     for (const card of this.byPane.values()) {
       if (card.state !== 'active') continue
 
-      // Gone must be checked before staleness: a gone pane has no output
-      // counter to diff against, and outranks a staleness verdict anyway.
+      // Dead must be checked before staleness: a dead pane outranks a
+      // staleness verdict anyway, and a gone one has no counter to diff.
       const current = this.deps.bytesOut(card.paneId)
-      if (current === null) {
-        this.byPane.delete(card.paneId)
+      const delta = current === null ? null : current - card.bytesOutAtCreate
+      if (delta === null || delta < 0) {
+        // null: the pane exited outright. Negative: the counter went
+        // backwards — this is a different pty wearing the same pane id
+        // (the pane restarted). Either way the card's session is dead, so
+        // drop it rather than merely marking it stale.
+        this.dropDeadCard(card.paneId)
         changed = true
-      } else if (current - card.bytesOutAtCreate >= STALE_OUTPUT_BYTES) {
+      } else if (delta >= STALE_OUTPUT_BYTES) {
         card.state = 'stale'
         changed = true
       }
     }
+
+    // A pane can exit after its last card was already dismissed (and so
+    // already gone from byPane above) — catch that leak here too, or a
+    // pane id reused by a brand new session stays permanently suppressed
+    // by dismissals that belonged to the old one.
+    for (const paneId of this.dismissedByPane.keys()) {
+      if (this.deps.bytesOut(paneId) === null) this.dismissedByPane.delete(paneId)
+    }
+
     if (changed) this.emitChange()
   }
 
@@ -181,6 +203,15 @@ export class CardStore {
       if (card.id === cardId) return card
     }
     return undefined
+  }
+
+  /** Drops a card whose pty session is dead (pane exited, or restarted
+   *  under the same id) and forgets that pane's dismissal memory along
+   *  with it — a new session on a reused pane id must not have its
+   *  questions suppressed by the previous session's dismissals. */
+  private dropDeadCard(paneId: string): void {
+    this.byPane.delete(paneId)
+    this.dismissedByPane.delete(paneId)
   }
 
   private isDismissed(paneId: string, question: string): boolean {

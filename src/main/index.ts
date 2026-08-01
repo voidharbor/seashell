@@ -192,14 +192,49 @@ app.whenReady().then(() => {
   const pm = ptyManager
 
   /**
+   * The sweep timer exists only while a card does — same reasoning and shape
+   * as the pty flush loop's ensureFlushLoop/stopFlushLoop in pty/manager.ts:
+   * a wakeup every 2s for the app's whole life would cost far more than the
+   * staleness check it buys while the card stack is empty, which is most of
+   * the time.
+   *
+   * Declared as functions (hoisted), not const arrows, so the CardStore emit
+   * dep just below can call ensureSweepLoop regardless of declaration order.
+   */
+  const LOOKOUT_SWEEP_INTERVAL_MS = 2000
+  let sweepTimer: ReturnType<typeof setInterval> | null = null
+  function ensureSweepLoop(): void {
+    if (sweepTimer) return
+    sweepTimer = setInterval(() => {
+      cardStore.sweep()
+      if (cardStore.cards().length === 0) stopSweepLoop()
+    }, LOOKOUT_SWEEP_INTERVAL_MS)
+  }
+  function stopSweepLoop(): void {
+    if (sweepTimer) clearInterval(sweepTimer)
+    sweepTimer = null
+  }
+
+  /**
    * Lookout card store — see
    * docs/superpowers/specs/2026-08-01-lookout-approval-cards-design.md. Fed
-   * for now only by pushed cards from the control socket below; the detector
-   * lane (renderer) wires in as its own task.
+   * by both pushed cards from the control socket and the renderer's
+   * detector lane.
+   *
+   * emit is the one choke point every store mutation that can leave active
+   * cards behind runs through (createFromPush, createFromDetector, sweep,
+   * dismiss, ...), so arming the sweep loop here — rather than at each
+   * call site — is what actually covers the detector lane. Arming it only
+   * from postCard (the push path) missed the detector lane entirely: cards
+   * never greyed on new output and exited panes left immortal cards. See
+   * the whole-branch review.
    */
   const cardStore = new CardStore({
     bytesOut: (paneId) => pm.bytesOutOf(paneId),
-    emit: (cards) => mainWindow?.webContents.send(CH.lookoutCards, { cards }),
+    emit: (cards) => {
+      mainWindow?.webContents.send(CH.lookoutCards, { cards })
+      if (cards.length > 0) ensureSweepLoop()
+    },
     now: Date.now,
   })
 
@@ -219,27 +254,6 @@ app.whenReady().then(() => {
     pluginInstalled: lookoutPluginInstalled,
   })
 
-  /**
-   * The sweep timer exists only while a card does — same reasoning and shape
-   * as the pty flush loop's ensureFlushLoop/stopFlushLoop in pty/manager.ts:
-   * a wakeup every 2s for the app's whole life would cost far more than the
-   * staleness check it buys while the card stack is empty, which is most of
-   * the time.
-   */
-  const LOOKOUT_SWEEP_INTERVAL_MS = 2000
-  let sweepTimer: ReturnType<typeof setInterval> | null = null
-  const ensureSweepLoop = (): void => {
-    if (sweepTimer) return
-    sweepTimer = setInterval(() => {
-      cardStore.sweep()
-      if (cardStore.cards().length === 0) stopSweepLoop()
-    }, LOOKOUT_SWEEP_INTERVAL_MS)
-  }
-  const stopSweepLoop = (): void => {
-    if (sweepTimer) clearInterval(sweepTimer)
-    sweepTimer = null
-  }
-
   void startControlServer({
     socketPath: path.join(app.getPath('userData'), 'control.sock'),
     writeToPane: (paneId, text) => pm.writeIfLive(paneId, text),
@@ -247,7 +261,8 @@ app.whenReady().then(() => {
     checkForeground: checkTtyForeground,
     postCard: (req) => {
       const created = cardStore.createFromPush(req.paneId, req.question, req.draft)
-      if (created) ensureSweepLoop()
+      // No ensureSweepLoop call here: createFromPush always emits on
+      // success, so the CardStore emit dep above already arms the loop.
       return created ? null : 'lookout disabled or pane not eligible'
     },
   }).then(

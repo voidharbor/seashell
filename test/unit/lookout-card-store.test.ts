@@ -46,6 +46,26 @@ describe('CardStore', () => {
     store.sweep()
     expect(store.get(card.id)?.state).toBe('stale')
   })
+  it('a card is not fresh when its pane restarted and the byte counter dropped below the baseline', () => {
+    // A pane restart reuses the pane id and resets the pty's bytesOut
+    // counter to 0, so a card created before the restart sees a NEGATIVE
+    // delta here. That must never read as fresh: it is a different pty
+    // wearing the same pane id, not a quiet one.
+    const { store, bytes } = makeStore()
+    store.createFromDetector('p1', 'deploy?')
+    const card = store.cards()[0]!
+    bytes.set('p1', 10) // restarted pane: fresh pty, counter reset well below the 1000 baseline
+    expect(store.isFresh(card)).toBe(false)
+  })
+  it('sweep drops a card when its pane restarted and the byte counter dropped below the baseline', () => {
+    const { store, bytes } = makeStore()
+    store.createFromDetector('p1', 'deploy?')
+    const card = store.cards()[0]!
+    bytes.set('p1', 10)
+    store.sweep()
+    expect(store.cards()).toHaveLength(0)
+    expect(store.get(card.id)).toBeUndefined()
+  })
   it('sweep drops cards whose pane is gone', () => {
     const { store, bytes } = makeStore()
     store.createFromDetector('p1', 'deploy?')
@@ -53,10 +73,41 @@ describe('CardStore', () => {
     store.sweep()
     expect(store.cards()).toHaveLength(0)
   })
+  it('sweep forgets dismissal memory for a pane that is gone, so a reused pane id is not suppressed by the old session', () => {
+    const { store, bytes } = makeStore()
+    store.createFromDetector('p1', 'deploy?')
+    store.dismiss(store.cards()[0]!.id)
+    expect(store.createFromDetector('p1', 'deploy?')).toBe(false) // still suppressed: same session, not yet swept
+
+    bytes.set('p1', null) // pane exits
+    store.sweep()
+
+    bytes.set('p1', 0) // pane id reused by a brand new pty/session
+    expect(store.createFromDetector('p1', 'deploy?')).toBe(true)
+  })
   it('disabled store refuses creates', () => {
     const { store } = makeStore()
     store.setEnabled(false)
     expect(store.createFromDetector('p1', 'deploy?')).toBe(false)
     expect(store.createFromPush('p1', 'q?', null)).toBe(false)
+  })
+  it('mirrors index.ts wiring: emit arms the sweep loop whenever cards remain, so detector cards get swept too', () => {
+    // index.ts wraps its CardStore emit dep to send to the window and then
+    // arm the sweep timer while cards remain. That is the only place the
+    // detector lane (createFromDetector, called from the renderer) ever
+    // arms sweep: postCard's own ensureSweepLoop call only ever covered
+    // pushed cards. Update this test alongside index.ts if that wiring
+    // shape ever changes.
+    const bytes = new Map<string, number | null>([['p1', 1000]])
+    let armed = false
+    const store = new CardStore({
+      bytesOut: (id) => bytes.get(id) ?? null,
+      emit: (cards) => {
+        if (cards.length > 0) armed = true
+      },
+      now: () => 42,
+    })
+    expect(store.createFromDetector('p1', 'deploy?')).toBe(true)
+    expect(armed).toBe(true)
   })
 })
