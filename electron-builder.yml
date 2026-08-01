@@ -52,3 +52,23 @@ mac:
   identity: null
   hardenedRuntime: false
   gatekeeperAssess: false
+
+# Windows. Built from macOS, which works only because node-pty 1.1.0 ships
+# Node-API prebuilds for win32-x64 and win32-arm64 — there is no Windows
+# toolchain here and nothing gets compiled. `npmRebuild: false` above is what
+# keeps it that way; a rebuild would drop a *darwin* binary into a Windows
+# package and fail on the target machine in a way that looks like the port is
+# broken rather than the packaging.
+#
+# Target is `dir`, not NSIS: an installer needs wine, which is not installed,
+# and an unpacked folder is what a USB hand-off wants anyway.
+#
+# READ src/main/platform/win32.ts BEFORE TRUSTING THIS BUILD. It reports
+# `verifiedKill: false` because Windows has no signals or process groups and
+# node-pty does not expose Job Objects — closing a pane terminates ordinary
+# children, but a detached process survives and nothing counts it. That is the
+# one promise SeaShell exists to keep, so this is a build to TEST, not to ship.
+win:
+  target:
+    - target: dir
+      arch: [x64]
