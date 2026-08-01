@@ -231,7 +231,7 @@ export function App(): React.JSX.Element {
 
   const lookoutReported = useRef<Set<string>>(new Set())
   useEffect(() => {
-    if (!true) return // gated by settings.lookoutCards once the setting lands (Task 8)
+    if (!settings.lookoutCards) return
     const panes = state.tabs.flatMap((t) =>
       Object.values(t.panes)
         .filter((p) => p.kind === 'term')
@@ -249,7 +249,11 @@ export function App(): React.JSX.Element {
       const extraction = extractQuestion(lines)
       if (extraction) window.seashell.lookout.detected({ paneId, question: extraction.question })
     }
-  }, [state.tabs, state.activeTabId])
+  }, [settings.lookoutCards, state.tabs, state.activeTabId])
+
+  useEffect(() => {
+    window.seashell.lookout.setEnabled(settings.lookoutCards)
+  }, [settings.lookoutCards])
 
   // Live per-pane screen shape for the card stack's send-button gate — a
   // fresh xterm-buffer read on every call (render *and* click time), never a
