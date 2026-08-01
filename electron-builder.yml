@@ -30,6 +30,14 @@ afterPack: build/afterPack.cjs
 mac:
   category: public.app-category.developer-tools
   icon: build/icon.icns
+  # node-pty ships ONE single-arch prebuild per platform and picks at runtime by
+  # process.arch. @electron/universal walks both slices, sees a Mach-O that is
+  # not itself universal sitting identically in each, assumes a packaging bug and
+  # aborts. This tells it the single-arch binaries are deliberate. Removing it
+  # breaks `--universal` with a "not covered by the x64ArchFiles rule" error.
+  # Pairs with npmRebuild:false above — together they are what makes a universal
+  # build produced on an Intel host actually work on Apple Silicon.
+  x64ArchFiles: "**/node-pty/prebuilds/**"
   target:
     - target: dir
       arch: [x64]

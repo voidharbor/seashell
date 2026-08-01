@@ -7,7 +7,41 @@ A terminal window manager for macOS. Run many shells side by side in one window 
 decision that had a tie-breaker was settled in favour of watching several long-running agent
 sessions at once. That is what it is for.
 
-> **Status: pre-alpha.** Under active development. Not yet packaged for general use.
+> **Status: pre-alpha.** Under active development.
+
+## Install
+
+Download the `.dmg` from [Releases](https://github.com/voidharbor/seashell/releases), open it,
+and drag SeaShell to Applications. The build is universal — it runs natively on Apple Silicon
+and Intel, no Rosetta.
+
+### First launch: "SeaShell cannot be opened"
+
+macOS will refuse to open it the first time, with either *"cannot be opened because the
+developer cannot be verified"* or *"is damaged and can't be opened"*. **The app is fine.** That
+message means it was not signed with a paid Apple Developer ID, so macOS flagged it when your
+browser downloaded it.
+
+Clear the flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/SeaShell.app
+```
+
+Then open SeaShell normally. You only ever do this once.
+
+<details>
+<summary>Without using Terminal</summary>
+
+Open System Settings → Privacy & Security, scroll down to the message about SeaShell, and click
+**Open Anyway**. Then launch the app again and confirm.
+
+On macOS 15 (Sequoia) and later this is the only click-through route — Apple removed the old
+right-click → Open shortcut.
+</details>
+
+If you copy the app across by USB stick, `scp`, or a shared folder instead of downloading it,
+macOS never sets the flag and none of the above applies. It just opens.
 
 ## Why
 
@@ -91,13 +125,29 @@ Requires macOS, Node 20+, and Xcode command line tools.
 
 ```bash
 npm install
-npm run dev      # run from source
-npm run build    # produce SeaShell.app
+npm run dev            # run from source
+npm run build          # compile to out/
+npm run pack:mac       # SeaShell.app for this machine's architecture
+npm run dist:mac       # universal .dmg for distribution
 ```
 
-Universal (Intel + Apple Silicon) builds are produced by CI. Building the arm64 slice locally
-from an Intel host requires cross-compiling the `node-pty` native module; see the build section
-of the design spec.
+A universal build works from an Intel host with no cross-compiling. `node-pty` 1.1.0 is
+Node-API and already ships prebuilds for both `darwin-x64` and `darwin-arm64`, so nothing needs
+recompiling — the loader picks the right one at runtime.
+
+Two settings in `electron-builder.yml` are what make that true, and both are load-bearing:
+
+- **`npmRebuild: false`** — it defaults to `true`, which rebuilds `node-pty` into
+  `build/Release` for the host arch only. node-pty's loader prefers `build/Release` over
+  `prebuilds/`, so a "universal" build made on an Intel Mac would ship an x64-only PTY layer:
+  perfect locally, dead on every Apple Silicon machine.
+- **`x64ArchFiles`** — `@electron/universal` aborts when it finds a non-universal Mach-O
+  present identically in both slices. The per-arch `node-pty` prebuilds are exactly that, on
+  purpose.
+
+The app is ad-hoc signed (`codesign -s -`), which is what Apple Silicon requires in order to
+execute at all. It is **not** signed with a Developer ID and not notarized, which is why the
+quarantine step in [Install](#first-launch-seashell-cannot-be-opened) exists.
 
 ## Non-goals
 
