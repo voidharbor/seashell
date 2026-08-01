@@ -1,7 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import { CH, type PaneMetrics } from '../../shared/ipc.js'
 import type { PtyManager } from '../pty/manager.js'
-import { psSweepMemory } from './procsweep.js'
+import { platform } from '../platform/index.js'
 import { parsePsOutput, sumSubtreeRss } from './sweep-parse.js'
 import { readSystemMemory } from './system-mem.js'
 import { classifyActivity } from './activity.js'
@@ -132,7 +132,10 @@ export class MetricsMonitor {
       return
     }
 
-    const [stdout, system] = await Promise.all([psSweepMemory(), readSystemMemory()])
+    const [stdout, system] = await Promise.all([platform.sweepMemory(), readSystemMemory()])
+    // An empty sweep means no sample this tick — which is also how a platform
+    // without process metrics reports itself. Panes still work; the numbers are
+    // simply absent rather than invented.
     if (!stdout) return
 
     const now = Date.now()

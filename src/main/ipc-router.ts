@@ -16,6 +16,7 @@ import { readTextFile } from './fs/read.js'
 import { statBatch } from './fs/stat-batch.js'
 import { decideRoute, VIEWER_MAX_BYTES } from './fs/route.js'
 import { denyOpenPath, extOf } from './fs/path-guard.js'
+import { platform } from './platform/index.js'
 import {
   MAX_NAME_LENGTH,
   MAX_PROJECTS,
@@ -23,9 +24,6 @@ import {
   saveProjects,
   upsertProject,
 } from './state/store.js'
-
-const TERMINAL_FONT =
-  '/System/Applications/Utilities/Terminal.app/Contents/Resources/Fonts/SFMono-Terminal.ttf'
 
 /**
  * Every inbound payload is validated here, at the single registration point.
@@ -300,14 +298,16 @@ export function registerIpc(ptyManager: PtyManager): void {
       home: os.homedir(),
       hostname: os.hostname(),
       userData: app.getPath('userData'),
-      defaultShell: '/bin/zsh',
+      defaultShell: platform.loginShell().file,
       cwdOfLaunch: os.homedir(),
     }
   })
 
   ipcMain.handle(CH.appGetTerminalFont, async (): Promise<ArrayBuffer | null> => {
+    const font = platform.terminalFontPath()
+    if (!font) return null
     try {
-      const buf = await fs.readFile(TERMINAL_FONT)
+      const buf = await fs.readFile(font)
       return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
     } catch {
       // Falls back to Menlo at a larger size; the app still works.

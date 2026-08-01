@@ -5,8 +5,7 @@ import * as pty from 'node-pty'
 import { CH, type PtySpawnRequest, type PtySpawnResponse, type PtyKillResponse } from '../../shared/ipc.js'
 import { buildEnv } from './env.js'
 import { PtyBatcher, ACTIVE_FLUSH_INTERVAL_MS } from './batcher.js'
-import { ensureZdotdirShim } from './zdotdir.js'
-import { psSweep } from '../monitor/procsweep.js'
+import { platform } from '../platform/index.js'
 
 interface PaneProc {
   paneId: string
@@ -36,7 +35,6 @@ interface PaneProc {
 }
 
 const MAX_PANES = 24
-const KILL_GRACE_MS = 1500
 
 export class PtyManager {
   private panes = new Map<string, PaneProc>()
@@ -113,7 +111,7 @@ export class PtyManager {
       return { ok: false, code: 'ECWD', message: `not a directory: ${cwd}` }
     }
 
-    if (this.zdotdir === null) this.zdotdir = ensureZdotdirShim()
+    if (this.zdotdir === null) this.zdotdir = platform.installShellIntegration()
 
     const env = buildEnv({
       baseEnv: process.env,
@@ -122,9 +120,10 @@ export class PtyManager {
       zdotdirShimPath: this.zdotdir ?? '',
     })
 
+    const shell = platform.loginShell()
     let proc: pty.IPty
     try {
-      proc = pty.spawn('/bin/zsh', ['-l'], {
+      proc = pty.spawn(shell.file, shell.args, {
         name: 'xterm-256color',
         cwd,
         cols: req.cols,
@@ -225,49 +224,23 @@ export class PtyManager {
   }
 
   /**
-   * The escalating kill ladder.
+   * Ends a pane and everything it started.
    *
-   * IPty.kill() is NOT the shutdown path: it signals the positive pid only, and
-   * leaves disowned grandchildren alive reparented to launchd. Interactive zsh
-   * also ignores SIGTERM, and zsh job control puts each foreground job in its
-   * own process group — so signalling only the shell's group misses the job.
-   *
-   * Orphaned agent processes are exactly the failure this app exists to make
-   * visible, so leaving one behind on close would be self-defeating.
+   * The ladder itself belongs to the platform — on macOS it is an escalating
+   * SIGHUP → SIGTERM → SIGKILL across every process group the pane touched,
+   * because `IPty.kill()` signals the positive pid only and leaves disowned
+   * grandchildren alive reparented to launchd. None of that exists on Windows.
+   * See `platform/darwin.ts` and the warnings in `platform/win32.ts`.
    */
   async kill(paneId: string): Promise<PtyKillResponse> {
     const rec = this.panes.get(paneId)
     if (!rec) return { ok: true, survivors: 0 }
 
-    const shellPid = rec.proc.pid
-    const groups = await this.paneProcessGroups(shellPid, rec.ttyName)
-
-    // 1. SIGHUP the shell: zsh HUPs its own job table and programs can save state.
-    trySignal(shellPid, 'SIGHUP')
-    await delay(KILL_GRACE_MS)
-
-    // 2. SIGTERM every process group the pane touched.
-    if (await this.anyAlive(shellPid, rec.ttyName)) {
-      for (const pgid of groups) trySignal(-pgid, 'SIGTERM')
-      await delay(KILL_GRACE_MS)
-    }
-
-    // 3. SIGKILL the groups, then re-sweep for stragglers.
-    let survivors = 0
-    if (await this.anyAlive(shellPid, rec.ttyName)) {
-      for (const pgid of groups) trySignal(-pgid, 'SIGKILL')
-      await delay(300)
-      const left = await this.paneProcessGroups(shellPid, rec.ttyName)
-      for (const pgid of left) trySignal(-pgid, 'SIGKILL')
-      await delay(200)
-      survivors = (await this.paneProcessGroups(shellPid, rec.ttyName)).length
-    }
-
-    try {
-      rec.proc.kill()
-    } catch {
-      /* already gone */
-    }
+    const { survivors } = await platform.killPaneTree({
+      shellPid: rec.proc.pid,
+      ttyName: rec.ttyName,
+      killPty: () => rec.proc.kill(),
+    })
 
     this.panes.delete(paneId)
     this.batcher.removePane(paneId)
@@ -280,68 +253,4 @@ export class PtyManager {
   async killAll(): Promise<void> {
     await Promise.all([...this.panes.keys()].map((id) => this.kill(id)))
   }
-
-  /**
-   * Process groups belonging to a pane: the ppid subtree rooted at the shell,
-   * plus anything sharing the pane's controlling tty. The tty arm is
-   * load-bearing — it catches double-forked descendants the ppid walk misses.
-   */
-  private async paneProcessGroups(shellPid: number, ttyName: string | null): Promise<number[]> {
-    const rows = await psSweep()
-    const groups = new Set<number>()
-
-    const byPid = new Map(rows.map((r) => [r.pid, r]))
-    const children = new Map<number, number[]>()
-    for (const r of rows) {
-      const list = children.get(r.ppid) ?? []
-      list.push(r.pid)
-      children.set(r.ppid, list)
-    }
-
-    const seen = new Set<number>()
-    const walk = (pid: number): void => {
-      if (seen.has(pid)) return // defensive: a cycle must not hang shutdown
-      seen.add(pid)
-      const row = byPid.get(pid)
-      if (row) groups.add(row.pgid)
-      for (const c of children.get(pid) ?? []) walk(c)
-    }
-    walk(shellPid)
-
-    // The tty arm catches double-forked descendants the ppid walk misses.
-    // A process that ALSO detaches its controlling terminal stays unreachable —
-    // that residual gap is reported as survivors rather than hidden.
-    if (ttyName) {
-      for (const r of rows) if (r.tty === ttyName) groups.add(r.pgid)
-    }
-
-    groups.delete(0)
-    return [...groups]
-  }
-
-  private async anyAlive(shellPid: number, ttyName: string | null): Promise<boolean> {
-    if (isAlive(shellPid)) return true
-    return (await this.paneProcessGroups(shellPid, ttyName)).length > 0
-  }
-}
-
-function trySignal(pid: number, sig: NodeJS.Signals): void {
-  try {
-    process.kill(pid, sig)
-  } catch {
-    /* already dead, or not ours */
-  }
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms))
 }
