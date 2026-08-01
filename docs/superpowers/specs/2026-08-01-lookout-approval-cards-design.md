@@ -79,13 +79,18 @@ Lifecycle:
 
 ## SeaShell components (this repo)
 
-- **Pane watcher** (`src/main/lookout/watcher.ts`). SeaShell already streams
-  every pane's pty output through `pty/manager.ts`; the watcher taps it,
-  keeping a small ANSI-stripped tail per pane and an idle timer (~4s quiet,
-  tunable in advanced settings). Idle + the tail ends in claude's input-box
-  chrome + a question in the last assistant text ⇒ raise a detector card.
-  Identical code on macOS, Windows, Linux; the chrome/question patterns are
-  fixture-driven per platform and claude-code version.
+- **Detection** (renderer, `src/renderer/lookout/` — amended at planning).
+  SeaShell already computes exactly the idle signal this needs:
+  `monitor/activity.ts` + `panes/attention.ts` mark a pane `waiting` only
+  after sustained stillness, with focus acknowledgment built in. Detection
+  rides that machinery instead of duplicating it: when an unfocused pane
+  enters `waiting`, the renderer reads the last ~60 lines out of the xterm
+  buffer (already ANSI-free) and a pure `extractQuestion()` looks for
+  claude's input-box chrome plus a question; a hit is reported to the
+  main-process card store. No second idle timer and no separate tuning knob —
+  a card appears at the same moment the pane starts glowing. The
+  chrome/question patterns are fixture-driven, and the input-box signature
+  doubles as the claude-pane check on every platform.
 - **Card store** (`src/main/lookout/card-store.ts`). Owns card state: create
   (watcher or socket), replace, dismiss, staleness via the output counter,
   focus suppression. Publishes to the renderer through the existing IPC
@@ -113,13 +118,13 @@ Lifecycle:
   in the card stack itself: the status-bar badge always opens the stack, and
   a stack with no cards shows either "nothing needs you" (plugin present) or
   the two install commands (plugin absent).
-- **Settings.** One master toggle (default on), idle threshold under
-  advanced.
-- **Platform notes.** The socket is a Unix domain socket on macOS/Linux and a
-  named pipe (`\\.\pipe\seashell-control`) on Windows — node's `net` serves
-  both. `platform/checkForeground` gains a Linux implementation (`ps` on the
-  tty, like darwin); Windows v1 approximates "is claude" from the screen
-  signature alone, and both the spec and the settings UI say so.
+- **Settings.** One master toggle (default on).
+- **Platform notes.** The socket is a Unix domain socket on macOS/Linux; the
+  Windows named pipe ships together with the Windows brain lane (out of scope
+  for v1 — nothing would push to it yet). Detection is renderer-side and so
+  identical on all three platforms; "is claude" comes from the screen
+  signature everywhere, with the authoritative `ps`-based foreground check
+  still gating every socket delivery and every approve on macOS/Linux.
 
 ## The c-assistant plugin (voidharbor/claude-plugins repo)
 
@@ -259,9 +264,8 @@ foreground check).
 
 ## Work map
 
-- **This repo:** `src/main/lookout/` (watcher, card-store, approve),
-  `control/` v2, `platform/linux.ts` + Windows signature fallback,
-  `shared/ipc.ts` additions, `renderer/lookout/` (CardStack, Card, store
-  slice), settings toggle, fixtures + tests above. Version 0.2.0.
+- **This repo:** `src/main/lookout/` (card-store, approve, plugin-detect),
+  `control/` v2, `shared/ipc.ts` additions, `renderer/lookout/` (extract,
+  detect, CardStack), settings toggle, fixtures + tests above. Version 0.2.0.
 - **voidharbor/claude-plugins:** the c-assistant plugin layout above,
   including the `session-scan.py` docstring fix. Plugin version bump.
