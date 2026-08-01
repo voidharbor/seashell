@@ -30,6 +30,8 @@ import { ProjectsPanel } from './projects/ProjectsPanel.js'
 import { stateToTabs, tabsFromSaved } from './projects/serialize.js'
 import type { Project } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
+import { extractQuestion, TAIL_LINES } from './lookout/extract.js'
+import { planDetections } from './lookout/detect.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
 
@@ -212,6 +214,33 @@ export function App(): React.JSX.Element {
       offMetrics()
     }
   }, [])
+
+  const lookoutReported = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!true) return // gated by settings.lookoutCards once the setting lands (Task 8)
+    const panes = state.tabs.flatMap((t) =>
+      Object.values(t.panes)
+        .filter((p) => p.kind === 'term')
+        .map((p) => ({
+          paneId: p.id,
+          attention: p.attention ?? null,
+          focused: t.id === state.activeTabId && t.focusedPaneId === p.id,
+        }))
+    )
+    const plan = planDetections(panes, lookoutReported.current)
+    lookoutReported.current = plan.nextReported
+    for (const paneId of plan.toScan) {
+      const term = terminals.get(paneId)?.term
+      if (!term) continue
+      const buf = term.buffer.active
+      const lines: string[] = []
+      for (let i = Math.max(0, buf.length - TAIL_LINES); i < buf.length; i++) {
+        lines.push(buf.getLine(i)?.translateToString(true) ?? '')
+      }
+      const extraction = extractQuestion(lines)
+      if (extraction) window.seashell.lookout.detected({ paneId, question: extraction.question })
+    }
+  }, [state.tabs, state.activeTabId])
 
   const activeTab = useMemo(
     () => state.tabs.find((t) => t.id === state.activeTabId),
