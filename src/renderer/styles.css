@@ -918,6 +918,12 @@ body.dragging .web__view {
   width: min(620px, 88%);
   max-height: 82%;
   overflow-y: auto;
+  /* Reserve the scrollbar's width whether or not it is showing. Without it a
+     list long enough to scroll loses that much of the card's right padding, so
+     the row of buttons ends up flush against the edge exactly when the panel is
+     at its busiest — and the whole card's contents shift sideways the moment
+     one more project is saved. */
+  scrollbar-gutter: stable;
   padding: calc(20px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
   border-radius: 10px;

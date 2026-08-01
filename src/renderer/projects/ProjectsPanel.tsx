@@ -72,11 +72,17 @@ export function ProjectsPanel(props: ProjectsPanelProps): React.JSX.Element {
     setName('')
   }
 
+  // The shell classes below are the settings panel's, deliberately shared. They
+  // had been spelled `set`/`set__card`/`set__head`/`set__title` here and no such
+  // rules exist — so this panel had no overlay, no card and no padding at all,
+  // and rendered as a bare block below the status bar with its buttons hard
+  // against the window edge. The `set__group`/`set__row`/`set__detail` classes
+  // further down are real and genuinely shared; only the outer four were wrong.
   return (
-    <div className="set" onMouseDown={(e) => e.stopPropagation()}>
-      <div className="set__card">
-        <div className="set__head">
-          <h2 className="set__title">Projects</h2>
+    <div className="sheet" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="sheet__card">
+        <div className="sheet__head">
+          <h2 className="sheet__title">Projects</h2>
           <span className="pane__spacer" />
           <button className="btn" onClick={props.onClose}>
             Done
