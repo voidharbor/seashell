@@ -1,10 +1,13 @@
 import { app, BrowserWindow, net, protocol, shell } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { buildMenu } from './menu.js'
 import { registerIpc } from './ipc-router.js'
 import { PtyManager } from './pty/manager.js'
 import { MetricsMonitor } from './monitor/monitor.js'
+import { startControlServer, type ControlServer } from './control/server.js'
+import { foregroundIsClaude } from './control/foreground.js'
 
 const isDev = !app.isPackaged
 const dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -25,6 +28,7 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
 let metrics: MetricsMonitor | null = null
+let controlServer: ControlServer | null = null
 
 const RENDERER_DIR = path.join(dirname, '../renderer')
 
@@ -154,6 +158,33 @@ app.whenReady().then(() => {
   metrics = new MetricsMonitor(ptyManager, () => mainWindow)
   registerIpc(ptyManager)
 
+  /**
+   * Pane-delivery control socket for /c-assistant — see
+   * docs/superpowers/specs/2026-07-31-pane-delivery-design.md. A failure to
+   * start it degrades to the old copy-paste world; it must never take the
+   * terminal down with it.
+   */
+  const pm = ptyManager
+  void startControlServer({
+    socketPath: path.join(app.getPath('userData'), 'control.sock'),
+    writeToPane: (paneId, text) => pm.writeIfLive(paneId, text),
+    paneTty: (paneId) => pm.paneTty(paneId),
+    checkForeground: (ttyName) =>
+      new Promise((resolve) => {
+        // `+` in STAT marks the tty's foreground process group.
+        execFile('ps', ['-t', ttyName, '-o', 'stat=,command='], (err, stdout) => {
+          resolve(!err && foregroundIsClaude(stdout))
+        })
+      }),
+  }).then(
+    (server) => {
+      controlServer = server
+    },
+    () => {
+      controlServer = null
+    }
+  )
+
   createWindow()
   buildMenu(() => mainWindow)
   metrics.start()
@@ -197,7 +228,10 @@ app.on('before-quit', (e) => {
   void (async () => {
     try {
       await Promise.race([
-        ptyManager?.killAll() ?? Promise.resolve(),
+        Promise.all([
+          ptyManager?.killAll() ?? Promise.resolve(),
+          controlServer?.close() ?? Promise.resolve(),
+        ]),
         new Promise<void>((r) => setTimeout(r, QUIT_DRAIN_TIMEOUT_MS)),
       ])
     } catch {

@@ -159,6 +159,23 @@ export class PtyManager {
     if (rec && !rec.exited) rec.proc.write(data)
   }
 
+  /** Like write(), but reports whether the pane was live — the control socket
+   * must refuse loudly rather than drop text on the floor. */
+  writeIfLive(paneId: string, data: string): boolean {
+    const rec = this.panes.get(paneId)
+    if (!rec || rec.exited) return false
+    rec.proc.write(data)
+    return true
+  }
+
+  /** A live pane's controlling tty, or null. A pane whose tty was never
+   * resolved also returns null: the control socket cannot run its foreground
+   * check there, and unverifiable must mean refused. */
+  paneTty(paneId: string): string | null {
+    const rec = this.panes.get(paneId)
+    return rec && !rec.exited ? rec.ttyName : null
+  }
+
   resize(paneId: string, cols: number, rows: number): void {
     const rec = this.panes.get(paneId)
     if (!rec || rec.exited) return
