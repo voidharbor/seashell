@@ -301,10 +301,18 @@ describe('CardStore', () => {
 - Test: `test/unit/lookout-extract.test.ts`
 
 **Interfaces:**
-- Consumes: nothing (pure strings in, string|null out).
-- Produces: `export function extractQuestion(lines: string[]): string | null` and `export const TAIL_LINES = 60` (how many buffer lines callers should read).
+- Consumes: nothing (pure strings in, structured result out).
+- Produces: `export interface Extraction { kind: 'input' | 'selector'; question: string }`, `export function extractQuestion(lines: string[]): Extraction | null`, and `export const TAIL_LINES = 60` (how many buffer lines callers should read).
 
-The heuristic, exactly: (1) from the bottom, within the last 8 non-empty-scanned lines, find claude's input-box bottom border (`╰─`); (2) walk up ≤ 8 lines to its top border (`╭─`), requiring a `│ >` prompt row in between — that trio is the "claude is idle at its input box" signature, and it doubles as the claude-pane check (no process-name gate; see spec amendment); (3) collect the contiguous message block above the box, skipping noise lines (blank, `? for shortcuts`, `⏵`, token/esc status), stopping at the first blank after real content, cap 40 lines; (4) if no line in the block contains `?` and none matches an options pattern (`/^\s*(\d+[.)]|❯|◯|- \[ \])\s/`), return null; (5) return the last ≤ 6 lines of the block joined with a space, whitespace collapsed, capped at 500 chars.
+Chrome facts, verified 2026-08-01 against the claude CLI binary (2.1.220) and a live pseudo-tty capture: the input box is ink's `round` border style — `topLeft "╭"`, `top "─"`, `topRight "╮"`, sides `"│"`, `bottomLeft "╰"`, `bottomRight "╯"` — and the idle footer contains the literal `? for shortcuts`. Selection screens (AskUserQuestion widgets, the trust-folder prompt) render **without any input box**: numbered options with a `❯` cursor and a footer containing `Enter to confirm`. Do NOT attempt your own live `script`/pty capture — a headless claude hangs waiting for input (this was tried; it times out) and the capture mangles spacing.
+
+The heuristic, exactly — two signatures, checked in this order:
+
+**Input-box signature** (kind `'input'`): (1) from the bottom, within the last 8 non-empty-scanned lines, find the box bottom border (`╰─`); (2) walk up ≤ 8 lines to its top border (`╭─`), requiring a `│ >` prompt row in between — that trio is the "claude is idle at its input box" signature, and it doubles as the claude-pane check (no process-name gate; see spec amendment); (3) collect the contiguous message block above the box, skipping noise lines (blank, `? for shortcuts`, `⏵`, token/esc status), stopping at the first blank after real content, cap 40 lines; (4) if no line in the block contains `?` and none matches an options pattern (`/^\s*(\d+[.)]|❯|◯|- \[ \])\s/`), return null; (5) question = the last ≤ 6 lines of the block joined with a space, whitespace collapsed, capped at 500 chars.
+
+**Selector signature** (kind `'selector'`, checked only when no input box matched): within the last 15 non-empty lines, a footer line containing `Enter to confirm`, and above it at least one option line matching `/^\s*❯?\s*\d+[.)]\s/` with a `❯` present on at least one of them. Question = the contiguous non-option block above the first option line (last ≤ 6 lines, joined, collapsed) + `' — options: '` + the first ≤ 4 option lines (stripped of `❯`, joined with `' / '`), capped at 500 chars total. Selector screens are precisely where typed-text-plus-Enter would blind-confirm the highlighted option, so downstream (Task 7) renders their cards without any send buttons — the kind field is what makes that possible.
+
+If both signatures somehow match, the input box wins (it renders below the transcript).
 
 - [ ] **Step 1: Write the failing tests** — `test/unit/lookout-extract.test.ts`:
 
@@ -313,6 +321,17 @@ import { describe, expect, it } from 'vitest'
 import { extractQuestion } from '../../src/renderer/lookout/extract.js'
 
 const BOX = ['╭──────────────────────╮', '│ >                    │', '╰──────────────────────╯']
+
+// Captured from a real claude 2.1.220 trust-folder screen via pseudo-tty
+// (respaced by hand after ANSI stripping): no input box, ❯-cursor options,
+// Enter-to-confirm footer.
+const SELECTOR = [
+  'Quick safety check: Is this a project you created or one you trust?',
+  '❯ 1. Yes, I trust this folder',
+  '  2. No, exit',
+  '',
+  'Enter to confirm · Esc to cancel',
+]
 
 describe('extractQuestion', () => {
   it('finds the question above an idle input box', () => {
@@ -323,35 +342,51 @@ describe('extractQuestion', () => {
       ...BOX,
       '  ? for shortcuts',
     ]
-    expect(extractQuestion(lines)).toContain('lock in option 2')
+    const r = extractQuestion(lines)
+    expect(r?.kind).toBe('input')
+    expect(r?.question).toContain('lock in option 2')
   })
-  it('returns null when there is no input box', () => {
+  it('returns null when there is neither box nor selector', () => {
     expect(extractQuestion(['just some output', 'no box here?'])).toBeNull()
   })
   it('returns null for a statement-only tail', () => {
     const lines = ['⏺ All done. Committed as abc123.', '', ...BOX]
     expect(extractQuestion(lines)).toBeNull()
   })
-  it('accepts numbered options without a question mark', () => {
+  it('accepts numbered options without a question mark above the box', () => {
     const lines = ['Pick one:', '  1. keep both', '  2. delete the old one', '', ...BOX]
-    expect(extractQuestion(lines)).toMatch(/delete the old one/)
+    const r = extractQuestion(lines)
+    expect(r?.kind).toBe('input')
+    expect(r?.question).toMatch(/delete the old one/)
+  })
+  it('classifies a selector screen and carries its options', () => {
+    const r = extractQuestion(SELECTOR)
+    expect(r?.kind).toBe('selector')
+    expect(r?.question).toContain('trust this folder')
+    expect(r?.question).toContain('options:')
+    expect(r?.question).toContain('No, exit')
+  })
+  it('input box wins when both signatures are present', () => {
+    const r = extractQuestion([...SELECTOR, '', ...BOX])
+    expect(r?.kind).toBe('input')
   })
   it('caps the result at 500 chars on one line', () => {
     const long = 'why? '.repeat(300)
     const lines = [long, '', ...BOX]
-    const q = extractQuestion(lines)
-    expect(q).not.toBeNull()
-    expect(q!.length).toBeLessThanOrEqual(500)
-    expect(q).not.toContain('\n')
+    const r = extractQuestion(lines)
+    expect(r).not.toBeNull()
+    expect(r!.question.length).toBeLessThanOrEqual(500)
+    expect(r!.question).not.toContain('\n')
   })
 })
 ```
 
 - [ ] **Step 2: Run to verify they fail** — `npx vitest run test/unit/lookout-extract.test.ts` → FAIL.
-- [ ] **Step 3: Implement `extract.ts`** per the numbered heuristic. Regexes as module constants with one comment each stating what real screen artifact they match. No xterm import — strings only.
+- [ ] **Step 3: Implement `extract.ts`** per the two-signature heuristic. Regexes as module constants with one comment each stating what real screen artifact they match (cite the binary-verified chrome facts above). No xterm import — strings only.
 - [ ] **Step 4: Run** — PASS, plus `npm run typecheck`.
 - [ ] **Step 5: Commit** — `git commit -am "Add Lookout question extraction heuristic"`
-- [ ] **Step 6 (fixture debt, do now):** run a real `claude` in any terminal, let it idle on a question, copy the visible tail into a third test case string verbatim (scrub any private content), and assert extraction. If the real chrome differs from the `╭/│ >/╰` assumption, fix the regexes here — this is the task where reality gets captured. Re-run tests, amend the commit.
+
+(Former fixture-capture step removed 2026-08-01: the chrome is now verified directly against the claude binary's ink border-style table and a real pseudo-tty capture — the SELECTOR fixture above IS the captured screen. Do not attempt live captures in this task.)
 
 ---
 
@@ -589,11 +624,13 @@ useEffect(() => {
     for (let i = Math.max(0, buf.length - TAIL_LINES); i < buf.length; i++) {
       lines.push(buf.getLine(i)?.translateToString(true) ?? '')
     }
-    const question = extractQuestion(lines)
-    if (question) window.seashell.lookout.detected({ paneId, question })
+    const extraction = extractQuestion(lines)
+    if (extraction) window.seashell.lookout.detected({ paneId, question: extraction.question })
   }
 }, [state.tabs, state.activeTabId, settings.lookoutCards])
 ```
+
+Both kinds report (a selector's question text already carries its options from Task 3); the kind itself is not sent over IPC — Task 7 re-derives the pane's live screen mode at render/click time, which is the value that actually matters for button safety.
 
 (`settings.lookoutCards` compiles after Task 8 adds the setting — to keep this task green on its own, reference the setting only if Task 8 landed first; otherwise gate on `true` and swap in the setting in Task 8. Prefer implementing Task 8's `settings.ts` two-line change *in this task* if executing in order matters less than compiling — either order is fine as long as both land before Task 9.)
 
@@ -622,12 +659,18 @@ export interface CardStackProps {
   suppressedPaneId: string | null
   pluginInstalled: boolean
   open: boolean            // badge toggles the (possibly empty) stack
+  /** Live screen mode of a pane, re-derived from its xterm buffer via
+   *  extractQuestion at render and click time. 'selector' means typed text +
+   *  Enter would blind-confirm the highlighted option — no send buttons. */
+  screenMode(paneId: string): 'input' | 'selector' | null
   onAction(req: { cardId: string; action: 'approve' | 'dismiss'; text?: string }): void
   onGotoPane(paneId: string): void
   onClose(): void
 }
 export function CardStack(props: CardStackProps): React.JSX.Element
 ```
+
+**Selector safety rule (added 2026-08-01, from the real-capture finding):** every send affordance — canned `[Continue]/[Yes]/[No]`, `[Approve ✓]`, and Edit-send — renders ONLY when `screenMode(card.paneId) === 'input'`. When it returns `'selector'`, the card shows the question (and draft, greyed, as reference text) with `[Go to pane] [✕]` and the literal hint `answer in the pane — it's showing a picker`. When it returns `null` (pane unreadable), treat as `'selector'` — never guess toward sending. `app.tsx` passes an implementation that reads `terminals.get(paneId)` and runs `extractQuestion` on the tail (same TAIL_LINES read as Task 6).
 
 Card rendering: title = short pane id line + `question`; when `draft !== null` show the draft in a `<textarea>` (single-row, value in local state seeded from the draft) with buttons `Approve ✓` (sends the current textarea value), `Deny ✕` (dismiss); when `draft === null` and `source === 'push'` show the question with only `Go to pane` / `✕` (a draft-less brain card — money/legal/irreversible never one-clicks); detector cards get `[Continue] [Yes] [No]` buttons sending exactly the lowercase words `continue` / `yes` / `no`, plus `Go to pane` and `✕`. Stale cards render with a `card--stale` class, buttons disabled, and the literal label `session moved on`. Empty open stack: `nothing needs you` when `pluginInstalled`, else the two literal lines `/plugin marketplace add voidharbor/claude-plugins` and `/plugin install c-assistant@voidharbor` under the heading `smart cards need the c-assistant plugin:`.
 
@@ -649,34 +692,46 @@ describe('CardStack', () => {
   it('approve sends the edited textarea text', () => {
     const onAction = vi.fn()
     render(<CardStack cards={[card]} suppressedPaneId={null} pluginInstalled open={false}
-      onAction={onAction} onGotoPane={() => {}} onClose={() => {}} />)
+      screenMode={() => 'input'} onAction={onAction} onGotoPane={() => {}} onClose={() => {}} />)
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'yes ship it tonight' } })
     fireEvent.click(screen.getByText(/approve/i))
     expect(onAction).toHaveBeenCalledWith({ cardId: 'card-1', action: 'approve', text: 'yes ship it tonight' })
   })
   it('suppresses the focused pane but keeps others', () => {
     render(<CardStack cards={[card]} suppressedPaneId="p1" pluginInstalled open={false}
-      onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
+      screenMode={() => 'input'} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
     expect(screen.queryByText(/ship the release/)).toBeNull()
   })
   it('stale cards disable their buttons', () => {
     render(<CardStack cards={[{ ...card, state: 'stale' as const }]} suppressedPaneId={null}
-      pluginInstalled open={false} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
+      pluginInstalled open={false} screenMode={() => 'input'} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
     expect(screen.getByText(/session moved on/i)).toBeTruthy()
     expect((screen.getByText(/approve/i) as HTMLButtonElement).disabled).toBe(true)
   })
   it('empty open stack shows install commands when the plugin is absent', () => {
     render(<CardStack cards={[]} suppressedPaneId={null} pluginInstalled={false} open
-      onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
+      screenMode={() => 'input'} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
     expect(screen.getByText(/plugin install c-assistant@voidharbor/)).toBeTruthy()
   })
   it('detector cards send canned lowercase words', () => {
     const onAction = vi.fn()
     render(<CardStack cards={[{ ...card, source: 'detector' as const, draft: null }]}
-      suppressedPaneId={null} pluginInstalled open={false}
+      suppressedPaneId={null} pluginInstalled open={false} screenMode={() => 'input'}
       onAction={onAction} onGotoPane={() => {}} onClose={() => {}} />)
     fireEvent.click(screen.getByText('Continue'))
     expect(onAction).toHaveBeenCalledWith({ cardId: 'card-1', action: 'approve', text: 'continue' })
+  })
+  it('selector screens get no send buttons at all', () => {
+    render(<CardStack cards={[card]} suppressedPaneId={null} pluginInstalled open={false}
+      screenMode={() => 'selector'} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
+    expect(screen.queryByText(/approve/i)).toBeNull()
+    expect(screen.queryByText('Continue')).toBeNull()
+    expect(screen.getByText(/showing a picker/i)).toBeTruthy()
+  })
+  it('an unreadable pane is treated like a selector', () => {
+    render(<CardStack cards={[card]} suppressedPaneId={null} pluginInstalled open={false}
+      screenMode={() => null} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
+    expect(screen.queryByText(/approve/i)).toBeNull()
   })
 })
 ```

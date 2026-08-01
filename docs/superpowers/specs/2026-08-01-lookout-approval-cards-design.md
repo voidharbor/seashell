@@ -227,6 +227,13 @@ one-answer-unblocks-three) — live cards are per-session in v1.
 
 - A watcher misread produces at worst a wrong **card** — a dismiss-click of
   annoyance. Nothing fires without a click.
+- **Selector screens never one-click** (amended 2026-08-01, found via a real
+  capture): when claude is showing a picker (AskUserQuestion, trust prompts —
+  numbered `❯` options, no input box), typed text plus Enter would
+  blind-confirm the highlighted option. Cards for panes in that state render
+  with no send buttons at all — Go to pane only — gated on a live read of the
+  pane's screen at render and click time, and an unreadable pane is treated
+  the same way.
 - Stale beats sorry: any meaningful pane output between card creation and
   click disables the card. Approve on a raced card is a no-op with a visible
   "session moved on."
