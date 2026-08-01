@@ -67,7 +67,6 @@ describe('shouldKillLine', () => {
   const base = {
     key: 'Backspace',
     inputLineSelected: true,
-    alternateScreen: false,
     modified: false,
   }
 
@@ -87,23 +86,16 @@ describe('shouldKillLine', () => {
   })
 
   /**
-   * The guard that matters most. A full-screen program switches to the
-   * alternate screen buffer, and Ctrl+U is not "kill line" there — in vim it
-   * scrolls half a page. Acting on a stale highlight would do something never
-   * asked for.
+   * The regression this exists to stop coming back. Two cleverer guards were
+   * tried — mouse reporting, then the alternate screen buffer — and both
+   * switched the feature off inside agent panes, which is the only place Josh
+   * uses it. Cmd+A then delete removed a single character instead of the line.
+   *
+   * Having just pressed Cmd+A is the guard. Nothing about the surrounding
+   * program gets a vote.
    */
-  it('refuses inside a full-screen program', () => {
-    expect(shouldKillLine({ ...base, alternateScreen: true })).toBe(false)
-  })
-
-  /**
-   * The regression this replaced. An agent enables mouse tracking while still
-   * drawing an inline prompt on the normal buffer, so the old mouse-reporting
-   * guard switched the feature off in exactly the panes it was written for —
-   * Cmd+A then delete removed a single character instead of the line.
-   */
-  it('works in an agent pane, which tracks the mouse but is not full-screen', () => {
-    expect(shouldKillLine({ ...base, alternateScreen: false })).toBe(true)
+  it('fires in an agent pane, whatever the program is doing with the screen', () => {
+    expect(shouldKillLine(base)).toBe(true)
   })
 
   it('refuses when a modifier is held, since that is a different request', () => {
@@ -112,8 +104,11 @@ describe('shouldKillLine', () => {
 })
 
 describe('KILL_LINE', () => {
-  it('goes to end of line before killing backwards', () => {
-    // Ctrl+U alone would only kill behind the cursor, leaving the tail.
-    expect(KILL_LINE).toBe('\x05\x15')
+  it('is Ctrl+U alone, matching exactly what Cmd+A highlights', () => {
+    // The selection runs line-start -> cursor, which is precisely what Ctrl+U
+    // kills. A leading Ctrl+E was dropped: it is not universally end-of-line
+    // (some programs open $EDITOR on it) and it would delete text past the
+    // cursor that was never shown as selected.
+    expect(KILL_LINE).toBe('\x15')
   })
 })

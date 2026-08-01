@@ -133,7 +133,7 @@ export class PaneTerminal {
 
     // Both on the host in capture phase: the host is a strict ancestor of
     // term.element, so these are guaranteed to run before xterm's own handlers.
-    this.opts.container.addEventListener('mousedown', this.handleOptionMouseDown, true)
+    this.opts.container.addEventListener('mousedown', this.handleMouseDown, true)
     this.opts.container.addEventListener('dblclick', this.handleDoubleClick, true)
 
     this.warnOnBadFontResidual()
@@ -165,7 +165,6 @@ export class PaneTerminal {
         const kill = shouldKillLine({
           key: ev.key,
           inputLineSelected: this.inputLineSelected,
-          alternateScreen: this.term.buffer.active.type === 'alternate',
           modified: ev.ctrlKey || ev.altKey,
         })
 
@@ -203,6 +202,38 @@ export class PaneTerminal {
    * Revealing never opens anything, so even a wrong guess is inert.
    */
   private handleDoubleClick = (ev: MouseEvent): void => {
+    this.claimDoubleClick(ev)
+  }
+
+  /**
+   * Single entry point for "the user double-clicked at this point".
+   *
+   * Called from two different events on purpose. A `dblclick` listener alone is
+   * not reliable here: when a program has claimed the mouse, xterm calls
+   * `preventDefault()` on mousedown to forward the click to the PTY, and a
+   * defaulted-prevented mousedown can stop the browser synthesising `dblclick`
+   * at all. The handler then never runs — which looks exactly like "double
+   * clicking a path does nothing", regardless of what the handler would have
+   * done.
+   *
+   * `mousedown` with `detail === 2` is the event that definitely arrives; it is
+   * already how the Option-click path works. Listening to both and de-duplicating
+   * means the feature does not depend on which of them the browser decides to
+   * deliver.
+   */
+  private lastClaim = { x: -1, y: -1, at: -1 }
+
+  private claimDoubleClick(ev: MouseEvent): void {
+    if (this.disposed) return
+
+    // The two events describe the same physical gesture, microseconds and a
+    // pixel or two apart. Collapse them so a path is not revealed twice.
+    const now = Date.now()
+    const near =
+      Math.abs(ev.clientX - this.lastClaim.x) < 4 && Math.abs(ev.clientY - this.lastClaim.y) < 4
+    if (near && now - this.lastClaim.at < 500) return
+    this.lastClaim = { x: ev.clientX, y: ev.clientY, at: now }
+
     this.opts.onDoubleClick(ev.clientX, ev.clientY)
   }
 
@@ -214,11 +245,23 @@ export class PaneTerminal {
    * Capture phase on the host, which is a strict ancestor of `term.element`, so
    * this runs before xterm's own bubble-phase mousedown handler.
    */
-  private handleOptionMouseDown = (ev: MouseEvent): void => {
-    if (ev.button !== 0 || !ev.altKey || ev.detail !== 2) return
-    if (!this.mouseReportingActive()) return
-    ev.preventDefault()
-    ev.stopPropagation()
+  private handleMouseDown = (ev: MouseEvent): void => {
+    if (ev.button !== 0 || ev.detail !== 2) return
+
+    // The reliable half of double-click detection. Runs in capture phase on an
+    // ancestor of term.element, so it happens before xterm can preventDefault
+    // this event and suppress the dblclick that would otherwise follow.
+    this.claimDoubleClick(ev)
+
+    // Option is still the way to keep the second press away from the program:
+    // without this the PTY also receives a click at that position, so an agent
+    // would act on a click the user meant for SeaShell. A plain double-click is
+    // deliberately left to pass through — the program is entitled to it, and
+    // revealing a path alongside costs it nothing.
+    if (ev.altKey && this.mouseReportingActive()) {
+      ev.preventDefault()
+      ev.stopPropagation()
+    }
   }
 
   /**
@@ -408,7 +451,7 @@ export class PaneTerminal {
     this.disposed = true
     this.search.dispose()
     if (this.resizeTimer) clearTimeout(this.resizeTimer)
-    this.opts.container.removeEventListener('mousedown', this.handleOptionMouseDown, true)
+    this.opts.container.removeEventListener('mousedown', this.handleMouseDown, true)
     this.opts.container.removeEventListener('dblclick', this.handleDoubleClick, true)
     this.disableWebgl()
     this.term.dispose()

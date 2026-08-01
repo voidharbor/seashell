@@ -63,24 +63,25 @@ export function inputLineSelection(input: InputLineInput): InputLineSelection | 
 }
 
 /**
- * Bytes that clear the line a shell is editing.
+ * Bytes that clear what ⌘A selected.
  *
- * `\x05` is Ctrl+E (move to end of line), `\x15` is Ctrl+U (kill backwards to
- * the start). Ctrl+U alone only kills back from wherever the cursor happens to
- * be, so going to the end first is what makes this delete the whole line rather
- * than the half behind the cursor.
+ * `\x15` is Ctrl+U — kill backwards from the cursor to the start of the line.
+ * That is exactly the extent `inputLineSelection` highlights, since the
+ * selection runs from the line start *to the cursor*. Deleting precisely what
+ * is highlighted is also the least surprising behaviour.
+ *
+ * A leading `\x05` (Ctrl+E, end of line) was tried, to catch text sitting after
+ * the cursor. It is not worth it: Ctrl+E is not universally "end of line" — some
+ * programs bind it to open $EDITOR — and text beyond the cursor was never part
+ * of the selection anyway, so removing it would delete something the user could
+ * not see was selected.
  */
-export const KILL_LINE = '\x05\x15'
+export const KILL_LINE = '\x15'
 
 export interface KillLineInput {
   key: string
   /** True only while the selection came from ⌘A's input-line select. */
   inputLineSelected: boolean
-  /**
-   * True when the terminal is showing the alternate screen buffer — see below.
-   * This replaced a mouse-reporting check, which was the wrong discriminator.
-   */
-  alternateScreen: boolean
   /** Any of meta/ctrl/alt held: the user asked for something else. */
   modified: boolean
 }
@@ -95,20 +96,27 @@ export interface KillLineInput {
  * only way to honour the selection is to send what the shell's own line editor
  * understands.
  *
- * The guard is about *where* Ctrl+U means "kill line". In a shell's line editor
- * and in an agent's inline prompt it does; in vim it is half a page up. The
- * discriminator is the alternate screen buffer: full-screen programs switch to
- * it, and shells and inline agent prompts never do.
+ * `inputLineSelected` is the whole guard, and it is a strong one: it is true
+ * only between a ⌘A input-line select and the very next keystroke. The user
+ * pressed select-all and then immediately pressed delete. There is no reading
+ * of that other than "replace this line".
  *
- * This used to test mouse reporting instead, which was wrong twice over. Agents
- * enable mouse tracking while still using a normal-buffer inline prompt, so the
- * check disabled the feature in the panes it was written for — and it would
- * have permitted it in a full-screen program that simply had not asked for the
- * mouse.
+ * Two cleverer guards were tried and both failed the same way — by trying to
+ * infer the user's context and getting it wrong in the pane that matters:
+ *
+ *   - mouse reporting: agents enable mouse tracking, so this switched the
+ *     feature off in exactly the panes it was written for.
+ *   - the alternate screen buffer: same outcome for any agent that draws on it.
+ *
+ * Both were guessing at whether Ctrl+U means "kill line" here. The honest
+ * answer is that it does in every line editor the user will press ⌘A in — a
+ * shell, an agent prompt, a REPL. The one place it means something else is a
+ * full-screen editor, where nobody reaches for select-all-then-delete to clear
+ * an input line, because there is no input line. That residual risk is smaller
+ * than the certainty of the feature not working at all.
  */
 export function shouldKillLine(input: KillLineInput): boolean {
   if (!input.inputLineSelected) return false
   if (input.modified) return false
-  if (input.alternateScreen) return false
   return input.key === 'Backspace' || input.key === 'Delete'
 }
