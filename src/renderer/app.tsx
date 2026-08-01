@@ -4,7 +4,7 @@ import { dfsPaneOrder } from './layout/tree.js'
 import { MAX_PANES_PER_TAB, type RowNode } from './layout/types.js'
 import { applyDividerDrag, deriveDividers, type DividerSpec } from './layout/dividers.js'
 import { MAX_TAB_NAME, reducer, uid, type AppState, type PaneCommand } from './store.js'
-import { PaneView, forgetSpawn, terminals } from './panes/PaneView.js'
+import { PaneView, forgetSpawn, setHostname, terminals } from './panes/PaneView.js'
 import { Explorer } from './explorer/Explorer.js'
 import { StatusBar } from './status/StatusBar.js'
 import { loadTerminalFont } from './term/terminal.js'
@@ -183,6 +183,7 @@ export function App(): React.JSX.Element {
       await loadTerminalFont()
       const paths = await window.seashell.app.getPaths()
       setHome(paths.home)
+      setHostname(paths.hostname)
       dispatch({ type: 'explorer.setRoot', root: paths.home })
       dispatch({
         type: 'tab.new',
@@ -868,6 +869,9 @@ export function App(): React.JSX.Element {
                   }
                   onSetColor={(color) =>
                     dispatch({ type: 'pane.setColor', paneId: r.paneId, color })
+                  }
+                  onCwd={(cwd) =>
+                    dispatch({ type: 'pane.cwd', paneId: r.paneId, cwd, home })
                   }
                   onTitle={(title) => {
                     if (!settings.autoTitlePanes) return

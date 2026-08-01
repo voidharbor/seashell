@@ -6,6 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { FALLBACK_FONT_SIZE, FONT_FAMILY, FONT_SIZE, TERMINAL_APP_PALETTE } from './palette.js'
 import { KILL_LINE, inputLineSelection, shouldKillLine } from './inputline.js'
+import { isLocalHost, parseOsc7 } from './osc7.js'
 
 /**
  * One xterm.js terminal bound to one PTY.
@@ -32,6 +33,11 @@ export interface PaneTerminalOptions {
   fontSize?: number
   /** OSC 0/2 title, as set by the running program. */
   onTitle?: (title: string) => void
+  /** OSC 7 working directory, as reported by the shell on every prompt. */
+  onCwd?: (cwd: string) => void
+  /** This machine's hostname, so a remote shell's OSC 7 can be told apart from
+   *  a local one. The app:// origin's hostname is "seashell", not the machine. */
+  hostname?: string
 }
 
 const RESIZE_DEBOUNCE_MS = 80
@@ -126,6 +132,28 @@ export class PaneTerminal {
 
     this.term.open(this.opts.container)
     this.attachKeyHandler()
+
+    /**
+     * OSC 7 — the shell reporting where it is.
+     *
+     * Registered here rather than inferred elsewhere because this is the only
+     * authoritative source: `ps` gives a pane's process cwd but not the shell's
+     * own notion of it, and nothing else survives a `cd` inside a subshell.
+     * Returning true marks the sequence handled so it is not also written to
+     * the screen as garbage.
+     *
+     * A remote host is ignored on purpose. An SSH session inside a pane reports
+     * paths that exist on the far side, and resolving a local click against
+     * those points the explorer somewhere meaningless — or somewhere real and
+     * unrelated, which is worse.
+     */
+    this.term.parser.registerOscHandler(7, (data) => {
+      const cwd = parseOsc7(data)
+      if (cwd && isLocalHost(data, this.opts.hostname ?? '')) {
+        this.opts.onCwd?.(cwd)
+      }
+      return true
+    })
 
     this.term.onData((d) => this.opts.onInput(d))
     this.term.onTitleChange((t) => this.opts.onTitle?.(t))

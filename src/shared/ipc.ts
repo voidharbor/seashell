@@ -267,6 +267,9 @@ export interface MetricsTickEvent {
 
 export interface AppPaths {
   home: string
+  /** The machine's own hostname, for deciding whether an OSC 7 working
+   *  directory describes this filesystem or a remote one over SSH. */
+  hostname: string
   userData: string
   defaultShell: string
   cwdOfLaunch: string

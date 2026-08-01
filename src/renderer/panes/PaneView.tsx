@@ -13,6 +13,13 @@ import { zoomPercent } from '../term/zoom.js'
  *  every pane holding its own IPC subscription. */
 export const terminals = new Map<string, PaneTerminal>()
 
+/** This machine's hostname, set once at boot. Used to tell a local shell's OSC 7
+ *  working directory from one reported by an SSH session inside a pane. */
+let hostname = ''
+export function setHostname(value: string): void {
+  hostname = value
+}
+
 /**
  * Pane generations that already own a PTY.
  *
@@ -63,6 +70,7 @@ export interface PaneViewProps {
   onToggleRaw: (raw: boolean) => void
   onSetColor: (color: PaneColorKey | null) => void
   onTitle: (title: string) => void
+  onCwd: (cwd: string) => void
   /** Whether the attention pulse is enabled in settings. */
   glow: boolean
   onToast: (message: string) => void
@@ -194,6 +202,8 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
   spawnedRef.current = props.onSpawned
   const titleRef = useRef(props.onTitle)
   titleRef.current = props.onTitle
+  const cwdCbRef = useRef(props.onCwd)
+  cwdCbRef.current = props.onCwd
 
   /**
    * The pane's live working directory, for resolving relative paths on
@@ -220,6 +230,13 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
       onResize: (cols, rows) => window.seashell.pty.resize({ paneId: pane.id, cols, rows }),
       onHttpLink: (url) => void window.seashell.open.externalHttp({ url }),
       onTitle: (title) => titleRef.current(title),
+      hostname: hostname,
+      onCwd: (cwd) => {
+        // Keep the ref hot for the very next double-click, and push it into
+        // pane state so the label and any project save see it too.
+        cwdRef.current = cwd
+        cwdCbRef.current(cwd)
+      },
       /**
        * Resolve the candidate before revealing it.
        *

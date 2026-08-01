@@ -298,6 +298,7 @@ export function registerIpc(ptyManager: PtyManager): void {
   ipcMain.handle(CH.appGetPaths, (): AppPaths => {
     return {
       home: os.homedir(),
+      hostname: os.hostname(),
       userData: app.getPath('userData'),
       defaultShell: '/bin/zsh',
       cwdOfLaunch: os.homedir(),
