@@ -71,7 +71,16 @@ function request(socketPath: string, payload: string): Promise<string> {
 const typeReq = (over: Record<string, unknown> = {}): string =>
   JSON.stringify({ cmd: 'type', paneId: 'pane-1', text: 'yes go ahead', ...over }) + '\n'
 
-describe('control server', () => {
+/**
+ * The whole suite binds real Unix domain sockets, which Node cannot reliably
+ * listen on under Windows (net.listen on an AF_UNIX path fails EACCES — first
+ * observed on the very first CI run on a windows runner). The app already
+ * treats that failure as "no control socket, degrade to copy-paste", so on
+ * win32 these tests describe behaviour that cannot exist rather than behaviour
+ * that is broken. Skipped, not deleted: they still run on macOS and Linux,
+ * which are the only places the socket does.
+ */
+describe.skipIf(process.platform === 'win32')('control server', () => {
   it('types text into a live pane whose foreground is claude', async () => {
     const { deps, writes, foregroundCalls } = makeFakes()
     await start(deps)
