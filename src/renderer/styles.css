@@ -7,7 +7,13 @@
   --chrome-line: #1c2c1c;
   --text: #b9f5ae;
   --text-dim: #6ea865;
-  --text-faint: #48703f;
+  /* Was #48703f, which measured 3.38:1 on --chrome-bg and 2.89:1 on a popover —
+     under AA for body text and under even the 3:1 UI minimum on the lighter
+     surfaces. This is the smallest step that clears 4.5:1 on the chrome
+     background while staying visibly dimmer than --text-dim, so the three-step
+     hierarchy survives. A dim token is fine; an unreadable one is a bug wearing
+     a style, and this one had already forced the close buttons to be rebuilt. */
+  --text-faint: #5c8551;
   --accent: #28fe14;
   --danger: #ff5f56;
   --warn: #e5a83c;
@@ -32,6 +38,38 @@
   --hit: calc(20px * var(--ui-scale));
   --divider: 9px;
   --ui-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+
+  /*
+    Chrome surfaces, darkest to lightest.
+
+    These are not new colours. Every value below is one that was already in the
+    file — there were 31 hard-coded hexes under this block against 23 tokens,
+    and five of them were near-identical dark surfaces (#0a0d11 #0e1116 #10161b
+    #161c22 #1a1f26) that had drifted apart as each panel, well and popover was
+    added separately. Naming them by role rather than by depth is the point: it
+    says what a surface is *for*, so the next thing that needs a background
+    picks one instead of inventing a sixth grey.
+
+    Four further one-off greys were folded into the steps above, each measured
+    first and each below the threshold at which the eye can tell two large flat
+    fields apart: #1b2229 and #1d232a into --surface-inset (2.6 and 3.8 parts in
+    255), #232a32 into --surface-chip (3.0), #2b3540 into --surface-chip-hi
+    (0.7). Those were the same colour written four ways, not four decisions.
+
+    What is NOT done here, because it is a visual judgement and this session
+    could not launch the app to make it (see the report): the remaining steps
+    are still closer together than a scale needs, and they are blue-greys while
+    --chrome-bg is green-tinted — the panels and the window frame are not the
+    same family. Both are now one edit in this block rather than a hunt through
+    1,200 lines.
+  */
+  --surface-sunken: #0a0d11;  /* input wells — the find field, the name field */
+  --surface-body: #0e1116;    /* large reading surfaces — viewer, preview panes */
+  --surface-card: #10161b;    /* modal cards — settings, projects, tutorial */
+  --surface-raised: #161c22;  /* floating bars — find bar, swatch popover */
+  --surface-inset: #1a1f26;   /* recessed rows — code lines, focused title bar */
+  --surface-chip: #262d35;    /* small controls — buttons, badges, the toast */
+  --surface-chip-hi: #2c343d; /* the same, hovered */
 }
 
 * {
@@ -117,7 +155,7 @@ body {
   padding: calc(1px * var(--ui-scale)) calc(5px * var(--ui-scale));
   border: 1px solid var(--accent);
   border-radius: 4px;
-  background: #0a0d11;
+  background: var(--surface-sunken);
   color: var(--text);
   font: inherit;
   outline: none;
@@ -464,7 +502,7 @@ body.dragging .sidebar__grip {
   border: 1px solid var(--chrome-line);
   border-top: 0;
   border-radius: 0 0 6px 6px;
-  background: #161c22;
+  background: var(--surface-raised);
   box-shadow: 0 6px 18px #0009;
 }
 
@@ -568,7 +606,7 @@ body.dragging .sidebar__grip {
 }
 
 .pane--focused .pane__title {
-  background: #1d232a;
+  background: var(--surface-inset);
   color: var(--text);
 }
 
@@ -586,7 +624,7 @@ body.dragging .sidebar__grip {
   font-size: calc(11px * var(--ui-scale));
   padding: calc(1px * var(--ui-scale)) calc(6px * var(--ui-scale));
   border-radius: 3px;
-  background: #262d35;
+  background: var(--surface-chip);
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -645,14 +683,14 @@ body.dragging .sidebar__grip {
   padding: calc(3px * var(--ui-scale)) calc(10px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
   border-radius: 4px;
-  background: #232a32;
+  background: var(--surface-chip);
   color: var(--text);
   font: inherit;
   white-space: nowrap;
 }
 
 .btn:hover {
-  background: #2c343d;
+  background: var(--surface-chip-hi);
 }
 
 .divider {
@@ -718,7 +756,7 @@ body.dragging .sidebar__grip {
   z-index: 20;
   display: flex;
   flex-direction: column;
-  background: #0e1116;
+  background: var(--surface-body);
 }
 
 .viewer__head {
@@ -755,7 +793,7 @@ body.dragging .sidebar__grip {
 /* Preview panes get a slightly lifted background so a wall of six panes still
    reads as "these two are not terminals" at a glance. */
 .pane--preview {
-  background: #0e1116;
+  background: var(--surface-body);
 }
 
 .preview__toolbar,
@@ -816,10 +854,10 @@ body.dragging .sidebar__grip {
   min-height: 100%;
   padding: calc(12px * var(--ui-scale));
   /* Checkerboard, so a transparent PNG is legible rather than invisible. */
-  background-image: linear-gradient(45deg, #1a1f26 25%, transparent 25%),
-    linear-gradient(-45deg, #1a1f26 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #1a1f26 75%),
-    linear-gradient(-45deg, transparent 75%, #1a1f26 75%);
+  background-image: linear-gradient(45deg, var(--surface-inset) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--surface-inset) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--surface-inset) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--surface-inset) 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
@@ -839,7 +877,7 @@ body.dragging .sidebar__grip {
   padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
   border-radius: 4px;
-  background: #0a0d11;
+  background: var(--surface-sunken);
   color: var(--text);
   font: inherit;
   outline: none;
@@ -906,7 +944,7 @@ body.dragging .web__view {
   border: 1px solid var(--chrome-line);
   border-top: 0;
   border-radius: 0 0 6px 6px;
-  background: #161c22;
+  background: var(--surface-raised);
   box-shadow: 0 6px 18px #0009;
 }
 
@@ -915,7 +953,7 @@ body.dragging .web__view {
   padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
   border-radius: 4px;
-  background: #0a0d11;
+  background: var(--surface-sunken);
   color: var(--text);
   font: inherit;
   outline: none;
@@ -961,7 +999,7 @@ body.dragging .web__view {
   padding: calc(20px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
   border-radius: 10px;
-  background: #10161b;
+  background: var(--surface-card);
   box-shadow: 0 20px 60px #000c;
 }
 
@@ -1048,7 +1086,7 @@ body.dragging .web__view {
   padding: calc(22px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
   border-radius: 10px;
-  background: #10161b;
+  background: var(--surface-card);
   box-shadow: 0 20px 60px #000c;
 }
 
@@ -1107,7 +1145,7 @@ body.dragging .web__view {
   border: 1px solid var(--chrome-line);
   border-bottom-width: 2px;
   border-radius: 5px;
-  background: #1b2229;
+  background: var(--surface-inset);
   color: var(--text);
   font-family: var(--ui-font);
   font-size: calc(12px * var(--ui-scale));
@@ -1125,7 +1163,7 @@ body.dragging .web__view {
   width: calc(7px * var(--ui-scale));
   height: calc(7px * var(--ui-scale));
   border-radius: 50%;
-  background: #2b3540;
+  background: var(--surface-chip-hi);
 }
 
 .tut__dot--on {
@@ -1188,7 +1226,7 @@ body.dragging .web__view {
   z-index: 40;
   padding: 6px 12px;
   border-radius: 6px;
-  background: #262d35;
+  background: var(--surface-chip);
   border: 1px solid var(--chrome-line);
   color: var(--text);
   box-shadow: 0 6px 20px #0008;
@@ -1209,7 +1247,7 @@ body.dragging .web__view {
   padding: calc(4px * var(--ui-scale)) calc(9px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
   border-radius: 4px;
-  background: #0a0d11;
+  background: var(--surface-sunken);
   color: var(--text);
   font: inherit;
   outline: none;
