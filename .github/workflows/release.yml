@@ -46,7 +46,7 @@ jobs:
       - run: npm test
       # electron-builder packages out/**; without this the asar is empty.
       - run: npm run build
-      - run: npx electron-builder --linux
+      - run: npx electron-builder --linux --publish never
       # --clobber so a re-run replaces its own asset instead of failing on it.
       - run: gh release upload "$TAG" release/*.AppImage --clobber
         env:
@@ -68,7 +68,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - run: npx electron-builder --win
+      - run: npx electron-builder --win --publish never
       # Same asset name the local cross-build used, so this native-built zip
       # replaces it rather than sitting beside it confusing downloaders.
       - shell: pwsh
