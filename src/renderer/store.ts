@@ -62,6 +62,12 @@ export interface PaneState {
   /** When `attention` became 'done', so the pulse can stop asking. */
   attentionAt?: number
   /**
+   * When this pane's current unbroken run of stillness began. Undefined the
+   * moment it does anything. Stillness only counts as a request for attention
+   * once it has lasted; see attention.ts.
+   */
+  waitingSince?: number
+  /**
    * Incremented on every restart. A restarted pane deliberately keeps its id —
    * so it holds its position, label and place in the layout tree — which means
    * the id alone cannot tell "restart this pane" apart from "this pane already
@@ -593,50 +599,79 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'explorer.reveal':
       return { ...state, revealPath: action.path, sidebarVisible: true }
 
+    /**
+     * Metrics arrive every few seconds forever, so this is the one reducer case
+     * whose *identity* behaviour matters as much as its result. It used to
+     * rebuild every tab and every pane object unconditionally, which changed
+     * `activeTab`'s identity on every tick and made the whole window recompute
+     * its layout for numbers that often had not moved. Panes, tabs and the tabs
+     * array are now each returned unchanged when nothing about them changed.
+     */
     case 'metrics': {
       const byId = new Map(action.panes.map((m) => [m.paneId, m]))
       const now = Date.now()
-      return {
-        ...state,
-        system: action.system,
-        tabs: state.tabs.map((t) => ({
-          ...t,
-          panes: Object.fromEntries(
-            Object.entries(t.panes).map(([id, p]) => {
-              const m = byId.get(id)
-              if (!m) return [id, p]
 
-              const focused = t.id === state.activeTabId && t.focusedPaneId === id
-              let attention = nextAttention({
-                previous: p.metrics?.state,
-                next: m.state,
-                current: p.attention ?? null,
-                focused,
-              })
+      let tabsChanged = false
+      const tabs = state.tabs.map((t) => {
+        let panesChanged = false
+        const panes: Record<string, PaneState> = {}
 
-              // A finished pulse stops asking after a while; a waiting one does
-              // not, because the pane is still waiting.
-              if (attention === 'done' && p.attention === 'done' && doneExpired(p.attentionAt, now)) {
-                attention = null
-              }
+        for (const [id, p] of Object.entries(t.panes)) {
+          const m = byId.get(id)
+          if (!m) {
+            panes[id] = p
+            continue
+          }
 
-              const changed = attention !== (p.attention ?? null)
-              const attentionAt =
-                attention === 'done' && changed ? now : attention === null ? undefined : p.attentionAt
+          const focused = t.id === state.activeTabId && t.focusedPaneId === id
+          const outcome = nextAttention({
+            previous: p.metrics?.state,
+            next: m.state,
+            current: p.attention ?? null,
+            focused,
+            waitingSince: p.waitingSince,
+            now,
+          })
 
-              return [
-                id,
-                {
-                  ...p,
-                  metrics: m,
-                  ...(attention === null ? { attention: undefined } : { attention }),
-                  attentionAt,
-                },
-              ]
-            })
-          ),
-        })),
-      }
+          let attention = outcome.attention
+          // A finished pulse stops asking after a while; a waiting one does
+          // not, because the pane is still waiting.
+          if (attention === 'done' && p.attention === 'done' && doneExpired(p.attentionAt, now)) {
+            attention = null
+          }
+
+          const changed = attention !== (p.attention ?? null)
+          const attentionAt =
+            attention === 'done' && changed ? now : attention === null ? undefined : p.attentionAt
+
+          if (
+            !changed &&
+            attentionAt === p.attentionAt &&
+            outcome.waitingSince === p.waitingSince &&
+            sameMetrics(p.metrics, m)
+          ) {
+            panes[id] = p
+            continue
+          }
+
+          panesChanged = true
+          panes[id] = {
+            ...p,
+            metrics: m,
+            ...(attention === null ? { attention: undefined } : { attention }),
+            attentionAt,
+            waitingSince: outcome.waitingSince,
+          }
+        }
+
+        if (!panesChanged) return t
+        tabsChanged = true
+        return { ...t, panes }
+      })
+
+      // `system` genuinely changes every tick, so the root object always does.
+      // The tabs array is what the layout memos hang off, and it must not.
+      return { ...state, system: action.system, tabs: tabsChanged ? tabs : state.tabs }
     }
 
     case 'toast':
@@ -645,6 +680,22 @@ export function reducer(state: AppState, action: Action): AppState {
     default:
       return state
   }
+}
+
+/**
+ * Whether a fresh sample says anything new. Every field is a primitive, so a
+ * field-by-field compare is both exact and cheaper than the re-render it saves.
+ */
+function sameMetrics(a: PaneMetrics | undefined, b: PaneMetrics): boolean {
+  return (
+    a !== undefined &&
+    a.footprintBytes === b.footprintBytes &&
+    a.cpuFrac === b.cpuFrac &&
+    a.state === b.state &&
+    a.foregroundProcess === b.foregroundProcess &&
+    a.procCount === b.procCount &&
+    a.cwd === b.cwd
+  )
 }
 
 function mapPane(state: AppState, paneId: string, fn: (p: PaneState) => PaneState): AppState {

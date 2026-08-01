@@ -24,6 +24,15 @@ interface PaneProc {
    */
   ttyName: string | null
   exited: boolean
+  /**
+   * Bytes this pane has written to its terminal since it spawned, monotonic.
+   *
+   * Read by the monitor, which diffs it between sweeps to tell a pane that has
+   * genuinely gone still from one that is quietly animating a spinner. CPU
+   * alone cannot separate those, and that confusion is what made every idle
+   * agent pane glow. See monitor/activity.ts.
+   */
+  bytesOut: number
 }
 
 const MAX_PANES = 24
@@ -125,6 +134,7 @@ export class PtyManager {
       spawnedAt: Date.now(),
       ttyName,
       exited: false,
+      bytesOut: 0,
     }
     this.panes.set(req.paneId, rec)
     this.batcher.setPaneActive(req.paneId, true)
@@ -133,7 +143,10 @@ export class PtyManager {
     proc.onData((chunk: string | Buffer) => {
       const text =
         typeof chunk === 'string' ? chunk : rec.decoder.write(chunk)
-      if (text) this.batcher.push(req.paneId, text, Date.now())
+      if (text) {
+        rec.bytesOut += text.length
+        this.batcher.push(req.paneId, text, Date.now())
+      }
     })
 
     proc.onExit(({ exitCode, signal }) => {
@@ -186,10 +199,11 @@ export class PtyManager {
     }
   }
 
-  listPids(): Array<{ paneId: string; pid: number }> {
+  /** Live panes, with the monotonic output counter the monitor diffs. */
+  listPids(): Array<{ paneId: string; pid: number; bytesOut: number }> {
     return [...this.panes.values()]
       .filter((r) => !r.exited)
-      .map((r) => ({ paneId: r.paneId, pid: r.proc.pid }))
+      .map((r) => ({ paneId: r.paneId, pid: r.proc.pid, bytesOut: r.bytesOut }))
   }
 
   /**

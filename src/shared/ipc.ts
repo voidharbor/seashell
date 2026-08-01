@@ -228,11 +228,17 @@ export interface OpenExternalHttpRequest {
 /**
  * What a pane's foreground process is doing.
  * - `PROMPT`  shell is foreground — sitting at a prompt, nothing running
- * - `BUSY`    a child is foreground and burning CPU
- * - `WAITING` a child is foreground but idle (e.g. an agent awaiting input)
+ * - `BUSY`    a child is foreground and either burning CPU or still painting
+ * - `WAITING` a child is foreground and has gone completely still
  *
- * This distinction is why idle detection cannot key on output alone: an
- * animated spinner emits bytes continuously while doing nothing.
+ * Idle detection cannot key on output alone — an animated spinner emits bytes
+ * continuously while doing nothing — nor on CPU alone, because an agent waiting
+ * on a network round trip is as cheap as an agent waiting on you. `WAITING`
+ * means both signals are quiet at once. See `main/monitor/activity.ts`.
+ *
+ * Note this is one sample, not a verdict: a single quiet sample is not a
+ * request for attention. The renderer requires it to persist before anything
+ * glows — see `renderer/panes/attention.ts`.
  */
 export type PaneActivity = 'PROMPT' | 'BUSY' | 'WAITING'
 
