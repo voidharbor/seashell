@@ -725,7 +725,11 @@ it('defaults lookoutCards on and coerces junk back to it', () => {
 - Test: `test/dom/tutorial.test.tsx` (extend)
 - Create: `docs/superpowers/plans/2026-08-01-lookout-e2e-checklist.md`
 
-- [ ] **Step 1: Bump** `"version": "0.2.0"` and write the README section: what cards are, the two lanes, the two plugin install commands, and the one-sentence safety model (external tools propose; only your click submits).
+- [ ] **Step 1: Bump** `"version": "0.2.0"` and write the README section: what cards are, the two lanes, and the one-sentence safety model (external tools propose; only your click submits). Companion-plugin wording (added 2026-08-01, Josh's request) — the section must state all three of these, in this order:
+  1. Smart drafted cards **require the c-assistant companion plugin**:
+     `/plugin marketplace add voidharbor/claude-plugins` then `/plugin install c-assistant@voidharbor`.
+  2. **Recommend the voidharbor bundle** for the full skill set: `/plugin install voidharbor@voidharbor` installs all of voidharbor's skills at once.
+  3. The Lookout hooks ship in the standalone c-assistant plugin specifically — the bundle carries the c-assistant commands but not the hooks, so cards need c-assistant installed even if you also have the bundle.
 - [ ] **Step 1b: Tutorial step (added 2026-08-01, Josh's request).** Read `Tutorial.tsx` and add one step following the existing steps structure exactly (same shape, same voice, positioned after whatever step covers pane attention/glow, else last). Copy, verbatim: title **"Lookout"**, body **"When an agent pane stops to ask you something, a card appears in the corner — Approve answers the pane without leaving the one you're in. Smart drafted replies come from the c-assistant plugin."** Extend `test/dom/tutorial.test.tsx` in its existing pattern: TDD order — add a failing assertion that stepping through the tutorial reaches a step containing "Lookout", run it (FAIL), add the step, run it (PASS).
 - [ ] **Step 2: Write the checklist file** with exactly these manual steps (checked off during release, not now):
 

@@ -467,9 +467,11 @@ if __name__ == "__main__":
 ### Task 6: Version bump, marketplace entry, README, push
 
 **Files:**
-- Modify: `c-assistant/.claude-plugin/plugin.json` (version `1.1.0` → `1.2.0`; append one sentence to `description`: "With SeaShell 0.2.0+, also pushes live approval cards when a session stops on a question.")
+- Modify: `c-assistant/.claude-plugin/plugin.json` (version `1.1.0` → `1.2.0`; append to `description`, verbatim: "Designed to work best with SeaShell: with SeaShell 0.2.0+ it pushes live approval cards into the terminal when a session stops on a question.")
 - Modify: `.claude-plugin/marketplace.json` (the `c-assistant` entry's `version` + same description sentence)
-- Modify: `README.md` (c-assistant section: the two lanes, the two install commands, macOS/Linux note)
+- Modify: `README.md` (c-assistant section: the two lanes, the two install commands, macOS/Linux note, plus a line that the voidharbor bundle plugin does NOT carry the Lookout hooks — cards need the standalone c-assistant install)
+
+Explicit non-goal (added 2026-08-01 after the voidharbor bundle plugin landed): do NOT copy `hooks/` or the Lookout scripts into the `voidharbor/` bundle directory. Two installed copies of the Stop hook would both fire on every turn end and race the triage lock forever. The bundle keeps commands only; hooks live in c-assistant alone, which is also what SeaShell's plugin detection checks for.
 
 - [ ] **Step 1:** Make the three edits. `python3 -m json.tool` both JSON files to prove validity.
 - [ ] **Step 2:** Full suite one last time: `python3 -m unittest discover -s c-assistant/tests -v` → all PASS.
