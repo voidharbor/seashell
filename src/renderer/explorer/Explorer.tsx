@@ -123,10 +123,17 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
     void (async () => {
       // A directory is expanded, not merely selected — the chain includes the
       // folder itself. A file still expands nothing past its parent.
+      //
+      // Every chain directory is re-read, cached or not. The revealed path was
+      // just stat'ed as existing, which makes it *newer* than any cached
+      // listing — a file created after its parent was listed has no row, and
+      // selecting a row that does not exist is a silent no-op that presents as
+      // "double-click does nothing". A reveal is rare and user-initiated;
+      // a few readDirs is nothing next to looking dead.
       const chain = expandChain(target, root, revealPath.isDir)
       for (const dir of chain) {
         if (cancelled) return
-        if (!dirs[dir]) await load(dir)
+        await load(dir)
       }
       if (cancelled) return
       setExpanded((prev) => new Set([...prev, ...chain]))
