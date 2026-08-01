@@ -1,5 +1,5 @@
 import type { SavedPane, SavedTab } from '../../shared/ipc.js'
-import type { AppState, PaneState, TabState } from '../store.js'
+import type { AppState, PaneCommand, PaneState, TabState } from '../store.js'
 import { createInitialTree } from '../layout/tree.js'
 import type { RowNode } from '../layout/types.js'
 import { isPaneColorKey } from '../panes/colors.js'
@@ -22,15 +22,69 @@ import { isPaneColorKey } from '../panes/colors.js'
 /** Runtime-only fields, listed once so the omission is deliberate and visible. */
 export type SerializablePane = Omit<
   PaneState,
-  'id' | 'pid' | 'status' | 'exit' | 'metrics' | 'attention' | 'attentionAt' | 'generation'
+  | 'id'
+  | 'pid'
+  | 'status'
+  | 'exit'
+  | 'metrics'
+  | 'attention'
+  | 'attentionAt'
+  | 'waitingSince'
+  | 'generation'
 >
+
+/**
+ * Foreground process names a pane may be restored as.
+ *
+ * An **allowlist**, and it has to stay one. Restoring is literally typing text
+ * into a fresh shell, so anything reachable from here is something a project
+ * file can make happen on open. A blocklist would mean every process name
+ * nobody thought of is executable by default; this way the unknown case is a
+ * plain shell, which is merely disappointing rather than dangerous.
+ *
+ * `vim somefile` is the shape of the problem: the foreground process is `vim`,
+ * but retyping just `vim` opens an empty buffer, not the file — the argument
+ * was never observable. So this is kept to programs that mean something useful
+ * with no arguments at all, which today is one.
+ */
+const RESTORABLE_FOREGROUND: Readonly<Record<string, PaneCommand>> = {
+  claude: 'claude',
+}
+
+/**
+ * What a pane should be recorded as having been running.
+ *
+ * The bug this fixes: since the `✻` button left the tab bar, nothing in the app
+ * ever set `command: 'claude'`. Every pane was created as `'zsh'`, so a saved
+ * project recorded `'zsh'` and reopening it gave back a row of bare shells
+ * instead of the agents that had been running in them.
+ *
+ * The app already knew — the monitor reports `foregroundProcess` on every tick,
+ * which is what lets a pane badge itself `claude` in its own title bar. Nothing
+ * ever wrote that back down. So a pane is saved as what it is *actually*
+ * running rather than as whatever it was launched as.
+ *
+ * A command the user chose explicitly always wins over an inferred one. They
+ * asked for that; this is only guessing.
+ */
+export function savedCommandFor(pane: PaneState): PaneCommand {
+  if (pane.command !== 'zsh') return pane.command
+  if (pane.kind !== 'term') return pane.command
+
+  // `ps` reports a resolved path, and a program that rewrites its own process
+  // title can append to it — "claude bg-pty-host" is a real observed value. The
+  // leading token after the last slash is the program itself.
+  const raw = pane.metrics?.foregroundProcess ?? ''
+  const name = (raw.split(/\s+/)[0] ?? '').split('/').pop() ?? ''
+  return RESTORABLE_FOREGROUND[name] ?? 'zsh'
+}
 
 export function paneToSaved(pane: PaneState): SavedPane {
   return {
     label: pane.label,
     labelIsCustom: pane.labelIsCustom,
     kind: pane.kind,
-    command: pane.command,
+    command: savedCommandFor(pane),
     cwd: pane.cwd,
     ...(pane.commandText === undefined ? {} : { commandText: pane.commandText }),
     ...(pane.color === undefined ? {} : { color: pane.color }),

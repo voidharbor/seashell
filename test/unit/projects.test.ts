@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { remapTree, tabToSaved, tabsFromSaved } from '../../src/renderer/projects/serialize.js'
+import {
+  remapTree,
+  savedCommandFor,
+  tabToSaved,
+  tabsFromSaved,
+} from '../../src/renderer/projects/serialize.js'
 import { isValidProject, upsertProject } from '../../src/main/state/store.js'
 import type { PaneState, TabState } from '../../src/renderer/store.js'
 import type { Project } from '../../src/shared/ipc.js'
@@ -63,6 +68,81 @@ describe('saving a project', () => {
     expect(only.color).toBe('blue')
     expect(only.labelIsCustom).toBe(true)
     expect(saved.name).toBe('work')
+  })
+})
+
+/**
+ * Reopening a project used to hand back a row of bare shells.
+ *
+ * Nothing in the app had set `command: 'claude'` since the `✻` button left the
+ * tab bar, so every pane was born `'zsh'`, saved as `'zsh'`, and restored as a
+ * plain terminal — while the app knew perfectly well what was running in it,
+ * because that is what the pane's own title-bar badge reads from.
+ */
+describe('recording what a pane is actually running', () => {
+  const running = (foregroundProcess: string, extra: Partial<PaneState> = {}): PaneState =>
+    pane('p1', {
+      metrics: {
+        paneId: 'p1',
+        footprintBytes: 0,
+        cpuFrac: 0,
+        state: 'WAITING',
+        foregroundProcess,
+        procCount: 2,
+        cwd: '',
+      },
+      ...extra,
+    })
+
+  it('saves an agent pane as the agent, not as the shell it was launched from', () => {
+    expect(savedCommandFor(running('claude'))).toBe('claude')
+  })
+
+  it('tolerates a process that has rewritten its own title', () => {
+    // Real observed `ps` values — a program may append to argv[0].
+    expect(savedCommandFor(running('claude bg-pty-host'))).toBe('claude')
+  })
+
+  it('takes the program name out of a resolved path', () => {
+    expect(savedCommandFor(running('/Users/j/.local/bin/claude'))).toBe('claude')
+  })
+
+  /**
+   * Restoring is literally typing into a shell, so this must be an allowlist.
+   * Anything unrecognised comes back as a plain shell — disappointing, never
+   * dangerous.
+   */
+  it('refuses to reproduce anything it does not explicitly know', () => {
+    expect(savedCommandFor(running('rm'))).toBe('zsh')
+    expect(savedCommandFor(running('bash'))).toBe('zsh')
+    // A pane running an editor: the filename was never observable, so restoring
+    // `vim` alone would open an empty buffer rather than the file.
+    expect(savedCommandFor(running('vim'))).toBe('zsh')
+    // A pipeline restores as whatever the leaf process happened to be — which
+    // is exactly the kind of guess not worth making.
+    expect(savedCommandFor(running('grep'))).toBe('zsh')
+    expect(savedCommandFor(running(''))).toBe('zsh')
+  })
+
+  it('never lets an inferred command override one the user chose', () => {
+    const explicit = running('claude', { command: 'cmd', commandText: 'npm run dev' })
+    expect(savedCommandFor(explicit)).toBe('cmd')
+    expect(Object.values(tabToSaved(tab([explicit])).panes)[0]!.commandText).toBe('npm run dev')
+  })
+
+  it('leaves a pane with nothing running as a plain shell', () => {
+    expect(savedCommandFor(pane('p1'))).toBe('zsh')
+  })
+
+  it('carries the inferred command all the way through a save and reopen', () => {
+    const saved = [tabToSaved(tab([running('claude')]))]
+    const [restored] = tabsFromSaved(saved, mint)
+    const only = Object.values(restored!.panes)[0]!
+    expect(only.command).toBe('claude')
+    // And it still comes back as a fresh, unspawned shell — the retype only
+    // ever happens against a brand-new PTY, never into a live conversation.
+    expect(only.status).toBe('starting')
+    expect(only.pid).toBeNull()
   })
 })
 
