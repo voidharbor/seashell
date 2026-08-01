@@ -28,10 +28,12 @@ import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
 import { ProjectsPanel } from './projects/ProjectsPanel.js'
 import { stateToTabs, tabsFromSaved } from './projects/serialize.js'
-import type { Project } from '../shared/ipc.js'
+import type { LookoutActionRequest, LookoutCard, Project } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
-import { extractQuestion, TAIL_LINES } from './lookout/extract.js'
+import { extractQuestion } from './lookout/extract.js'
 import { planDetections } from './lookout/detect.js'
+import { readPaneTail } from './lookout/tail.js'
+import { CardStack } from './lookout/CardStack.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
 
@@ -56,6 +58,9 @@ export function App(): React.JSX.Element {
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [settings, setSettings] = useState<Settings>(loadSettings)
+  const [lookoutCards, setLookoutCards] = useState<LookoutCard[]>([])
+  const [lookoutOpen, setLookoutOpen] = useState(false)
+  const [lookoutPlugin, setLookoutPlugin] = useState(false)
 
   const updateSettings = useCallback((next: Settings) => {
     setSettings(next)
@@ -215,6 +220,14 @@ export function App(): React.JSX.Element {
     }
   }, [])
 
+  // Subscribed once: the card list is pushed whenever it changes, and the
+  // plugin flag only needs a single read at boot (Task 7 does not poll it).
+  useEffect(() => {
+    const off = window.seashell.lookout.onCards((e) => setLookoutCards(e.cards))
+    void window.seashell.lookout.getState().then((s) => setLookoutPlugin(s.pluginInstalled))
+    return off
+  }, [])
+
   const lookoutReported = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!true) return // gated by settings.lookoutCards once the setting lands (Task 8)
@@ -230,17 +243,34 @@ export function App(): React.JSX.Element {
     const plan = planDetections(panes, lookoutReported.current)
     lookoutReported.current = plan.nextReported
     for (const paneId of plan.toScan) {
-      const term = terminals.get(paneId)?.term
-      if (!term) continue
-      const buf = term.buffer.active
-      const lines: string[] = []
-      for (let i = Math.max(0, buf.length - TAIL_LINES); i < buf.length; i++) {
-        lines.push(buf.getLine(i)?.translateToString(true) ?? '')
-      }
+      const lines = readPaneTail(paneId)
+      if (!lines) continue
       const extraction = extractQuestion(lines)
       if (extraction) window.seashell.lookout.detected({ paneId, question: extraction.question })
     }
   }, [state.tabs, state.activeTabId])
+
+  // Live per-pane screen shape for the card stack's send-button gate — a
+  // fresh xterm-buffer read on every call (render *and* click time), never a
+  // cached value. See CardStack's doc comment for why click time re-reads.
+  const lookoutScreenMode = useCallback((paneId: string): 'input' | 'selector' | null => {
+    const lines = readPaneTail(paneId)
+    return lines ? (extractQuestion(lines)?.kind ?? null) : null
+  }, [])
+
+  const lookoutGotoPane = useCallback(
+    (paneId: string) => {
+      const tab = state.tabs.find((t) => t.panes[paneId] !== undefined)
+      if (!tab) return
+      dispatch({ type: 'tab.select', tabId: tab.id })
+      dispatch({ type: 'pane.focus', paneId })
+    },
+    [state.tabs]
+  )
+
+  const lookoutOnAction = useCallback((req: LookoutActionRequest) => {
+    void window.seashell.lookout.action(req)
+  }, [])
 
   const activeTab = useMemo(
     () => state.tabs.find((t) => t.id === state.activeTabId),
@@ -698,6 +728,12 @@ export function App(): React.JSX.Element {
   const panesAreZoomed = state.tabs.some((t) =>
     Object.values(t.panes).some((p) => p.zoomIndex !== undefined)
   )
+  // You are already looking at the focused pane's card, so it is suppressed
+  // from the stack and does not count toward the badge either.
+  const suppressedPaneId = activeTab?.focusedPaneId ?? null
+  const lookoutCount = lookoutCards.filter(
+    (c) => c.state === 'active' && c.paneId !== suppressedPaneId
+  ).length
 
   return (
     <div className="app">
@@ -965,7 +1001,23 @@ export function App(): React.JSX.Element {
         </div>
       </div>
 
-      <StatusBar tab={activeTab} system={state.system} />
+      <StatusBar
+        tab={activeTab}
+        system={state.system}
+        lookoutCount={lookoutCount}
+        onLookoutClick={() => setLookoutOpen((o) => !o)}
+      />
+
+      <CardStack
+        cards={lookoutCards}
+        suppressedPaneId={suppressedPaneId}
+        pluginInstalled={lookoutPlugin}
+        open={lookoutOpen}
+        screenMode={lookoutScreenMode}
+        onAction={lookoutOnAction}
+        onGotoPane={lookoutGotoPane}
+        onClose={() => setLookoutOpen(false)}
+      />
 
       {settingsOpen && (
         <SettingsPanel

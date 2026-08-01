@@ -748,6 +748,14 @@ body.dragging .sidebar__grip {
   color: var(--text-faint);
 }
 
+.statusbar__lookout {
+  color: var(--text-dim);
+}
+
+.statusbar__lookout:hover {
+  color: var(--text);
+}
+
 /* --------------------------------------------------------------- viewer */
 
 .viewer {
@@ -1318,4 +1326,92 @@ body.dragging .web__view {
 .preview__pdf {
   flex: 1;
   border: 0;
+}
+
+/* -------------------------------------------------------------- lookout */
+
+.lookout-stack {
+  position: fixed;
+  right: calc(12px * var(--ui-scale));
+  bottom: calc(var(--statusbar-h) + 12px * var(--ui-scale));
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: calc(8px * var(--ui-scale));
+  width: calc(300px * var(--ui-scale));
+  max-height: 70%;
+  overflow-y: auto;
+}
+
+.card {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: calc(6px * var(--ui-scale));
+  padding: calc(10px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: 0 8px 24px #000a;
+}
+
+.card--stale {
+  opacity: 0.55;
+}
+
+.card__pane {
+  color: var(--text-faint);
+  font-size: calc(11px * var(--ui-scale));
+}
+
+.card__question {
+  color: var(--text);
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.4;
+  user-select: text;
+}
+
+.card__draft {
+  width: 100%;
+  padding: calc(5px * var(--ui-scale)) calc(8px * var(--ui-scale));
+  border: 1px solid var(--chrome-line);
+  border-radius: 4px;
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+  resize: none;
+}
+
+.card__draft:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.card__draft--ref {
+  color: var(--text-faint);
+  font-style: italic;
+  user-select: text;
+}
+
+.card__hint {
+  color: var(--text-faint);
+  font-size: calc(11.5px * var(--ui-scale));
+}
+
+.card__cmd {
+  display: block;
+  padding: calc(4px * var(--ui-scale)) calc(7px * var(--ui-scale));
+  border-radius: 4px;
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-size: calc(11.5px * var(--ui-scale));
+  overflow-x: auto;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(6px * var(--ui-scale));
 }
