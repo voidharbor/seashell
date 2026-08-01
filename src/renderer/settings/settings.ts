@@ -28,6 +28,8 @@ export interface Settings {
   /** Give every new pane a colour tag automatically, preferring one the tab is
    *  not already using. Renaming or recolouring by hand always wins. */
   autoColorPanes: boolean
+  /** Raise approval cards when an agent pane stops on a question. */
+  lookoutCards: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -35,6 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   attentionSound: false,
   autoTitlePanes: true,
   autoColorPanes: true,
+  lookoutCards: true,
 }
 
 const STORAGE_KEY = 'seashell.settings'

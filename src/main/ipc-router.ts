@@ -9,8 +9,11 @@ import {
   type Project,
   type FsProbeResponse,
   type OpenPathResponse,
+  type LookoutActionResponse,
+  type LookoutState,
 } from '../shared/ipc.js'
 import type { PtyManager } from './pty/manager.js'
+import type { CardStore } from './lookout/card-store.js'
 import { readDir } from './fs/tree.js'
 import { readTextFile } from './fs/read.js'
 import { statBatch } from './fs/stat-batch.js'
@@ -74,6 +77,13 @@ const ProjectSaveReq = z.object({
 })
 const HttpReq = z.object({ url: z.string().max(4096) })
 
+const LookoutDetectedReq = z.object({ paneId: PaneId, question: z.string().min(1).max(500) })
+const LookoutActionReq = z.object({
+  cardId: z.string().min(1).max(64),
+  action: z.enum(['approve', 'dismiss']),
+  text: z.string().max(4000).optional(),
+})
+
 /** Extension -> mime, for the image preview. Fixed table; never sniffed. */
 // Keys are dot-prefixed because the lookup uses extOf(), which returns
 // path.extname() verbatim. They were dotless once, which made every lookup
@@ -96,7 +106,19 @@ const IMAGE_MIME: Record<string, string> = {
  *  ceiling is about renderer memory, not disk. */
 const IMAGE_MAX_BYTES = 16 * 1024 * 1024
 
-export function registerIpc(ptyManager: PtyManager): void {
+/**
+ * The main-process face of Lookout that the router hands requests to. `store`
+ * is the shared CardStore; `approve` and `pluginInstalled` are injected so
+ * this file stays free of pty and filesystem specifics — index.ts composes
+ * the real implementations (see lookout/approve.ts, lookout/plugin-detect.ts).
+ */
+export interface LookoutIpc {
+  store: CardStore
+  approve(req: { cardId: string; text: string }): Promise<LookoutActionResponse>
+  pluginInstalled(): Promise<boolean>
+}
+
+export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
   ipcMain.handle(CH.ptySpawn, (_e, raw) => {
     const parsed = SpawnReq.safeParse(raw)
     if (!parsed.success) {
@@ -317,5 +339,38 @@ export function registerIpc(ptyManager: PtyManager): void {
       // Falls back to Menlo at a larger size; the app still works.
       return null
     }
+  })
+
+  // -------------------------------------------------------------- lookout
+  ipcMain.on(CH.lookoutDetected, (_e, raw) => {
+    const parsed = LookoutDetectedReq.safeParse(raw)
+    if (parsed.success) lookout.store.createFromDetector(parsed.data.paneId, parsed.data.question)
+  })
+
+  ipcMain.handle(CH.lookoutAction, async (_e, raw): Promise<LookoutActionResponse> => {
+    const parsed = LookoutActionReq.safeParse(raw)
+    if (!parsed.success) {
+      return { ok: false, code: 'EINVALID', message: 'invalid action request' }
+    }
+
+    const { cardId, action, text } = parsed.data
+    if (action === 'dismiss') {
+      lookout.store.dismiss(cardId)
+      return { ok: true, delivered: false }
+    }
+    if (text === undefined) {
+      return { ok: false, code: 'EINVALID', message: 'approve requires text' }
+    }
+    return lookout.approve({ cardId, text })
+  })
+
+  ipcMain.handle(CH.lookoutGetState, async (): Promise<LookoutState> => ({
+    pluginInstalled: await lookout.pluginInstalled(),
+    enabled: lookout.store.enabled(),
+  }))
+
+  ipcMain.on(CH.lookoutSetEnabled, (_e, raw) => {
+    const parsed = z.boolean().safeParse(raw)
+    if (parsed.success) lookout.store.setEnabled(parsed.data)
   })
 }

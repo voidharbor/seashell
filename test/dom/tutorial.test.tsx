@@ -83,6 +83,17 @@ describe('Tutorial', () => {
     expect(stepIndex()).toBe(stepCount())
   })
 
+  it('reaches a step about Lookout when stepping all the way through', () => {
+    render(<Tutorial onClose={() => {}} />)
+    const count = stepCount()
+    const titles = [screen.getByRole('heading', { level: 2 }).textContent]
+    for (let i = 1; i < count; i += 1) {
+      fireEvent.keyDown(window, { key: 'ArrowRight' })
+      titles.push(screen.getByRole('heading', { level: 2 }).textContent)
+    }
+    expect(titles).toContain('Lookout')
+  })
+
   it('only marks itself seen once actually dismissed', () => {
     const onClose = vi.fn()
     const { rerender } = render(<Tutorial onClose={onClose} />)

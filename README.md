@@ -90,6 +90,43 @@ These exist because of that:
   intercepted, and the environment a pane inherits is scrubbed of SeaShell's own identity so a
   nested launch cannot confuse the agent running inside it.
 
+## Lookout
+
+Watching several agent panes means someone still has to notice the one that stopped to ask
+you something. Lookout does that noticing: the moment an unfocused pane goes idle on a
+question, a **card** appears in the bottom-right corner with the question on it, and a badge
+in the status bar counts every card waiting on you — the pane you are already looking at gets
+counted there too, just without a card of its own.
+
+Two lanes feed the same stack:
+
+- **Detector, built in.** SeaShell watches for a claude pane idle on a question and raises a
+  card with canned replies — `Continue` / `Yes` / `No`, `Go to pane`, dismiss. No config, no
+  tokens, no external process, on every platform.
+- **Drafted replies, via a plugin.** With the c-assistant companion plugin installed, a Claude
+  Code Stop hook drafts a one-line reply in your voice and pushes a richer card over the
+  control socket — `Approve ✓`, `Edit`, `Deny ✕`. A pushed card replaces the detector's card
+  for the same pane.
+
+The safety model is one rule regardless of lane: external tools can only propose a card, and
+only your own click inside SeaShell ever submits it into the pane. A card on a pane showing a
+picker screen is look-only — there is no single word to send into a menu, so it shows the
+question and stops there.
+
+Smart drafted cards require the c-assistant companion plugin:
+
+```bash
+/plugin marketplace add voidharbor/claude-plugins
+/plugin install c-assistant@voidharbor
+```
+
+For the full skill set, install the voidharbor bundle instead — `/plugin install voidharbor@voidharbor`
+installs all of voidharbor's skills at once. The Lookout hooks ship in the standalone
+c-assistant plugin specifically: the bundle carries the c-assistant commands but not the
+hooks, so cards still need c-assistant installed on its own, even alongside the bundle.
+
+A master toggle in Settings turns Lookout off.
+
 ## What it does
 
 - **Tiled panes.** Each tab holds an auto-arranged grid of terminals — 1, then 2 side by side,

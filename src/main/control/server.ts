@@ -1,11 +1,15 @@
 /**
- * The control socket: one Unix domain socket, one command, one request per
- * connection — see docs/superpowers/specs/2026-07-31-pane-delivery-design.md.
+ * The control socket: one Unix domain socket, two commands (`type`, `card`),
+ * one request per connection — see
+ * docs/superpowers/specs/2026-07-31-pane-delivery-design.md and its amendment
+ * docs/superpowers/specs/2026-08-01-lookout-approval-cards-design.md.
  *
  * Everything with a decision in it is injected (`ControlServerDeps`), so tests
  * drive a real socket against recording fakes. The guard ORDER matters: parse
  * (control characters die here), then pane existence, then the foreground
  * check — the expensive `ps` call runs only for requests that could succeed.
+ * Both commands share that same paneTty -> checkForeground gate before
+ * branching, since `card` validation is defined to mirror `type`'s.
  *
  * A Unix socket rather than a port: no network surface, filesystem mode 0600
  * is the authentication.
@@ -23,6 +27,8 @@ export interface ControlServerDeps {
   paneTty(paneId: string): string | null
   /** Whether the foreground process group on that tty is a main claude process. */
   checkForeground(ttyName: string): Promise<boolean>
+  /** Create a pushed card. Returns null on success, else a refusal message. */
+  postCard(req: { paneId: string; question: string; draft: string | null }): string | null
 }
 
 export interface ControlServer {
@@ -76,8 +82,11 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
     async function handle(line: string): Promise<ControlResponse> {
       const parsed = parseControlRequest(line)
       if (!parsed.ok) return { ok: false, error: parsed.error }
+      const req = parsed.req
 
-      const tty = deps.paneTty(parsed.req.paneId)
+      // Both commands share paneTty -> checkForeground: identical eligibility,
+      // one code path, no chance of the two guards drifting apart.
+      const tty = deps.paneTty(req.paneId)
       if (tty === null) return { ok: false, error: 'unknown or exited pane' }
 
       let foreground = false
@@ -87,14 +96,29 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
         foreground = false
       }
       if (!foreground) {
-        return { ok: false, error: 'pane foreground is not claude — refusing to type into a shell' }
+        // A card push writes nothing at this point, so the "into a shell" detail
+        // that explains the type refusal would be wrong here — only the fact
+        // in common (claude must own this pane right now) applies to both.
+        return req.cmd === 'type'
+          ? { ok: false, error: 'pane foreground is not claude — refusing to type into a shell' }
+          : { ok: false, error: 'pane foreground is not claude' }
       }
 
-      // The pane can exit between the checks above and here; write() re-checks.
-      if (!deps.writeToPane(parsed.req.paneId, parsed.req.text)) {
-        return { ok: false, error: 'unknown or exited pane' }
+      if (req.cmd === 'type') {
+        // The pane can exit between the checks above and here; write() re-checks.
+        if (!deps.writeToPane(req.paneId, req.text)) {
+          return { ok: false, error: 'unknown or exited pane' }
+        }
+        return { ok: true }
       }
-      return { ok: true }
+
+      // cmd === 'card'. validateOnly has now run every guard above and creates
+      // nothing — that is what makes an honest --dry-run possible on the pusher
+      // side (see docs/superpowers/specs/2026-08-01-lookout-approval-cards-design.md).
+      if (req.validateOnly) return { ok: true }
+
+      const refusal = deps.postCard({ paneId: req.paneId, question: req.question, draft: req.draft })
+      return refusal === null ? { ok: true } : { ok: false, error: refusal }
     }
   })
 

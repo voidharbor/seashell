@@ -206,6 +206,13 @@ export class PtyManager {
     return rec && !rec.exited ? rec.ttyName : null
   }
 
+  /** A live pane's monotonic output-byte counter, or null. Lets CardStore
+   * tell "gone" from "quiet" the same way the monitor does — see bytesOut. */
+  bytesOutOf(paneId: string): number | null {
+    const rec = this.panes.get(paneId)
+    return rec && !rec.exited ? rec.bytesOut : null
+  }
+
   resize(paneId: string, cols: number, rows: number): void {
     const rec = this.panes.get(paneId)
     if (!rec || rec.exited) return

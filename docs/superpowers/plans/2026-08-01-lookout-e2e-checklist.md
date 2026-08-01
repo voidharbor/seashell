@@ -1,0 +1,12 @@
+# Lookout mac E2E checklist
+- [ ] npm run dev; open a claude pane; ask it something that makes it ask back
+- [ ] pane glows → within one metrics tick a card appears bottom-right with the question
+- [ ] focused pane never shows a card; badge still counts it
+- [ ] [Continue]/[Yes]/[No] on a detector card types the word + submits in the pane
+- [ ] type into the pane by hand → card greys to "session moved on"; send buttons dead, Go to pane + dismiss still work
+- [ ] dismiss a card → same question does not re-card; a new question does
+- [ ] push a card over the socket (echo JSON via nc -U to the control.sock) with validateOnly:true → ok, no card
+- [ ] same without validateOnly → card with draft; Approve submits it verbatim; Edit-then-Approve submits the edit
+- [ ] settings toggle off → no new cards; socket card push returns "lookout disabled"
+- [ ] quit SeaShell with cards open → clean quit, socket file gone
+- [ ] Windows/Linux build: cards + detector visible; no socket expectations

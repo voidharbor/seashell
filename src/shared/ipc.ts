@@ -40,6 +40,12 @@ export const CH = {
   projectsSave: 'projects:save',
   projectsDelete: 'projects:delete',
   uiCommand: 'ui:command',
+
+  lookoutCards: 'lookout:cards',
+  lookoutDetected: 'lookout:detected',
+  lookoutAction: 'lookout:action',
+  lookoutGetState: 'lookout:getState',
+  lookoutSetEnabled: 'lookout:setEnabled',
 } as const
 
 export type ChannelName = (typeof CH)[keyof typeof CH]
@@ -347,6 +353,46 @@ export interface ProjectsDeleteRequest {
 export type ProjectsDeleteResponse = { ok: boolean }
 
 // ---------------------------------------------------------------------------
+// Lookout — card-based decision system
+// ---------------------------------------------------------------------------
+
+export interface LookoutCard {
+  id: string
+  paneId: string
+  source: 'detector' | 'push'
+  question: string
+  draft: string | null
+  state: 'active' | 'stale'
+  createdAt: number
+}
+
+export interface LookoutCardsEvent {
+  cards: LookoutCard[]
+}
+
+export interface LookoutDetectedRequest {
+  paneId: string
+  question: string
+}
+
+export interface LookoutActionRequest {
+  cardId: string
+  action: 'approve' | 'dismiss'
+  /** approve only: the exact text to send — canned word, draft, or edited draft. */
+  text?: string
+}
+
+export type LookoutActionResponse = Result<
+  { delivered: boolean },
+  'ENOTFOUND' | 'ESTALE' | 'EGONE' | 'EFOREGROUND' | 'EINVALID'
+>
+
+export interface LookoutState {
+  pluginInstalled: boolean
+  enabled: boolean
+}
+
+// ---------------------------------------------------------------------------
 // The preload surface, as seen by the renderer on `window.seashell`
 // ---------------------------------------------------------------------------
 
@@ -384,6 +430,13 @@ export interface SeashellApi {
     /** Terminal.app's private SF Mono Terminal face, or null if unreadable. */
     getTerminalFont(): Promise<ArrayBuffer | null>
     onCommand(cb: (e: UiCommandEvent) => void): () => void
+  }
+  lookout: {
+    onCards(cb: (e: LookoutCardsEvent) => void): () => void
+    detected(req: LookoutDetectedRequest): void
+    action(req: LookoutActionRequest): Promise<LookoutActionResponse>
+    getState(): Promise<LookoutState>
+    setEnabled(enabled: boolean): void
   }
 }
 

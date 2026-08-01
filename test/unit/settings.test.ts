@@ -53,4 +53,10 @@ describe('coerceSettings', () => {
   it('leaves the ping opt-in', () => {
     expect(DEFAULT_SETTINGS.attentionSound).toBe(false)
   })
+
+  it('defaults lookoutCards on and coerces junk back to it', () => {
+    expect(DEFAULT_SETTINGS.lookoutCards).toBe(true)
+    expect(coerceSettings({ lookoutCards: 'nope' }).lookoutCards).toBe(true)
+    expect(coerceSettings({ lookoutCards: false }).lookoutCards).toBe(false)
+  })
 })

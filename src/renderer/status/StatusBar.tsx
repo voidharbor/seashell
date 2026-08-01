@@ -4,6 +4,9 @@ import type { TabState } from '../store.js'
 export interface StatusBarProps {
   tab: TabState | undefined
   system: SystemMetrics | null
+  /** Non-suppressed active Lookout cards. Omitted entirely hides the badge. */
+  lookoutCount?: number
+  onLookoutClick?: () => void
 }
 
 function gb(n: number): string {
@@ -71,6 +74,16 @@ export function StatusBar(props: StatusBarProps): React.JSX.Element {
           )}
         </>
       )}
+      {props.lookoutCount !== undefined && (
+        <span
+          className="statusbar__lookout"
+          title="Lookout cards — panes waiting on you"
+          onClick={props.onLookoutClick}
+        >
+          🔭 {props.lookoutCount}
+        </span>
+      )}
+
       {/* ⌘= not ⌘+ for the global pair: ⌘+ cannot be typed without Shift, and
           Shift is what selects the focused pane instead. See app.tsx. */}
       <span className="statusbar__hint">
