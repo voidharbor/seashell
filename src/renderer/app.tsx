@@ -356,14 +356,41 @@ export function App(): React.JSX.Element {
     [state.tabs]
   )
 
+  /**
+   * The project this window came from (opened or last saved-as), so Save can
+   * update it in place. Runtime-only: a fresh window belongs to no project
+   * until the user says so.
+   */
+  const [currentProject, setCurrentProject] = useState<{ id: string; name: string } | null>(null)
+
   /** Closes every preview pane in the active tab, leaving the terminals alone. */
   const saveProject = useCallback(
-    async (name: string) => {
-      const res = await window.seashell.projects.save({ name, tabs: stateToTabs(state) })
+    async (name: string, id?: string) => {
+      // Capture the claude session ids live in these panes right now — a
+      // restarted claude has a new id, and saving must record the current
+      // one, not the one from when the project was first created.
+      const paneIds = state.tabs.flatMap((t) =>
+        Object.values(t.panes)
+          .filter((p) => p.kind === 'term')
+          .map((p) => p.id)
+      )
+      let sessionIds: ReadonlyMap<string, string> | undefined
+      try {
+        const res = await window.seashell.projects.sessionIds({ paneIds: paneIds.slice(0, 64) })
+        sessionIds = new Map(Object.entries(res.ids))
+      } catch {
+        sessionIds = undefined // registry unavailable: panes save as plain claude
+      }
+      const res = await window.seashell.projects.save({
+        ...(id ? { id } : {}),
+        name,
+        tabs: stateToTabs(state, sessionIds),
+      })
       if (!res.ok) {
         dispatch({ type: 'toast', message: `Could not save project (${res.code})` })
         return
       }
+      setCurrentProject({ id: res.project.id, name: res.project.name })
       await refreshProjects()
       dispatch({ type: 'toast', message: `Saved project “${res.project.name}”` })
     },
@@ -396,6 +423,7 @@ export function App(): React.JSX.Element {
       )
 
       dispatch({ type: 'tabs.replace', tabs: restored })
+      setCurrentProject({ id: project.id, name: project.name })
       setProjectsOpen(false)
       dispatch({ type: 'toast', message: `Opened “${project.name}”` })
     },
@@ -405,6 +433,7 @@ export function App(): React.JSX.Element {
   const deleteProject = useCallback(
     async (project: Project) => {
       await window.seashell.projects.remove({ id: project.id })
+      setCurrentProject((cur) => (cur?.id === project.id ? null : cur))
       await refreshProjects()
     },
     [refreshProjects]
@@ -1063,7 +1092,11 @@ export function App(): React.JSX.Element {
           projects={projects}
           tabCount={state.tabs.length}
           paneCount={state.tabs.reduce((n, t) => n + Object.keys(t.panes).length, 0)}
+          currentProject={currentProject}
           onSave={(name) => void saveProject(name)}
+          onSaveCurrent={() =>
+            currentProject && void saveProject(currentProject.name, currentProject.id)
+          }
           onOpen={(p) => void openProject(p)}
           onDelete={(p) => void deleteProject(p)}
           onClose={() => setProjectsOpen(false)}

@@ -15,7 +15,12 @@ export interface ProjectsPanelProps {
   /** Number of tabs currently open, shown so "save" is not a blind action. */
   tabCount: number
   paneCount: number
+  /** The project this window was opened from (or last saved as), if any —
+   *  enables the in-place Save button. */
+  currentProject: { id: string; name: string } | null
   onSave: (name: string) => void
+  /** Update `currentProject` in place with what is open now. */
+  onSaveCurrent: () => void
   onOpen: (project: Project) => void
   onDelete: (project: Project) => void
   onClose: () => void
@@ -91,6 +96,14 @@ export function ProjectsPanel(props: ProjectsPanelProps): React.JSX.Element {
 
         <div className="set__group">
           <div className="set__heading">Save what is open</div>
+          {props.currentProject && (
+            <div className="proj__saverow">
+              <button className="btn btn--primary" onClick={props.onSaveCurrent}>
+                Save “{props.currentProject.name}”
+              </button>
+              <span className="set__detail">updates the open project in place</span>
+            </div>
+          )}
           <div className="proj__saverow">
             <input
               ref={inputRef}
@@ -105,15 +118,20 @@ export function ProjectsPanel(props: ProjectsPanelProps): React.JSX.Element {
                 if (e.key === 'Enter') save()
               }}
             />
-            <button className="btn btn--primary" disabled={name.trim() === ''} onClick={save}>
-              {existing ? 'Overwrite' : 'Save'}
+            <button
+              className={props.currentProject ? 'btn' : 'btn btn--primary'}
+              disabled={name.trim() === ''}
+              onClick={save}
+            >
+              {existing ? 'Overwrite' : props.currentProject ? 'Save as project' : 'Save'}
             </button>
           </div>
           <div className="set__detail">
             {props.tabCount} tab{props.tabCount === 1 ? '' : 's'} · {props.paneCount} pane
             {props.paneCount === 1 ? '' : 's'} will be saved. Layout, directories, names and
-            colours only — running programs cannot be restored, so panes come back at a fresh
-            shell.
+            colours, plus the claude session in each pane — reopening resumes it with a
+            visible `claude -r` in that pane's shell. Other running programs come back as a
+            fresh shell.
             {existing && ' A project with this name already exists and will be replaced.'}
           </div>
         </div>

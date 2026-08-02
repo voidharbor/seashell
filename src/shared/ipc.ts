@@ -38,6 +38,7 @@ export const CH = {
   appGetTerminalFont: 'app:getTerminalFont',
 
   projectsList: 'projects:list',
+  projectsSessionIds: 'projects:sessionIds',
   projectsSave: 'projects:save',
   projectsDelete: 'projects:delete',
   uiCommand: 'ui:command',
@@ -327,6 +328,10 @@ export interface SavedPane {
   color?: string
   filePath?: string
   url?: string
+  /** For a 'claude' pane: the session id to resume on open, captured from the
+   *  session registry at save time. Restore types `claude -r <id>` visibly
+   *  into the pane's shell; a dead id fails soft into that same shell. */
+  claudeSessionId?: string
 }
 
 export interface SavedTab {
@@ -363,6 +368,16 @@ export type ProjectsSaveResponse = Result<{ project: Project }, 'EINVALID' | 'EW
 
 export interface ProjectsDeleteRequest {
   id: string
+}
+
+export interface ProjectsSessionIdsRequest {
+  /** Live pane ids to resolve; capped to the pane limit. */
+  paneIds: string[]
+}
+
+export interface ProjectsSessionIdsResponse {
+  /** paneId -> claude session id, for panes with a live registered session. */
+  ids: Record<string, string>
 }
 
 export type ProjectsDeleteResponse = { ok: boolean }
@@ -445,6 +460,7 @@ export interface SeashellApi {
   }
   projects: {
     list(): Promise<ProjectsListResponse>
+    sessionIds(req: ProjectsSessionIdsRequest): Promise<ProjectsSessionIdsResponse>
     save(req: ProjectsSaveRequest): Promise<ProjectsSaveResponse>
     remove(req: ProjectsDeleteRequest): Promise<ProjectsDeleteResponse>
   }

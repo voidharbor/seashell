@@ -39,6 +39,9 @@ export interface PaneState {
   command: PaneCommand
   /** The literal text typed into the shell for a 'cmd' pane. */
   commandText?: string
+  /** For a restored 'claude' pane: the session to resume (`claude -r <id>`).
+   *  UUID-validated at every boundary; see projects/serialize.ts. */
+  claudeSessionId?: string
   /** kind 'file' — absolute path being previewed. */
   filePath?: string
   /** kind 'file' — render the source rather than the rich form (markdown/image). */

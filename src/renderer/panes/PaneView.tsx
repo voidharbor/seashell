@@ -5,6 +5,7 @@ import { WebPreview } from './WebPreview.js'
 import { ColorDot, ColorPicker } from './ColorPicker.js'
 import { paneColorHex, type PaneColorKey } from './colors.js'
 import { FilePreview } from '../viewer/FilePreview.js'
+import { launchCommandText } from '../projects/serialize.js'
 import { FindBar } from '../find/FindBar.js'
 import type { PaneState } from '../store.js'
 import { zoomPercent } from '../term/zoom.js'
@@ -294,8 +295,11 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
             spawnedRef.current(res.pid)
             // A pane launched as `claude` or a custom command types it into the
             // shell once the prompt settles, rather than replacing the shell.
-            if (pane.command !== 'zsh') {
-              const text = pane.command === 'claude' ? 'claude' : (pane.commandText ?? '')
+            // A restored claude pane types `claude -r <session-id>` — visible
+            // on purpose, and fail-soft: a dead id leaves this same shell at
+            // the saved cwd with the failed command on screen.
+            {
+              const text = launchCommandText(pane)
               if (text) {
                 setTimeout(() => {
                   window.seashell.pty.write({ paneId: pane.id, data: `${text}\r` })

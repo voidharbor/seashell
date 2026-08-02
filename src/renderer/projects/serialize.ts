@@ -79,13 +79,29 @@ export function savedCommandFor(pane: PaneState): PaneCommand {
   return RESTORABLE_FOREGROUND[name] ?? 'zsh'
 }
 
-export function paneToSaved(pane: PaneState): SavedPane {
+/**
+ * claude session ids are UUIDs; the id is later composed into `claude -r <id>`
+ * and typed into a real shell, so anything shaped differently is dropped at
+ * every boundary it crosses. Mirrors SESSION_ID_RE in
+ * src/main/state/session-lookup.ts.
+ */
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function paneToSaved(pane: PaneState, sessionId?: string): SavedPane {
+  const command = savedCommandFor(pane)
+  // Only a claude terminal pane records a session to resume; the id itself
+  // must be UUID-shaped or it does not get written at all.
+  const sid =
+    pane.kind === 'term' && command === 'claude' && sessionId && SESSION_ID_RE.test(sessionId)
+      ? sessionId
+      : undefined
   return {
     label: pane.label,
     labelIsCustom: pane.labelIsCustom,
     kind: pane.kind,
-    command: savedCommandFor(pane),
+    command,
     cwd: pane.cwd,
+    ...(sid === undefined ? {} : { claudeSessionId: sid }),
     ...(pane.commandText === undefined ? {} : { commandText: pane.commandText }),
     ...(pane.color === undefined ? {} : { color: pane.color }),
     ...(pane.filePath === undefined ? {} : { filePath: pane.filePath }),
@@ -93,7 +109,7 @@ export function paneToSaved(pane: PaneState): SavedPane {
   }
 }
 
-export function tabToSaved(tab: TabState): SavedTab {
+export function tabToSaved(tab: TabState, sessionIds?: ReadonlyMap<string, string>): SavedTab {
   return {
     id: tab.id,
     name: tab.name,
@@ -102,12 +118,36 @@ export function tabToSaved(tab: TabState): SavedTab {
     zoomedPaneId: tab.zoomedPaneId,
     focusedPaneId: tab.focusedPaneId,
     tree: tab.tree,
-    panes: Object.fromEntries(Object.entries(tab.panes).map(([id, p]) => [id, paneToSaved(p)])),
+    panes: Object.fromEntries(
+      Object.entries(tab.panes).map(([id, p]) => [id, paneToSaved(p, sessionIds?.get(id))])
+    ),
   }
 }
 
-export function stateToTabs(state: AppState): SavedTab[] {
-  return state.tabs.map(tabToSaved)
+export function stateToTabs(state: AppState, sessionIds?: ReadonlyMap<string, string>): SavedTab[] {
+  return state.tabs.map((t) => tabToSaved(t, sessionIds))
+}
+
+/**
+ * The text a freshly spawned pane types into its shell, or null for a plain
+ * shell. Restore is deliberately visible — the user watches `claude -r <id>`
+ * run, and when the session no longer resumes the failed command sits in a
+ * normal shell at the saved cwd instead of a spooky blank pane. The resume
+ * form is composed only from the literal program name and a UUID-validated
+ * id, never from free text in a project file.
+ */
+export function launchCommandText(pane: {
+  command: PaneCommand
+  commandText?: string
+  claudeSessionId?: string
+}): string | null {
+  if (pane.command === 'claude') {
+    return pane.claudeSessionId && SESSION_ID_RE.test(pane.claudeSessionId)
+      ? `claude -r ${pane.claudeSessionId}`
+      : 'claude'
+  }
+  if (pane.command === 'cmd') return pane.commandText ?? null
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +206,7 @@ export function tabsFromSaved(
   return out
 }
 
-function savedToPane(id: string, sp: SavedPane): PaneState {
+export function savedToPane(id: string, sp: SavedPane): PaneState {
   return {
     id,
     kind: sp.kind,
@@ -174,6 +214,11 @@ function savedToPane(id: string, sp: SavedPane): PaneState {
     label: sp.label,
     labelIsCustom: sp.labelIsCustom ?? false,
     command: sp.command,
+    // A project file is user data: an id that is not UUID-shaped is dropped
+    // here, and the pane restores as a fresh claude instead.
+    ...(typeof sp.claudeSessionId === 'string' && SESSION_ID_RE.test(sp.claudeSessionId)
+      ? { claudeSessionId: sp.claudeSessionId }
+      : {}),
     ...(sp.commandText === undefined ? {} : { commandText: sp.commandText }),
     ...(isPaneColorKey(sp.color) ? { color: sp.color } : {}),
     ...(sp.filePath === undefined ? {} : { filePath: sp.filePath }),

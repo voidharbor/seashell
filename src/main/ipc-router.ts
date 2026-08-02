@@ -28,6 +28,7 @@ import {
   saveProjects,
   upsertProject,
 } from './state/store.js'
+import { sessionIdsForPanes } from './state/session-lookup.js'
 
 /**
  * Every inbound payload is validated here, at the single registration point.
@@ -297,6 +298,12 @@ export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
 
   // ------------------------------------------------------------- projects
   ipcMain.handle(CH.projectsList, async () => ({ projects: await loadProjects() }))
+
+  ipcMain.handle(CH.projectsSessionIds, async (_e, raw) => {
+    const parsed = z.object({ paneIds: z.array(PaneId).max(64) }).safeParse(raw)
+    if (!parsed.success) return { ids: {} }
+    return { ids: await sessionIdsForPanes(parsed.data.paneIds) }
+  })
 
   ipcMain.handle(CH.projectsSave, async (_e, raw) => {
     const parsed = ProjectSaveReq.safeParse(raw)
