@@ -19,11 +19,10 @@ macOS is the reference platform; Windows and Linux builds are experimental.
 decision that had a tie-breaker was settled in favour of watching several long-running agent
 sessions at once. That is what it is for.
 
-**One agent means you wait. Six means you don't.** An agent session spends most of its wall
-clock working without you — the expensive part is the minutes it sits blocked on an answer
-nobody noticed. Tile six sessions in one window and let the cards surface the one that needs
-you, and the ceiling on how much you ship in a day is set by how many sessions you can keep
-fed, not by how fast one conversation goes. That is the whole bet behind SeaShell.
+**Agents work while you're not watching. So run six.** A session only needs you for the ten
+seconds it stops to ask something. Tile six of them in one window, let the cards catch each
+question the moment it lands, and answering becomes your whole job — the agents do the rest.
+That's how one person ships like six.
 
 > **Status: pre-alpha.** Under active development.
 
