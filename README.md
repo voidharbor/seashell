@@ -131,9 +131,9 @@ Smart drafted cards require the c-assistant companion plugin:
 ```
 
 For the full skill set, install the voidharbor bundle instead — `/plugin install voidharbor@voidharbor`
-installs all of voidharbor's skills at once. The Lookout hooks ship in the standalone
-c-assistant plugin specifically: the bundle carries the c-assistant commands but not the
-hooks, so cards still need c-assistant installed on its own, even alongside the bundle.
+installs all of voidharbor's skills at once, Lookout hooks included, so the bundle alone is
+enough for drafted cards. Installing both is also fine: the hooks detect the duplicate and
+only one copy runs per session.
 
 A master toggle in Settings turns Lookout off.
 

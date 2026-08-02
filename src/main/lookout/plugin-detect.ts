@@ -10,15 +10,29 @@ import path from 'node:path'
  * wrong shape) means only "assume absent," never a thrown error.
  */
 
-const PLUGIN_ID = 'c-assistant@voidharbor'
+/** Either install provides the lane: standalone c-assistant, or the
+ *  voidharbor bundle, which ships the same hooks (self-deduplicating when
+ *  both are present). */
+const PLUGIN_IDS = ['c-assistant@voidharbor', 'voidharbor@voidharbor']
+
+/** [pure] — parses the manifest text; exported for tests. */
+export function pluginInstalledInManifest(raw: string): boolean {
+  let parsed: { plugins?: Record<string, unknown> }
+  try {
+    parsed = JSON.parse(raw) as { plugins?: Record<string, unknown> }
+  } catch {
+    return false
+  }
+  return PLUGIN_IDS.some((id) => {
+    const entry = parsed.plugins?.[id]
+    return Array.isArray(entry) && entry.length > 0
+  })
+}
 
 export async function lookoutPluginInstalled(): Promise<boolean> {
   try {
     const file = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json')
-    const raw = await fs.readFile(file, 'utf8')
-    const parsed = JSON.parse(raw) as { plugins?: Record<string, unknown> }
-    const entry = parsed.plugins?.[PLUGIN_ID]
-    return Array.isArray(entry) && entry.length > 0
+    return pluginInstalledInManifest(await fs.readFile(file, 'utf8'))
   } catch {
     return false
   }
