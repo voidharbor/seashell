@@ -1055,6 +1055,22 @@ export function App(): React.JSX.Element {
 
           {state.toast && <div className="toast">{state.toast}</div>}
         </div>
+
+        {/* Reserved space, not an overlay: the rail sits beside the panes so a
+            card never covers terminal content. Hidden entirely via :empty when
+            CardStack renders nothing — see .lookout-rail in styles.css. */}
+        <aside className="lookout-rail">
+          <CardStack
+            cards={lookoutCards}
+            suppressedPaneId={suppressedPaneId}
+            pluginInstalled={lookoutPlugin}
+            open={lookoutOpen}
+            screenMode={lookoutScreenMode}
+            onAction={lookoutOnAction}
+            onGotoPane={lookoutGotoPane}
+            onClose={() => setLookoutOpen(false)}
+          />
+        </aside>
       </div>
 
       <StatusBar
@@ -1062,17 +1078,6 @@ export function App(): React.JSX.Element {
         system={state.system}
         lookoutCount={lookoutCount}
         onLookoutClick={() => setLookoutOpen((o) => !o)}
-      />
-
-      <CardStack
-        cards={lookoutCards}
-        suppressedPaneId={suppressedPaneId}
-        pluginInstalled={lookoutPlugin}
-        open={lookoutOpen}
-        screenMode={lookoutScreenMode}
-        onAction={lookoutOnAction}
-        onGotoPane={lookoutGotoPane}
-        onClose={() => setLookoutOpen(false)}
       />
 
       {settingsOpen && (

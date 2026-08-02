@@ -1368,17 +1368,33 @@ body.dragging .web__view {
 
 /* -------------------------------------------------------------- lookout */
 
+/* The Lookout rail: reserved layout space at the body's right edge, so cards
+ * never float over pane content (they used to overlay the corner of whichever
+ * pane was under them). The rail is the LAST child of .body and simply
+ * disappears when CardStack renders nothing — CardStack returns an empty
+ * fragment when there is nothing to show, which leaves this element with no
+ * children at all, and :empty does the rest. No visibility logic is
+ * duplicated out here; CardStack stays the single owner of "is there
+ * anything to show". Panes reflow once when the rail appears and once when
+ * the stack empties, which is the price of never covering a terminal. */
+.lookout-rail {
+  flex: 0 0 auto;
+  width: calc(324px * var(--ui-scale));
+  min-width: calc(324px * var(--ui-scale));
+  border-left: 1px solid var(--chrome-line);
+  overflow-y: auto;
+  padding: calc(12px * var(--ui-scale));
+}
+
+.lookout-rail:empty {
+  display: none;
+}
+
 .lookout-stack {
-  position: fixed;
-  right: calc(12px * var(--ui-scale));
-  bottom: calc(var(--statusbar-h) + 12px * var(--ui-scale));
-  z-index: 45;
   display: flex;
   flex-direction: column;
   gap: calc(8px * var(--ui-scale));
-  width: calc(300px * var(--ui-scale));
-  max-height: 70%;
-  overflow-y: auto;
+  width: 100%;
 }
 
 .card {

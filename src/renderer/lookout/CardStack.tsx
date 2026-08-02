@@ -20,7 +20,7 @@ const SELECTOR_HINT = "answer in the pane — it's showing a picker"
 const STALE_LABEL = 'session moved on'
 
 /**
- * The bottom-right stack of Lookout cards, plus the (possibly empty) open
+ * The Lookout rail's stack of cards, plus the (possibly empty) open
  * state reached from the status-bar badge.
  *
  * A card for the currently-focused pane is always suppressed — you are

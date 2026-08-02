@@ -104,7 +104,7 @@ These exist because of that:
 
 Watching several agent panes means someone still has to notice the one that stopped to ask
 you something. Lookout does that noticing: the moment an unfocused pane goes idle on a
-question, a **card** appears in the bottom-right corner with the question on it, and a badge
+question, a **card** appears in a rail beside the panes with the question on it, and a badge
 in the status bar counts every card waiting on you — the pane you are already looking at gets
 counted there too, just without a card of its own.
 
