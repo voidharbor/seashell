@@ -162,6 +162,7 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
       {pane.kind === 'file' && pane.filePath && (
         <FilePreview
           path={pane.filePath}
+          paneId={pane.id}
           rawSource={pane.rawSource ?? false}
           onToggleRaw={props.onToggleRaw}
           findOpen={props.findOpen}

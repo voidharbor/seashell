@@ -25,6 +25,7 @@ export const CH = {
   fsStatBatch: 'fs:statBatch',
   fsProbe: 'fs:probe',
   fsReadTextFile: 'fs:readTextFile',
+  fsWriteTextFile: 'fs:writeTextFile',
   fsReadImageFile: 'fs:readImageFile',
 
   openWithDefaultApp: 'open:withDefaultApp',
@@ -187,8 +188,22 @@ export interface FsReadTextFileRequest {
 }
 
 export type FsReadTextFileResponse = Result<
-  { text: string; lines: number; size: number; truncated: boolean },
+  /** mtimeMs feeds the editor's expectedMtimeMs on save — the no-clobber check. */
+  { text: string; lines: number; size: number; truncated: boolean; mtimeMs: number },
   'EBINARY' | 'ETOOBIG' | 'ENOENT' | 'EACCES'
+>
+
+export interface FsWriteTextFileRequest {
+  path: string
+  text: string
+  /** The mtime the caller loaded the file at. The write is refused when the
+   *  file on disk no longer carries it — no clobbering outside edits. */
+  expectedMtimeMs: number
+}
+
+export type FsWriteTextFileResponse = Result<
+  { mtimeMs: number },
+  'ECONFLICT' | 'EBINARY' | 'ESCOPE' | 'ETOOBIG' | 'ENOENT' | 'EACCES'
 >
 
 export interface FsReadImageFileRequest {
@@ -417,6 +432,7 @@ export interface SeashellApi {
     statBatch(req: FsStatBatchRequest): Promise<FsStatBatchResponse>
     probe(req: FsProbeRequest): Promise<FsProbeResponse>
     readTextFile(req: FsReadTextFileRequest): Promise<FsReadTextFileResponse>
+    writeTextFile(req: FsWriteTextFileRequest): Promise<FsWriteTextFileResponse>
     readImageFile(req: FsReadImageFileRequest): Promise<FsReadImageFileResponse>
   }
   open: {

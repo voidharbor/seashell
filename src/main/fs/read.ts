@@ -79,7 +79,7 @@ export async function readTextFile(req: FsReadTextFileRequest): Promise<FsReadTe
 
     const { text, lines, truncated } = capLines(fullText, MAX_TEXT_LINES)
 
-    return { ok: true, text, lines, size: stat.size, truncated }
+    return { ok: true, text, lines, size: stat.size, truncated, mtimeMs: stat.mtimeMs }
   } finally {
     await handle.close()
   }

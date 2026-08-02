@@ -824,6 +824,44 @@ body.dragging .sidebar__grip {
   color: var(--warn);
 }
 
+.preview__flag--dirty {
+  color: var(--accent, #58a6ff);
+}
+
+/* The conflict banner sits between the toolbar and the body, loud enough to
+   read before the next save attempt. */
+.preview__conflict {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--ui-scale));
+  padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
+  border-bottom: 1px solid var(--chrome-line);
+  background: color-mix(in srgb, var(--warn) 12%, var(--chrome-bg));
+  color: var(--warn);
+  flex: none;
+}
+
+/* The editor mirrors .preview__code's metrics so entering edit mode does not
+   reflow the text under the caret. */
+.preview__editor {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: calc(10px * var(--ui-scale)) calc(14px * var(--ui-scale));
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font-family: 'SF Mono Terminal', Menlo, monospace;
+  font-size: calc(12.5px * var(--ui-scale));
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre;
+  tab-size: 4;
+  box-sizing: border-box;
+}
+
 .preview__body {
   flex: 1;
   min-height: 0;

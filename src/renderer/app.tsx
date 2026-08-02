@@ -30,6 +30,7 @@ import { ProjectsPanel } from './projects/ProjectsPanel.js'
 import { stateToTabs, tabsFromSaved } from './projects/serialize.js'
 import type { LookoutActionRequest, LookoutCard, Project } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
+import { dirtyPreviewPanes } from './viewer/FilePreview.js'
 import { extractQuestion } from './lookout/extract.js'
 import { planDetections } from './lookout/detect.js'
 import { readPaneTail } from './lookout/tail.js'
@@ -313,6 +314,10 @@ export function App(): React.JSX.Element {
    */
   const closePane = useCallback(
     async (paneId: string) => {
+      // An editable preview with unsaved edits must not vanish silently.
+      if (dirtyPreviewPanes.has(paneId) && !window.confirm('Discard unsaved changes in this file?')) {
+        return
+      }
       const pane = activeTab?.panes[paneId]
       if (pane && pane.kind === 'term') {
         const res = await window.seashell.pty.kill({ paneId })
@@ -329,6 +334,13 @@ export function App(): React.JSX.Element {
   const closeTab = useCallback(
     async (tabId: string) => {
       const tab = state.tabs.find((t) => t.id === tabId)
+      if (
+        tab &&
+        Object.keys(tab.panes).some((id) => dirtyPreviewPanes.has(id)) &&
+        !window.confirm('This tab has a file with unsaved changes. Discard them?')
+      ) {
+        return
+      }
       if (tab) {
         await Promise.all(
           Object.values(tab.panes)

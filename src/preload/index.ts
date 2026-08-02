@@ -20,6 +20,8 @@ import {
   type FsReadImageFileRequest,
   type FsReadImageFileResponse,
   type FsReadTextFileRequest,
+  type FsWriteTextFileRequest,
+  type FsWriteTextFileResponse,
   type FsReadTextFileResponse,
   type FsStatBatchRequest,
   type FsStatBatchResponse,
@@ -79,6 +81,8 @@ const api: SeashellApi = {
     probe: (req: FsProbeRequest): Promise<FsProbeResponse> => ipcRenderer.invoke(CH.fsProbe, req),
     readTextFile: (req: FsReadTextFileRequest): Promise<FsReadTextFileResponse> =>
       ipcRenderer.invoke(CH.fsReadTextFile, req),
+    writeTextFile: (req: FsWriteTextFileRequest): Promise<FsWriteTextFileResponse> =>
+      ipcRenderer.invoke(CH.fsWriteTextFile, req),
     readImageFile: (req: FsReadImageFileRequest): Promise<FsReadImageFileResponse> =>
       ipcRenderer.invoke(CH.fsReadImageFile, req),
   },

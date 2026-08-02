@@ -16,6 +16,7 @@ import type { PtyManager } from './pty/manager.js'
 import type { CardStore } from './lookout/card-store.js'
 import { readDir } from './fs/tree.js'
 import { readTextFile } from './fs/read.js'
+import { writeTextFile } from './fs/write.js'
 import { statBatch } from './fs/stat-batch.js'
 import { decideRoute, VIEWER_MAX_BYTES } from './fs/route.js'
 import { denyOpenPath, extOf } from './fs/path-guard.js'
@@ -61,6 +62,11 @@ const ProbeReq = z.object({ path: AbsPath })
 const ReadTextReq = z.object({
   path: AbsPath,
   maxBytes: z.number().int().min(1).max(64 * 1024 * 1024),
+})
+const WriteTextReq = z.object({
+  path: AbsPath,
+  text: z.string().max(8 * 1024 * 1024),
+  expectedMtimeMs: z.number(),
 })
 const OpenReq = z.object({ path: AbsPath })
 
@@ -200,6 +206,16 @@ export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
       path: parsed.data.path,
       maxBytes: Math.min(parsed.data.maxBytes, VIEWER_MAX_BYTES),
     })
+  })
+
+  /** The editable preview's save. Scoped to the home directory — the same
+   *  root the explorer shows — with every other guard in fs/write.ts. */
+  ipcMain.handle(CH.fsWriteTextFile, async (_e, raw) => {
+    const parsed = WriteTextReq.safeParse(raw)
+    if (!parsed.success) {
+      return { ok: false, code: 'ENOENT', message: 'invalid write request' }
+    }
+    return writeTextFile(parsed.data, os.homedir())
   })
 
   /**

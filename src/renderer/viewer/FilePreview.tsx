@@ -25,6 +25,8 @@ function extOf(p: string): string {
 
 export interface FilePreviewProps {
   path: string
+  /** Owning pane id, used to track unsaved edits for the close guard. */
+  paneId?: string
   rawSource: boolean
   onToggleRaw: (raw: boolean) => void
   findOpen: boolean
@@ -34,9 +36,17 @@ export interface FilePreviewProps {
 }
 
 type Loaded =
-  | { kind: 'text'; text: string; truncated: boolean }
+  | { kind: 'text'; text: string; truncated: boolean; mtimeMs: number }
   | { kind: 'image'; src: string }
   | { kind: 'error'; code: string }
+
+/**
+ * Pane ids whose preview holds unsaved edits, read by app.tsx's close paths
+ * so a close with edits pending asks first. A module-level set (same pattern
+ * as PaneView's `terminals`) because the close handler lives far above this
+ * component and threading the state up would couple half the tree to it.
+ */
+export const dirtyPreviewPanes = new Set<string>()
 
 /**
  * Read-only file preview. Editing stays out of scope — this exists so you can
@@ -51,14 +61,38 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
   const [lines, setLines] = useState<HastNode[] | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
 
+  // ------------------------------------------------------------- editing
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<'conflict' | 'refused' | null>(null)
+  /** Bumped to re-run the load effect (after a conflict reload). */
+  const [loadNonce, setLoadNonce] = useState(0)
+
   const isImage = IMAGE_EXTS.has(extOf(props.path))
   const isPdf = PDF_EXTS.has(extOf(props.path))
   const canHighlight = languageFor(props.path) !== null
+
+  const dirty = editing && loaded?.kind === 'text' && draft !== loaded.text
+
+  // The close guard reads this set; membership must track `dirty` exactly and
+  // never outlive the pane (or the path shown in it).
+  useEffect(() => {
+    const id = props.paneId
+    if (!id) return
+    if (dirty) dirtyPreviewPanes.add(id)
+    else dirtyPreviewPanes.delete(id)
+    return () => {
+      dirtyPreviewPanes.delete(id)
+    }
+  }, [dirty, props.paneId])
 
   useEffect(() => {
     let cancelled = false
     setLoaded(null)
     setLines(null)
+    setEditing(false)
+    setSaveError(null)
 
     void (async () => {
       if (isPdf) return // the webview streams it; nothing to read here
@@ -79,13 +113,39 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
         setLoaded({ kind: 'error', code: res.code })
         return
       }
-      setLoaded({ kind: 'text', text: res.text, truncated: res.truncated })
+      setLoaded({ kind: 'text', text: res.text, truncated: res.truncated, mtimeMs: res.mtimeMs })
     })()
 
     return () => {
       cancelled = true
     }
-  }, [props.path, isImage])
+  }, [props.path, isImage, isPdf, loadNonce])
+
+  const startEdit = (): void => {
+    if (loaded?.kind !== 'text' || loaded.truncated) return
+    setDraft(loaded.text)
+    setSaveError(null)
+    setEditing(true)
+  }
+
+  const save = async (): Promise<void> => {
+    if (loaded?.kind !== 'text' || saving || !dirty) return
+    setSaving(true)
+    setSaveError(null)
+    const res = await window.seashell.fs.writeTextFile({
+      path: props.path,
+      text: draft,
+      expectedMtimeMs: loaded.mtimeMs,
+    })
+    setSaving(false)
+    if (res.ok) {
+      // The draft is now the on-disk truth; staying in the editor is the
+      // normal keep-working flow.
+      setLoaded({ kind: 'text', text: draft, truncated: false, mtimeMs: res.mtimeMs })
+      return
+    }
+    setSaveError(res.code === 'ECONFLICT' ? 'conflict' : 'refused')
+  }
 
   // Highlight as a second pass so the text is on screen immediately and the
   // colour arrives when it is ready, rather than the pane staying blank
@@ -134,6 +194,23 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
       )
     }
 
+    if (editing) {
+      return (
+        <textarea
+          className="preview__editor"
+          value={draft}
+          spellCheck={false}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+              e.preventDefault()
+              void save()
+            }
+          }}
+        />
+      )
+    }
+
     if (lines) {
       return (
         <pre className="preview__code preview__code--hl">
@@ -142,7 +219,8 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
       )
     }
     return <pre className="preview__code">{loaded.text}</pre>
-  }, [loaded, lines, props.path])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- save is stable per render's closure needs
+  }, [loaded, lines, props.path, editing, draft])
 
   if (isPdf) {
     return (
@@ -193,14 +271,42 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
         {loaded?.kind === 'text' && loaded.truncated && (
           <span className="preview__flag">truncated at 8 MB</span>
         )}
-        {canHighlight && loaded?.kind === 'text' && (
-          <button
-            className="btn"
-            title="Toggle syntax highlighting"
-            onClick={() => props.onToggleRaw(!props.rawSource)}
-          >
-            {props.rawSource ? 'Highlight' : 'Plain'}
-          </button>
+        {dirty && <span className="preview__flag preview__flag--dirty">● unsaved changes</span>}
+        {editing ? (
+          <>
+            <button className="btn btn--primary" disabled={!dirty || saving} onClick={() => void save()}>
+              Save
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                // Leaving the editor with edits pending is an explicit act on a
+                // visible unsaved-changes state, not a silent loss.
+                if (dirty && !window.confirm('Discard unsaved changes?')) return
+                setEditing(false)
+                setSaveError(null)
+              }}
+            >
+              {dirty ? 'Discard' : 'Done'}
+            </button>
+          </>
+        ) : (
+          <>
+            {loaded?.kind === 'text' && !loaded.truncated && (
+              <button className="btn" onClick={startEdit}>
+                Edit
+              </button>
+            )}
+            {canHighlight && loaded?.kind === 'text' && (
+              <button
+                className="btn"
+                title="Toggle syntax highlighting"
+                onClick={() => props.onToggleRaw(!props.rawSource)}
+              >
+                {props.rawSource ? 'Highlight' : 'Plain'}
+              </button>
+            )}
+          </>
         )}
         <button
           className="btn"
@@ -215,6 +321,33 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
           Open
         </button>
       </div>
+      {saveError && (
+        <div className="preview__conflict">
+          {saveError === 'conflict' ? (
+            <>
+              <span>
+                This file changed on disk since it was loaded — saving would overwrite those
+                changes.
+              </span>
+              <button
+                className="btn"
+                onClick={() => {
+                  // Reload replaces the draft with the on-disk contents; the
+                  // banner is the explicit warning that edits here are lost.
+                  if (!window.confirm('Reload from disk and discard your edits?')) return
+                  setEditing(false)
+                  setSaveError(null)
+                  setLoadNonce((n) => n + 1)
+                }}
+              >
+                Reload from disk
+              </button>
+            </>
+          ) : (
+            <span>Could not save this file — it may be read-only or outside your home folder.</span>
+          )}
+        </div>
+      )}
       <div className="preview__body" ref={bodyRef} tabIndex={-1}>
         {body}
       </div>
