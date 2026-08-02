@@ -300,9 +300,13 @@ export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
   ipcMain.handle(CH.projectsList, async () => ({ projects: await loadProjects() }))
 
   ipcMain.handle(CH.projectsSessionIds, async (_e, raw) => {
-    const parsed = z.object({ paneIds: z.array(PaneId).max(64) }).safeParse(raw)
+    const parsed = z
+      .object({
+        panes: z.array(z.object({ paneId: PaneId, cwd: z.string().max(4096) })).max(64),
+      })
+      .safeParse(raw)
     if (!parsed.success) return { ids: {} }
-    return { ids: await sessionIdsForPanes(parsed.data.paneIds) }
+    return { ids: await sessionIdsForPanes(parsed.data.panes) }
   })
 
   ipcMain.handle(CH.projectsSave, async (_e, raw) => {

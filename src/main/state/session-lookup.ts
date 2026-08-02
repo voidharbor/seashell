@@ -61,25 +61,123 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-/** Reads the registry and resolves session ids for the given panes. Any
- *  failure — no registry, unreadable entries — is an empty map: a project
- *  saved without ids restores plain claude panes, which still works. */
-export async function sessionIdsForPanes(paneIds: string[]): Promise<Record<string, string>> {
-  const dir = path.join(os.homedir(), '.claude', 'session-registry')
+export interface PaneRef {
+  paneId: string
+  cwd: string
+}
+
+/** One transcript claude wrote for a directory. */
+export interface SessionFile {
+  sid: string
+  mtimeMs: number
+}
+
+/**
+ * The fallback lane, for panes the registry could not resolve.
+ *
+ * The registry is only populated when the c-assistant SessionStart hook fires.
+ * When it does not — hook not installed, hook failed, claude started before the
+ * plugin did — every pane saves as a plain `claude` and reopening a project
+ * hands back fresh sessions instead of the work that was in them.
+ *
+ * claude's own transcripts do not have that problem: it writes one per session
+ * under ~/.claude/projects/<cwd with slashes turned to dashes>/, hook or no
+ * hook. So an unresolved pane takes the newest session for its cwd, which is
+ * the same one `/resume` would put at the top of the list.
+ *
+ * Two panes in one directory must never be handed the same session, so an id is
+ * consumed once and the next pane falls to the one below it. A pane with
+ * nothing left is simply left out and restores as a plain `claude` — the old
+ * behaviour, which still works.
+ *
+ * [pure] — the directory listing is injected.
+ */
+export function pickFallbackSessionIds(
+  panes: PaneRef[],
+  resolved: Record<string, string>,
+  listSessions: (cwd: string) => SessionFile[]
+): Record<string, string> {
+  const taken = new Set(Object.values(resolved))
+  const byCwd = new Map<string, SessionFile[]>()
+  const out: Record<string, string> = {}
+
+  for (const pane of panes) {
+    if (resolved[pane.paneId]) continue
+    let candidates = byCwd.get(pane.cwd)
+    if (!candidates) {
+      // Newest first, and never trust a filename to be a session id.
+      candidates = listSessions(pane.cwd)
+        .filter((c) => isValidSessionId(c.sid))
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      byCwd.set(pane.cwd, candidates)
+    }
+    const pick = candidates.find((c) => !taken.has(c.sid))
+    if (!pick) continue
+    taken.add(pick.sid)
+    out[pane.paneId] = pick.sid
+  }
+
+  return out
+}
+
+/** claude stores a directory's transcripts under the path with every slash
+ *  turned into a dash. */
+export function transcriptDirFor(cwd: string): string {
+  return path.join(os.homedir(), '.claude', 'projects', cwd.replace(/\//g, '-'))
+}
+
+async function listSessionFiles(cwd: string): Promise<SessionFile[]> {
+  const dir = transcriptDirFor(cwd)
   let names: string[]
   try {
     names = await fs.readdir(dir)
   } catch {
-    return {}
+    return []
   }
-  const entries: RegistryEntry[] = []
+  const out: SessionFile[] = []
   for (const name of names) {
-    if (!name.endsWith('.json')) continue
+    if (!name.endsWith('.jsonl')) continue
     try {
-      entries.push(JSON.parse(await fs.readFile(path.join(dir, name), 'utf8')) as RegistryEntry)
+      const st = await fs.stat(path.join(dir, name))
+      out.push({ sid: name.slice(0, -'.jsonl'.length), mtimeMs: st.mtimeMs })
     } catch {
-      /* one bad entry must not cost the rest */
+      /* a file that vanished mid-scan is not worth failing the save over */
     }
   }
-  return pickSessionIds(entries, paneIds, pidAlive)
+  return out
+}
+
+/** Resolves session ids for the given panes: the registry first, since it knows
+ *  exactly which session is in which pane, then claude's own transcripts for
+ *  whatever is left. Any failure is an empty map — a project saved without ids
+ *  restores plain claude panes, which still works. */
+export async function sessionIdsForPanes(panes: PaneRef[]): Promise<Record<string, string>> {
+  const dir = path.join(os.homedir(), '.claude', 'session-registry')
+  const entries: RegistryEntry[] = []
+  try {
+    for (const name of await fs.readdir(dir)) {
+      if (!name.endsWith('.json')) continue
+      try {
+        entries.push(JSON.parse(await fs.readFile(path.join(dir, name), 'utf8')) as RegistryEntry)
+      } catch {
+        /* one bad entry must not cost the rest */
+      }
+    }
+  } catch {
+    /* no registry at all: the fallback below is the whole answer */
+  }
+
+  const resolved = pickSessionIds(
+    entries,
+    panes.map((p) => p.paneId),
+    pidAlive
+  )
+
+  // Listed once per distinct cwd, then handed to the pure picker.
+  const cache = new Map<string, SessionFile[]>()
+  for (const cwd of new Set(panes.filter((p) => !resolved[p.paneId]).map((p) => p.cwd))) {
+    cache.set(cwd, await listSessionFiles(cwd))
+  }
+
+  return { ...resolved, ...pickFallbackSessionIds(panes, resolved, (cwd) => cache.get(cwd) ?? []) }
 }

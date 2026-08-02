@@ -369,14 +369,14 @@ export function App(): React.JSX.Element {
       // Capture the claude session ids live in these panes right now — a
       // restarted claude has a new id, and saving must record the current
       // one, not the one from when the project was first created.
-      const paneIds = state.tabs.flatMap((t) =>
+      const livePanes = state.tabs.flatMap((t) =>
         Object.values(t.panes)
           .filter((p) => p.kind === 'term')
-          .map((p) => p.id)
+          .map((p) => ({ paneId: p.id, cwd: p.cwd }))
       )
       let sessionIds: ReadonlyMap<string, string> | undefined
       try {
-        const res = await window.seashell.projects.sessionIds({ paneIds: paneIds.slice(0, 64) })
+        const res = await window.seashell.projects.sessionIds({ panes: livePanes.slice(0, 64) })
         sessionIds = new Map(Object.entries(res.ids))
       } catch {
         sessionIds = undefined // registry unavailable: panes save as plain claude

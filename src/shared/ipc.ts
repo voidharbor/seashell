@@ -371,8 +371,9 @@ export interface ProjectsDeleteRequest {
 }
 
 export interface ProjectsSessionIdsRequest {
-  /** Live pane ids to resolve; capped to the pane limit. */
-  paneIds: string[]
+  /** Live panes to resolve; capped to the pane limit. The cwd is what lets a
+   *  pane the session registry missed still be matched to a claude transcript. */
+  panes: { paneId: string; cwd: string }[]
 }
 
 export interface ProjectsSessionIdsResponse {
