@@ -45,32 +45,43 @@ export const TAIL_LINES = 60
 // ---------------------------------------------------------------------------
 
 /**
- * Ink's `round` border style, top edge: `topLeft "╭"` + `top "─"`. Matched
- * as a two-character prefix (corner + one rule character) rather than a
- * full-width pattern, because the box can be any terminal width and the
- * corner+rule pair is already unambiguous — no other claude chrome starts a
- * line with `╭─`.
+ * The input area renders in one of two shapes, and a live pane shows
+ * whichever one claude picked at startup:
+ *
+ *  - **bordered** — ink's `round` box: `╭─` top edge, a `│ >` prompt row,
+ *    `╰─` bottom edge. This is what the original pseudo-tty capture showed
+ *    (claude 2.1.220, 2026-08-01).
+ *  - **borderless** — a plain horizontal rule, a `❯` prompt row, another
+ *    rule. This is what the same binary draws inside a real SeaShell pane
+ *    (verified against live pixels 2026-08-01; SeaShell strips COLORTERM
+ *    from pane env, and claude's chrome comes out reduced). The original
+ *    trio could never match this, which is why the detector lane and the
+ *    card send-gate read every real claude pane as "no input box".
+ *
+ * Each edge/row regex below therefore accepts either form.
  */
-const BOX_TOP_RE = /^\s*╭─/
+
+/** Bordered top edge (`╭` + rule), or a bare full-width rule line. The rule
+ *  alternative demands 10+ `─` so an in-message dash run can't fake an edge. */
+const BOX_TOP_RE = /^\s*(╭─|─{10,}\s*$)/
+
+/** Bordered bottom edge (`╰` + rule), or the same bare-rule alternative —
+ *  searched first, from the pane's bottom, since it is the edge closest to
+ *  "now". */
+const BOX_BOTTOM_RE = /^\s*(╰─|─{10,}\s*$)/
 
 /**
- * Ink's `round` border style, bottom edge: `bottomLeft "╰"` + `top "─"`
- * (the same horizontal-rule character is reused for both edges — there is
- * no separate "bottom" glyph in the verified border table). Searched for
- * first, from the pane's bottom, since it is the border closest to "now".
- */
-const BOX_BOTTOM_RE = /^\s*╰─/
-
-/**
- * The box's input row: left `sides "│"` immediately followed by the `>`
- * prompt caret ink draws for the textarea. Required between the two
- * borders so a bordered box that is NOT the input box (ink draws other
- * bordered panels too) can never be mistaken for it — this is what makes
- * the trio the "claude is idle at its input box" signature, and per the
+ * The input row between the edges: `│ >` in the bordered form, `❯` in the
+ * borderless one. The `❯` alternative must NOT match a selector option row
+ * (`❯ 1. Yes…`) — typed text + Enter on a selector would blind-confirm the
+ * highlighted option, which is the exact hazard the `kind` split exists to
+ * prevent — so it rejects a `❯` that is immediately followed by an
+ * option-number shape. Requiring this row between the two edges is what
+ * keeps the trio the "claude is idle at its input" signature, and per the
  * spec amendment it doubles as the claude-pane check with no process-name
  * gate needed.
  */
-const PROMPT_ROW_RE = /^\s*│\s*>/
+const PROMPT_ROW_RE = /^\s*(│\s*>|❯(?!\s*\d+[.)]\s))/
 
 /** claude's idle-footer hint, printed only while sitting at the input box
  *  (verified literal, 2026-08-01, claude 2.1.220). */
@@ -80,6 +91,33 @@ const SHORTCUTS_FOOTER_RE = /\? for shortcuts/
  *  (named explicitly in the heuristic's noise-line list). Any tail line
  *  carrying it is footer chrome, never transcript text. */
 const MODE_INDICATOR_RE = /⏵/
+
+/**
+ * A bare horizontal-rule line — the borderless input area frames its prompt
+ * row with these (when they land in the text buffer as characters at all;
+ * a styled-blank rule reads as an empty line and the blank-skipping in
+ * `collectMessageBlock` already covers that case). 10+ `─` so a short
+ * in-message dash run can't be mistaken for chrome.
+ */
+const RULE_LINE_RE = /^\s*─{10,}\s*$/
+
+/**
+ * A slash-command echo (`❯ /clear`) — claude prints submitted slash
+ * commands with a `❯` prefix, and without this entry such an echo sitting
+ * in the collected block matches `OPTIONS_MARK_RE`'s `❯` alternative and
+ * turns a command echo into a phantom "question" (observed live
+ * 2026-08-02: a card whose question was literally `❯ /clear`).
+ */
+const SLASH_ECHO_RE = /^\s*❯\s*\//
+
+/**
+ * Chrome glyphs only a claude pane draws: `⏺` transcript bullets, `✳`/`✻`
+ * timing-and-spinner lines, `⏵` mode rows. The borderless prompt signature
+ * below requires one of these somewhere in the tail, because a bare `❯` is
+ * also what shell themes like starship use as their prompt — without this
+ * fingerprint an idle shell whose scrollback contains a `?` would card.
+ */
+const CLAUDE_CHROME_RE = /^\s*[⏺✳✻⏵]/
 
 /**
  * Covers the heuristic's "token/esc status" noise category: claude's
@@ -95,6 +133,22 @@ const MODE_INDICATOR_RE = /⏵/
  * to say e.g. "the esc-key binding" is never mistaken for this chrome.
  */
 const BUSY_STATUS_RE = /\besc to \w+/i
+
+/**
+ * claude's end-of-turn timing line ("✳ Baked for 45s", verb varies) sits
+ * between the transcript and the input box with blank lines on both sides.
+ * Without this entry it becomes the entire collected block — the blank above
+ * it stops the walk before the real message ever gets collected — so a turn
+ * that ends in a question never cards (found live 2026-08-01 while staging
+ * the README hero shot). Anchored to the leading glyph — and it is a glyph
+ * FAMILY, not one character: the timing line keeps whatever glyph claude's
+ * spinner settled on (`✻ Worked for 6s` verified in a live buffer dump
+ * 2026-08-02, `✳ Baked for 45s` in the original report; ✽/✢/∗/· complete
+ * the spinner set). ✳ and ✻ are pixel-identical at pane font sizes, which
+ * is how the single-glyph version of this regex survived a night of
+ * screenshot debugging. Message prose never begins a line with any of them.
+ */
+const TURN_TIMING_RE = /^\s*[✳✻✽✢∗·]/
 
 /**
  * Numbered (`1.`/`1)`), bullet (`❯`/`◯`), or checkbox (`- [ ]`) list rows.
@@ -140,7 +194,7 @@ const SELECTOR_OPTION_MAX_LINES = 4
  * but nothing above it reads as a question — see `blockLooksLikeQuestion`).
  */
 export function extractQuestion(lines: string[]): Extraction | null {
-  const boxTopIndex = findInputBoxTop(lines)
+  const boxTopIndex = findInputBoxTop(lines) ?? findBarePromptRow(lines)
   if (boxTopIndex !== null) {
     const block = collectMessageBlock(lines, boxTopIndex)
     return blockLooksLikeQuestion(block) ? { kind: 'input', question: buildQuestion(block) } : null
@@ -216,6 +270,32 @@ function findInputBoxTop(lines: string[]): number | null {
 }
 
 /**
+ * Borderless fallback, tried only when the edge trio found nothing: the
+ * bottommost `❯` input row (never a `❯ N.` selector option, never a slash
+ * echo) within the last `BOX_BOTTOM_SEARCH_WINDOW` non-empty lines. The
+ * rules that frame this row may not exist in the text buffer at all — a
+ * styled-blank rule translates to an empty string — so nothing about them
+ * is required. What IS required is a claude chrome glyph somewhere above,
+ * because `❯` alone is also a common shell-theme prompt (see
+ * `CLAUDE_CHROME_RE`). Returns the row's index so the block walk starts
+ * just above it, exactly as it would from a real box top.
+ */
+function findBarePromptRow(lines: string[]): number | null {
+  let nonEmptySeen = 0
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (line === undefined || isBlank(line)) continue
+    if (nonEmptySeen >= BOX_BOTTOM_SEARCH_WINDOW) return null
+    nonEmptySeen++
+    if (SLASH_ECHO_RE.test(line)) continue
+    if (/^\s*❯(?!\s*\d+[.)]\s)/.test(line)) {
+      return lines.slice(0, i).some((l) => l !== undefined && CLAUDE_CHROME_RE.test(l)) ? i : null
+    }
+  }
+  return null
+}
+
+/**
  * Step 3: walks up from just above the box's top border, skipping noise
  * lines and leading blanks, collecting real content until the first blank
  * after real content, the `MESSAGE_BLOCK_MAX_LINES` cap, or the start of
@@ -231,7 +311,14 @@ function collectMessageBlock(lines: string[], boxTopIndex: number): string[] {
       if (block.length > 0) break // first blank after real content: stop
       continue // leading blank before any real content: not a stop
     }
-    if (SHORTCUTS_FOOTER_RE.test(line) || MODE_INDICATOR_RE.test(line) || BUSY_STATUS_RE.test(line)) {
+    if (
+      SHORTCUTS_FOOTER_RE.test(line) ||
+      MODE_INDICATOR_RE.test(line) ||
+      BUSY_STATUS_RE.test(line) ||
+      TURN_TIMING_RE.test(line) ||
+      RULE_LINE_RE.test(line) ||
+      SLASH_ECHO_RE.test(line)
+    ) {
       continue // noise: excluded from the block, walk keeps going
     }
 
