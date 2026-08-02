@@ -18,6 +18,10 @@ export interface TypeRequest {
   cmd: 'type'
   paneId: string
   text: string
+  /** The tty the sender believes this pane has (from the session registry).
+   *  When present, the server refuses on mismatch — a pane id can outlive
+   *  the SeaShell run that minted it and be reused by a different pane. */
+  tty: string | null
 }
 
 export interface CardRequest {
@@ -26,6 +30,8 @@ export interface CardRequest {
   question: string
   draft: string | null
   validateOnly: boolean
+  /** Same cross-run identity check as TypeRequest.tty. */
+  tty: string | null
 }
 
 export type ControlRequest = TypeRequest | CardRequest
@@ -34,6 +40,17 @@ export type ParseResult = { ok: true; req: ControlRequest } | { ok: false; error
 
 // eslint-disable-next-line no-control-regex -- matching them is the point
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/
+
+const MAX_TTY_LENGTH = 64
+
+/** Optional tty field shared by both commands: absent -> ok with null,
+ *  present -> must be a short control-free non-empty string. */
+function parseTty(raw: unknown): { ok: true; tty: string | null } | { ok: false } {
+  if (raw === undefined || raw === null) return { ok: true, tty: null }
+  if (typeof raw !== 'string' || raw === '' || raw.length > MAX_TTY_LENGTH) return { ok: false }
+  if (CONTROL_CHARS.test(raw)) return { ok: false }
+  return { ok: true, tty: raw }
+}
 
 export function parseControlRequest(line: string): ParseResult {
   let parsed: unknown
@@ -57,7 +74,9 @@ export function parseControlRequest(line: string): ParseResult {
     if (CONTROL_CHARS.test(text)) {
       return { ok: false, error: 'control characters rejected: text is typed, never submitted' }
     }
-    return { ok: true, req: { cmd: 'type', paneId, text } }
+    const tty = parseTty(o['tty'])
+    if (!tty.ok) return { ok: false, error: 'malformed tty' }
+    return { ok: true, req: { cmd: 'type', paneId, text, tty: tty.tty } }
   }
   if (o['cmd'] === 'card') {
     const paneId = o['paneId']
@@ -77,7 +96,9 @@ export function parseControlRequest(line: string): ParseResult {
       draft = draftRaw
     }
     const validateOnly = o['validateOnly'] === true
-    return { ok: true, req: { cmd: 'card', paneId, question, draft, validateOnly } }
+    const tty = parseTty(o['tty'])
+    if (!tty.ok) return { ok: false, error: 'malformed tty' }
+    return { ok: true, req: { cmd: 'card', paneId, question, draft, validateOnly, tty: tty.tty } }
   }
   return { ok: false, error: 'unknown cmd' }
 }

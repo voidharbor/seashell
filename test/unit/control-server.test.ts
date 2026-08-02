@@ -121,6 +121,33 @@ describe.skipIf(process.platform === 'win32')('control server', () => {
     expect(writes).toEqual([])
   })
 
+  it('refuses both commands when the request names a tty the pane no longer has', async () => {
+    // A session-registry entry can outlive the SeaShell run that minted its
+    // pane id; a reused pane id must not receive a card meant for the old
+    // one. The registered tty is the cross-run identity check.
+    const { deps, writes, postCardCalls } = makeFakes()
+    await start(deps)
+    const t = JSON.parse(await request(deps.socketPath, typeReq({ tty: 'ttys099' })))
+    expect(t.ok).toBe(false)
+    expect(t.error).toMatch(/tty/i)
+    const c = JSON.parse(await request(deps.socketPath, cardReq({ tty: 'ttys099' })))
+    expect(c.ok).toBe(false)
+    expect(c.error).toMatch(/tty/i)
+    expect(writes).toEqual([])
+    expect(postCardCalls).toEqual([])
+  })
+
+  it('accepts both commands when the request tty matches the pane', async () => {
+    const { deps, writes, postCardCalls } = makeFakes()
+    await start(deps)
+    const t = JSON.parse(await request(deps.socketPath, typeReq({ tty: 'ttys004' })))
+    expect(t.ok).toBe(true)
+    const c = JSON.parse(await request(deps.socketPath, cardReq({ tty: 'ttys004' })))
+    expect(c.ok).toBe(true)
+    expect(writes.length).toBe(1)
+    expect(postCardCalls.length).toBe(1)
+  })
+
   it('refuses an unknown pane without ever checking the foreground', async () => {
     const { deps, writes, foregroundCalls } = makeFakes()
     await start(deps)

@@ -91,6 +91,14 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
       const tty = deps.paneTty(req.paneId)
       if (tty === null) return { ok: false, error: 'unknown or exited pane' }
 
+      // A pane id is only unique within one SeaShell run; the registry entry
+      // that named it can be older than this run. The registered tty is the
+      // identity that survives across runs — a mismatch means the caller is
+      // holding a stale entry and this pane is somebody else's session.
+      if (req.tty !== null && req.tty !== tty) {
+        return { ok: false, error: 'pane tty mismatch — the session registry entry is stale' }
+      }
+
       let foreground = false
       try {
         foreground = await deps.checkForeground(tty)

@@ -9,7 +9,7 @@ describe('parseControlRequest', () => {
     const r = parseControlRequest(valid())
     expect(r).toEqual({
       ok: true,
-      req: { cmd: 'type', paneId: 'pane-8-304837', text: 'yes do the relay now' },
+      req: { cmd: 'type', paneId: 'pane-8-304837', text: 'yes do the relay now', tty: null },
     })
   })
 
@@ -94,5 +94,22 @@ describe('card command', () => {
   it('still parses type exactly as before', () => {
     const r = parseControlRequest(JSON.stringify({ cmd: 'type', paneId: 'p1', text: 'hello' }))
     expect(r.ok).toBe(true)
+  })
+  it('parses an optional tty on both commands, null when absent', () => {
+    const t = parseControlRequest(JSON.stringify({ cmd: 'type', paneId: 'p1', text: 'hi', tty: 'ttys004' }))
+    expect(t.ok).toBe(true)
+    if (t.ok) expect(t.req.tty).toBe('ttys004')
+    const c = parseControlRequest(JSON.stringify({ cmd: 'card', paneId: 'p1', question: 'ok?', tty: 'ttys004' }))
+    expect(c.ok).toBe(true)
+    if (c.ok) expect(c.req.tty).toBe('ttys004')
+    const none = parseControlRequest(JSON.stringify({ cmd: 'type', paneId: 'p1', text: 'hi' }))
+    expect(none.ok).toBe(true)
+    if (none.ok) expect(none.req.tty).toBeNull()
+  })
+  it('rejects a malformed tty', () => {
+    expect(parseControlRequest(JSON.stringify({ cmd: 'type', paneId: 'p1', text: 'hi', tty: 7 })).ok).toBe(false)
+    expect(parseControlRequest(JSON.stringify({ cmd: 'type', paneId: 'p1', text: 'hi', tty: '' })).ok).toBe(false)
+    expect(parseControlRequest(JSON.stringify({ cmd: 'type', paneId: 'p1', text: 'hi', tty: 'a\nb' })).ok).toBe(false)
+    expect(parseControlRequest(JSON.stringify({ cmd: 'type', paneId: 'p1', text: 'hi', tty: 'x'.repeat(65) })).ok).toBe(false)
   })
 })
