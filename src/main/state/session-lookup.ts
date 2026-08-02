@@ -95,9 +95,14 @@ export interface SessionFile {
 export function pickFallbackSessionIds(
   panes: PaneRef[],
   resolved: Record<string, string>,
-  listSessions: (cwd: string) => SessionFile[]
+  listSessions: (cwd: string) => SessionFile[],
+  excludeSids: ReadonlySet<string> = new Set()
 ): Record<string, string> {
-  const taken = new Set(Object.values(resolved))
+  // `excludeSids` is every session known to be alive on screen right now. The
+  // newest transcript for a directory is often a session already running in
+  // another pane, and handing it out again would put two claudes on one
+  // conversation.
+  const taken = new Set([...Object.values(resolved), ...excludeSids])
   const byCwd = new Map<string, SessionFile[]>()
   const out: Record<string, string> = {}
 
@@ -179,5 +184,17 @@ export async function sessionIdsForPanes(panes: PaneRef[]): Promise<Record<strin
     cache.set(cwd, await listSessionFiles(cwd))
   }
 
-  return { ...resolved, ...pickFallbackSessionIds(panes, resolved, (cwd) => cache.get(cwd) ?? []) }
+  // Sessions with a living process are already on screen somewhere, so they are
+  // not free for a restored pane to claim.
+  const liveSids = new Set(
+    entries
+      .filter((e) => typeof e.pid === 'number' && e.pid > 0 && pidAlive(e.pid))
+      .map((e) => e.session_id)
+      .filter(isValidSessionId)
+  )
+
+  return {
+    ...resolved,
+    ...pickFallbackSessionIds(panes, resolved, (cwd) => cache.get(cwd) ?? [], liveSids),
+  }
 }

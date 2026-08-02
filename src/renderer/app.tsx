@@ -412,6 +412,29 @@ export function App(): React.JSX.Element {
         return
       }
 
+      // A project saved before its panes could be matched to sessions carries no
+      // ids at all, and re-saving it is not something the user should have to
+      // know to do. Any claude pane still missing one gets resolved here, from
+      // the newest transcript for its own directory.
+      const needIds = restored.flatMap((t) =>
+        Object.values(t.panes)
+          .filter((p) => p.kind === 'term' && p.command === 'claude' && !p.claudeSessionId)
+          .map((p) => ({ paneId: p.id, cwd: p.cwd }))
+      )
+      if (needIds.length > 0) {
+        try {
+          const res = await window.seashell.projects.sessionIds({ panes: needIds.slice(0, 64) })
+          for (const tab of restored) {
+            for (const pane of Object.values(tab.panes)) {
+              const sid = res.ids[pane.id]
+              if (sid) pane.claudeSessionId = sid
+            }
+          }
+        } catch {
+          /* unresolved panes just open as a fresh claude, the old behaviour */
+        }
+      }
+
       const live = state.tabs.flatMap((t) =>
         Object.values(t.panes).filter((p) => p.kind === 'term')
       )

@@ -74,6 +74,26 @@ describe('pickFallbackSessionIds', () => {
     expect(out).toEqual({ p1: A })
   })
 
+  it('never claims a session that is already live in another pane', () => {
+    const out = pickFallbackSessionIds(
+      [{ paneId: 'p1', cwd: '/w' }],
+      {},
+      lister({ '/w': [{ sid: B, mtimeMs: 90 }, { sid: A, mtimeMs: 10 }] }),
+      new Set([B])
+    )
+    expect(out).toEqual({ p1: A })
+  })
+
+  it('leaves a pane unresolved rather than doubling up on a live session', () => {
+    const out = pickFallbackSessionIds(
+      [{ paneId: 'p1', cwd: '/w' }],
+      {},
+      lister({ '/w': [{ sid: B, mtimeMs: 90 }] }),
+      new Set([B])
+    )
+    expect(out).toEqual({})
+  })
+
   it('keeps panes in different cwds independent', () => {
     const out = pickFallbackSessionIds(
       [
