@@ -7,6 +7,7 @@ function card(overrides: Partial<LookoutCard> = {}): LookoutCard {
     id: 'card-1',
     paneId: 'p1',
     source: 'push',
+    kind: 'input',
     question: 'ship it?',
     draft: null,
     state: 'active',

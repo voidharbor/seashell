@@ -32,7 +32,17 @@ interface PaneProc {
    * agent pane glow. See monitor/activity.ts.
    */
   bytesOut: number
+  /**
+   * The last TAIL_MAX_CHARS of raw output, kept so lookout/screen-kind.ts can
+   * read the pane's current screen from main's own stream at approve time —
+   * the renderer's xterm buffer lags this by an IPC hop plus a parse.
+   */
+  tail: string
 }
+
+/** Enough to hold several full ink repaints of claude's input area or a
+ *  selector; anything older than that cannot be the current screen. */
+const TAIL_MAX_CHARS = 8192
 
 const MAX_PANES = 24
 
@@ -152,6 +162,7 @@ export class PtyManager {
       ttyName,
       exited: false,
       bytesOut: 0,
+      tail: '',
     }
     this.panes.set(req.paneId, rec)
     this.batcher.setPaneActive(req.paneId, true)
@@ -161,6 +172,7 @@ export class PtyManager {
         typeof chunk === 'string' ? chunk : rec.decoder.write(chunk)
       if (text) {
         rec.bytesOut += text.length
+        rec.tail = (rec.tail + text).slice(-TAIL_MAX_CHARS)
         this.batcher.push(req.paneId, text, Date.now())
         this.ensureFlushLoop()
       }
@@ -211,6 +223,13 @@ export class PtyManager {
   bytesOutOf(paneId: string): number | null {
     const rec = this.panes.get(paneId)
     return rec && !rec.exited ? rec.bytesOut : null
+  }
+
+  /** A live pane's raw output tail, or null — same liveness semantics as
+   * bytesOutOf. Input to lookout/screen-kind.ts. */
+  tailOf(paneId: string): string | null {
+    const rec = this.panes.get(paneId)
+    return rec && !rec.exited ? rec.tail : null
   }
 
   resize(paneId: string, cols: number, rows: number): void {

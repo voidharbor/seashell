@@ -39,6 +39,9 @@ export interface ApproveDeps {
   checkForeground(ttyName: string): Promise<boolean>
   /** Like PtyManager.writeIfLive: reports whether the pane was live. */
   writeIfLive(paneId: string, data: string): boolean
+  /** Main's own read of the pane's current screen (lookout/screen-kind.ts) —
+   *  never the renderer's, whose buffer can lag the stream at click time. */
+  screenKind(paneId: string): 'input' | 'selector' | null
 }
 
 export async function approveCard(
@@ -53,6 +56,21 @@ export async function approveCard(
   const card = deps.store.get(req.cardId)
   if (!card) return { ok: false, code: 'ENOTFOUND', message: 'card not found' }
 
+  // A card born from a selector screen never earns a send, no matter what the
+  // screen shows now — its question quotes picker options, and its freshness
+  // baseline was taken after the picker painted, so the byte delta is blind
+  // to it.
+  if (card.kind === 'selector') {
+    return { ok: false, code: 'ESELECTOR', message: 'card is for a picker screen' }
+  }
+
+  // A card main itself marked stale must stay refused — the renderer disables
+  // its buttons on the same verdict, and the byte delta alone can read fresh
+  // again after e.g. a failed foreground check.
+  if (card.state !== 'active') {
+    return { ok: false, code: 'ESTALE', message: 'session moved on' }
+  }
+
   if (!deps.store.isFresh(card)) {
     deps.store.markStale(req.cardId)
     return { ok: false, code: 'ESTALE', message: 'session moved on' }
@@ -60,6 +78,16 @@ export async function approveCard(
 
   const tty = deps.paneTty(card.paneId)
   if (tty === null) return { ok: false, code: 'EGONE', message: 'unknown or exited pane' }
+
+  // Live read at click time from main's own stream: if the pane is showing a
+  // picker right now, typed text + Enter would blind-confirm the highlighted
+  // option. The renderer gates this too, but its xterm buffer lags the pty —
+  // this is the check that holds when the renderer's is stale. The card is
+  // not marked stale: the session has not moved on, the user should answer
+  // in the pane.
+  if (deps.screenKind(card.paneId) === 'selector') {
+    return { ok: false, code: 'ESELECTOR', message: 'pane is showing a picker' }
+  }
 
   let foreground = false
   try {

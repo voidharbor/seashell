@@ -41,6 +41,7 @@ function makeFakes(over: Partial<ControlServerDeps> = {}): Fakes {
       foregroundCalls.push(tty)
       return Promise.resolve(true)
     },
+    screenKind: () => 'input',
     postCard: (req) => {
       postCardCalls.push(req)
       return null
@@ -105,6 +106,18 @@ describe.skipIf(process.platform === 'win32')('control server', () => {
     const res = JSON.parse(await request(deps.socketPath, typeReq()))
     expect(res.ok).toBe(false)
     expect(res.error).toMatch(/claude/i)
+    expect(writes).toEqual([])
+  })
+
+  it('type is refused while the pane shows a selector, and writes nothing', async () => {
+    // A digit typed into a claude picker can select an option on its own — no
+    // Enter needed — so "typed, never submitted" is not a safe property on a
+    // selector screen. The guard must live here, not only in the card UI.
+    const { deps, writes } = makeFakes({ screenKind: () => 'selector' })
+    await start(deps)
+    const res = JSON.parse(await request(deps.socketPath, typeReq({ text: '1' })))
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/selector|picker/i)
     expect(writes).toEqual([])
   })
 

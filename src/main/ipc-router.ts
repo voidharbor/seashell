@@ -77,7 +77,11 @@ const ProjectSaveReq = z.object({
 })
 const HttpReq = z.object({ url: z.string().max(4096) })
 
-const LookoutDetectedReq = z.object({ paneId: PaneId, question: z.string().min(1).max(500) })
+const LookoutDetectedReq = z.object({
+  paneId: PaneId,
+  question: z.string().min(1).max(500),
+  kind: z.enum(['input', 'selector']),
+})
 const LookoutActionReq = z.object({
   cardId: z.string().min(1).max(64),
   action: z.enum(['approve', 'dismiss']),
@@ -344,7 +348,9 @@ export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
   // -------------------------------------------------------------- lookout
   ipcMain.on(CH.lookoutDetected, (_e, raw) => {
     const parsed = LookoutDetectedReq.safeParse(raw)
-    if (parsed.success) lookout.store.createFromDetector(parsed.data.paneId, parsed.data.question)
+    if (parsed.success) {
+      lookout.store.createFromDetector(parsed.data.paneId, parsed.data.question, parsed.data.kind)
+    }
   })
 
   ipcMain.handle(CH.lookoutAction, async (_e, raw): Promise<LookoutActionResponse> => {

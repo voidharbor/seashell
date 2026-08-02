@@ -360,6 +360,11 @@ export interface LookoutCard {
   id: string
   paneId: string
   source: 'detector' | 'push'
+  /** The screen shape the card was born from. A 'selector' card is look-only
+   *  for its whole life: typed text + Enter on a picker blind-confirms the
+   *  highlighted option, so approve refuses it in main regardless of what the
+   *  renderer currently reads. */
+  kind: 'input' | 'selector'
   question: string
   draft: string | null
   state: 'active' | 'stale'
@@ -373,6 +378,8 @@ export interface LookoutCardsEvent {
 export interface LookoutDetectedRequest {
   paneId: string
   question: string
+  /** What extractQuestion read the screen as at detection time. */
+  kind: 'input' | 'selector'
 }
 
 export interface LookoutActionRequest {
@@ -384,7 +391,7 @@ export interface LookoutActionRequest {
 
 export type LookoutActionResponse = Result<
   { delivered: boolean },
-  'ENOTFOUND' | 'ESTALE' | 'EGONE' | 'EFOREGROUND' | 'EINVALID'
+  'ENOTFOUND' | 'ESTALE' | 'EGONE' | 'EFOREGROUND' | 'EINVALID' | 'ESELECTOR'
 >
 
 export interface LookoutState {

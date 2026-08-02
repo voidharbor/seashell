@@ -27,6 +27,8 @@ export interface ControlServerDeps {
   paneTty(paneId: string): string | null
   /** Whether the foreground process group on that tty is a main claude process. */
   checkForeground(ttyName: string): Promise<boolean>
+  /** Main's own read of the pane's current screen (lookout/screen-kind.ts). */
+  screenKind(paneId: string): 'input' | 'selector' | null
   /** Create a pushed card. Returns null on success, else a refusal message. */
   postCard(req: { paneId: string; question: string; draft: string | null }): string | null
 }
@@ -105,6 +107,11 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
       }
 
       if (req.cmd === 'type') {
+        // "Typed, never submitted" is not a safe property on a selector
+        // screen: a lone digit can pick an option with no Enter involved.
+        if (deps.screenKind(req.paneId) === 'selector') {
+          return { ok: false, error: 'pane is showing a picker — refusing to type into a selector' }
+        }
         // The pane can exit between the checks above and here; write() re-checks.
         if (!deps.writeToPane(req.paneId, req.text)) {
           return { ok: false, error: 'unknown or exited pane' }

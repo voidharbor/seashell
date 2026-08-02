@@ -37,8 +37,8 @@ interface StoredCard extends LookoutCard {
 }
 
 function toPublicCard(card: StoredCard): LookoutCard {
-  const { id, paneId, source, question, draft, state, createdAt } = card
-  return { id, paneId, source, question, draft, state, createdAt }
+  const { id, paneId, source, kind, question, draft, state, createdAt } = card
+  return { id, paneId, source, kind, question, draft, state, createdAt }
 }
 
 export class CardStore {
@@ -65,7 +65,7 @@ export class CardStore {
   /** One card per pane; a push replaces a detector card, never vice versa
    *  while the push card is active. Returns false when disabled or the pane
    *  is gone or the question was just dismissed on this pane. */
-  createFromDetector(paneId: string, question: string): boolean {
+  createFromDetector(paneId: string, question: string, kind: 'input' | 'selector'): boolean {
     if (!this.isEnabled) return false
     const bytesOutAtCreate = this.deps.bytesOut(paneId)
     if (bytesOutAtCreate === null) return false
@@ -83,6 +83,7 @@ export class CardStore {
       id: this.newId(),
       paneId,
       source: 'detector',
+      kind,
       question,
       draft: null,
       state: 'active',
@@ -103,6 +104,10 @@ export class CardStore {
       id: this.newId(),
       paneId,
       source: 'push',
+      // A push arrives via the Stop hook, after a turn has ended at the input
+      // box — it has no screen reading of its own. approveCard's live
+      // screenKind check is what guards it if the screen has since changed.
+      kind: 'input',
       question,
       draft,
       state: 'active',

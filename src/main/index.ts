@@ -10,6 +10,7 @@ import { checkTtyForeground } from './control/foreground-check.js'
 import { CardStore } from './lookout/card-store.js'
 import { approveCard } from './lookout/approve.js'
 import { lookoutPluginInstalled } from './lookout/plugin-detect.js'
+import { screenKindOf } from './lookout/screen-kind.js'
 import { CH } from '../shared/ipc.js'
 
 const isDev = !app.isPackaged
@@ -238,6 +239,12 @@ app.whenReady().then(() => {
     now: Date.now,
   })
 
+  /** Main's own screen read for a pane, from its raw output tail. */
+  const paneScreenKind = (paneId: string): 'input' | 'selector' | null => {
+    const tail = pm.tailOf(paneId)
+    return tail === null ? null : screenKindOf(tail)
+  }
+
   // Registered once pm and cardStore both exist: the approve closure needs both.
   registerIpc(ptyManager, {
     store: cardStore,
@@ -248,6 +255,7 @@ app.whenReady().then(() => {
           paneTty: (id) => pm.paneTty(id),
           checkForeground: checkTtyForeground,
           writeIfLive: (id, d) => pm.writeIfLive(id, d),
+          screenKind: paneScreenKind,
         },
         r
       ),
@@ -259,6 +267,7 @@ app.whenReady().then(() => {
     writeToPane: (paneId, text) => pm.writeIfLive(paneId, text),
     paneTty: (paneId) => pm.paneTty(paneId),
     checkForeground: checkTtyForeground,
+    screenKind: paneScreenKind,
     postCard: (req) => {
       const created = cardStore.createFromPush(req.paneId, req.question, req.draft)
       // No ensureSweepLoop call here: createFromPush always emits on

@@ -124,7 +124,9 @@ function gotoPaneAndDismiss(gotoPane: () => void, dismiss: () => void): React.Re
 function CardItem(props: CardItemProps): React.JSX.Element {
   const { card } = props
   const stale = card.state === 'stale'
-  const interactive = props.screenMode(card.paneId) === 'input'
+  // A card born from a selector screen is look-only for life, whatever the
+  // live read says now — main refuses its approve too (ESELECTOR).
+  const interactive = card.kind !== 'selector' && props.screenMode(card.paneId) === 'input'
   const hasDraft = card.draft !== null
   // A stale card keeps its normal button shape (send buttons disabled)
   // instead of collapsing to the look-only fallback — see the doc above.
@@ -134,7 +136,7 @@ function CardItem(props: CardItemProps): React.JSX.Element {
   const [text, setText] = useState(card.draft ?? '')
 
   const send = (value: string): void => {
-    if (props.screenMode(card.paneId) !== 'input') return
+    if (card.kind === 'selector' || props.screenMode(card.paneId) !== 'input') return
     props.onAction({ cardId: card.id, action: 'approve', text: value })
   }
   const dismiss = (): void => props.onAction({ cardId: card.id, action: 'dismiss' })

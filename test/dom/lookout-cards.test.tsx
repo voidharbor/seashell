@@ -3,7 +3,7 @@ import { cleanup, render, screen, fireEvent } from '@testing-library/react'
 import { CardStack } from '../../src/renderer/lookout/CardStack.js'
 
 const card = {
-  id: 'card-1', paneId: 'p1', source: 'push' as const,
+  id: 'card-1', paneId: 'p1', source: 'push' as const, kind: 'input' as const,
   question: 'ship the release?', draft: 'yes ship it', state: 'active' as const, createdAt: 1,
 }
 

@@ -252,7 +252,13 @@ export function App(): React.JSX.Element {
       const lines = readPaneTail(paneId)
       if (!lines) continue
       const extraction = extractQuestion(lines)
-      if (extraction) window.seashell.lookout.detected({ paneId, question: extraction.question })
+      if (extraction) {
+        window.seashell.lookout.detected({
+          paneId,
+          question: extraction.question,
+          kind: extraction.kind,
+        })
+      }
     }
   }, [settings.lookoutCards, state.tabs, state.activeTabId])
 
