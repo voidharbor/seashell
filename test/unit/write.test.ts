@@ -89,12 +89,17 @@ describe('writeTextFile', () => {
     if (!res.ok) expect(res.code).toBe('ENOENT')
   })
 
+  // Asserted against the mode the file actually carries rather than a literal
+  // 0o600: Windows honours only the read-only bit, so the chmod below cannot
+  // take there and a literal would fail a platform, not a regression. What is
+  // under test either way is that the replace copies the mode it found.
   it('preserves the file mode across the atomic replace', async () => {
     const dir = scope()
     const p = seed(dir, 'notes.md', 'old')
     fs.chmodSync(p, 0o600)
+    const before = fs.statSync(p).mode & 0o777
     const res = await writeTextFile({ path: p, text: 'new', expectedMtimeMs: mtimeOf(p) }, dir)
     expect(res.ok).toBe(true)
-    expect(fs.statSync(p).mode & 0o777).toBe(0o600)
+    expect(fs.statSync(p).mode & 0o777).toBe(before)
   })
 })
