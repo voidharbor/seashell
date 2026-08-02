@@ -8,6 +8,11 @@ A terminal window manager. Run many shells side by side in one window — plain
 `zsh`, a dev server, or several AI coding agents — and keep a file explorer next to them.
 macOS is the reference platform; Windows and Linux builds are experimental.
 
+<p align="center">
+  <img src="docs/hero.png" alt="SeaShell: six panes tiled in one window — two Claude Code sessions, a test run, a system monitor, a file preview — with a Lookout card in the corner catching the session that stopped to ask a question.">
+</p>
+<p align="center"><i>Six panes in one window — and a Lookout card catching the session that stopped to ask a question.</i></p>
+
 **[⬇ Download the latest release](https://github.com/voidharbor/seashell/releases/latest)** — macOS · Windows · Linux
 
 **Built for running Claude Code.** SeaShell works with any terminal program, but every design
