@@ -19,6 +19,12 @@ macOS is the reference platform; Windows and Linux builds are experimental.
 decision that had a tie-breaker was settled in favour of watching several long-running agent
 sessions at once. That is what it is for.
 
+**One agent means you wait. Six means you don't.** An agent session spends most of its wall
+clock working without you — the expensive part is the minutes it sits blocked on an answer
+nobody noticed. Tile six sessions in one window and let the cards surface the one that needs
+you, and the ceiling on how much you ship in a day is set by how many sessions you can keep
+fed, not by how fast one conversation goes. That is the whole bet behind SeaShell.
+
 > **Status: pre-alpha.** Under active development.
 
 ## Install
