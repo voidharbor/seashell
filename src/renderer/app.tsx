@@ -69,7 +69,6 @@ export function App(): React.JSX.Element {
   const [projects, setProjects] = useState<Project[]>([])
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [lookoutCards, setLookoutCards] = useState<LookoutCard[]>([])
-  const [lookoutOpen, setLookoutOpen] = useState(false)
   const [lookoutPlugin, setLookoutPlugin] = useState(false)
 
   const updateSettings = useCallback((next: Settings) => {
@@ -859,8 +858,14 @@ export function App(): React.JSX.Element {
   const lookoutCount = lookoutBadgeCount(lookoutCards)
   /** Mirrors CardStack's own "is there anything to show" rule — a card for the
    *  focused pane is suppressed, so it does not make the rail appear. */
-  const railVisible =
-    !lookoutHidden && (lookoutOpen || lookoutCards.some((c) => c.paneId !== suppressedPaneId))
+  /**
+   * Lookout is a DEDICATED section, not a popup: it is there whenever the user
+   * has not hidden it, empty or not. An earlier version showed it only while
+   * cards existed, which meant a fresh launch — cards are process-lifetime, so
+   * every launch starts with none — looked exactly like a build with no Lookout
+   * in it at all. A section you cannot find when it is idle is not a section.
+   */
+  const railVisible = !lookoutHidden
 
   return (
     <div className="app">
@@ -1010,11 +1015,9 @@ export function App(): React.JSX.Element {
               cards={lookoutCards}
               suppressedPaneId={suppressedPaneId}
               pluginInstalled={lookoutPlugin}
-              open={lookoutOpen}
               screenMode={lookoutScreenMode}
               onAction={lookoutOnAction}
               onGotoPane={lookoutGotoPane}
-              onClose={() => setLookoutOpen(false)}
             />
           </aside>
           {/* Only draggable when there is something to drag: with no cards the
@@ -1183,7 +1186,7 @@ export function App(): React.JSX.Element {
         tab={activeTab}
         system={state.system}
         lookoutCount={lookoutCount}
-        onLookoutClick={() => setLookoutOpen((o) => !o)}
+        onLookoutClick={() => setLookoutHidden((h) => !h)}
       />
 
       {settingsOpen && (

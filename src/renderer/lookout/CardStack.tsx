@@ -6,35 +6,29 @@ export interface CardStackProps {
   /** Pane ids the stack must not show cards for (the focused pane). */
   suppressedPaneId: string | null
   pluginInstalled: boolean
-  open: boolean // badge toggles the (possibly empty) stack
   /** Live screen mode of a pane, re-derived from its xterm buffer via
    *  extractQuestion at render and click time. 'selector' means typed text +
    *  Enter would blind-confirm the highlighted option — no send buttons. */
   screenMode(paneId: string): 'input' | 'selector' | null
   onAction(req: LookoutActionRequest): void
   onGotoPane(paneId: string): void
-  onClose(): void
 }
 
 const SELECTOR_HINT = "answer in the pane — it's showing a picker"
 const STALE_LABEL = 'session moved on'
 
 /**
- * The Lookout rail's stack of cards, plus the (possibly empty) open
- * state reached from the status-bar badge.
+ * The Lookout section's stack of cards.
  *
- * A card for the currently-focused pane is always suppressed — you are
- * already looking at it, it only contributes to the badge count (computed by
- * the caller). Every other active/stale card renders regardless of `open`;
- * `open` only decides whether an otherwise-empty stack still shows something
- * when the badge is clicked with nothing pending — either a reassurance or
- * the plugin install commands. With nothing to show and the stack unopened,
- * this renders nothing at all rather than an empty decorative box.
+ * A card for the currently-focused pane is always suppressed — you are already
+ * looking at it, so it only contributes to the badge count (computed by the
+ * caller). With nothing to show, this renders an idle placeholder rather than
+ * nothing: Lookout is a permanent section whose visibility belongs to the user
+ * (⇧⌘B), and a section that silently disappeared when idle was indistinguishable
+ * from a build that never had it.
  */
 export function CardStack(props: CardStackProps): React.JSX.Element {
   const visible = props.cards.filter((c) => c.paneId !== props.suppressedPaneId)
-
-  if (visible.length === 0 && !props.open) return <></>
 
   return (
     <div className="lookout-stack">
@@ -47,8 +41,11 @@ export function CardStack(props: CardStackProps): React.JSX.Element {
           onGotoPane={props.onGotoPane}
         />
       ))}
+      {/* The section is permanent, so its idle state has to say something
+          useful rather than vanish. No dismiss button here — hiding Lookout
+          belongs to the section header (and ⇧⌘B), not to a placeholder. */}
       {visible.length === 0 && (
-        <div className="card">
+        <div className="card card--idle">
           {props.pluginInstalled ? (
             <div className="card__question">nothing needs you</div>
           ) : (
@@ -58,11 +55,6 @@ export function CardStack(props: CardStackProps): React.JSX.Element {
               <code className="card__cmd">/plugin install c-assistant@voidharbor</code>
             </>
           )}
-          <div className="card__actions">
-            <button className="btn" onClick={props.onClose}>
-              ✕
-            </button>
-          </div>
         </div>
       )}
     </div>

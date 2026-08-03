@@ -1494,6 +1494,15 @@ body.dragging .rail__grip {
   opacity: 0.55;
 }
 
+/* The idle placeholder is not a card you act on — no shadow, no raised
+ * surface, so a quiet Lookout does not read as something waiting. */
+.card--idle {
+  border-style: dashed;
+  background: none;
+  box-shadow: none;
+  color: var(--text-faint);
+}
+
 .card__pane {
   color: var(--text-faint);
   font-size: calc(11px * var(--ui-scale));
