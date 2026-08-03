@@ -24,6 +24,8 @@ import {
   widthFromDrag,
 } from './layout/sidebar.js'
 import { RAIL_DEFAULT, heightFromDrag, loadRailHeight, saveRailHeight } from './layout/rail.js'
+import { drawerHeightFromDrag, loadDrawerHeight, saveDrawerHeight } from './layout/drawer.js'
+import { DrawerShell } from './drawer/DrawerShell.js'
 import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
 import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
@@ -62,6 +64,10 @@ export function App(): React.JSX.Element {
    *  counts while hidden, so nothing waiting goes unannounced. */
   const [lookoutHidden, setLookoutHidden] = useState(false)
   const railRef = useRef<HTMLElement | null>(null)
+  /** Shell drawer (⌘J): open state is runtime-only — a scratch shell that
+   *  reopened itself on launch would be presuming; height persists. */
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerHeight, setDrawerHeight] = useState(loadDrawerHeight)
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
   const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial())
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -159,6 +165,34 @@ export function App(): React.JSX.Element {
    * is pinned to the window's left edge. It is divided back out by the current
    * zoom scale before storing, so width and zoom stay independent settings.
    */
+  /** Bottom-anchored member of the drag family: the drawer's top edge moves,
+   *  its bottom edge (the grid's bottom, measured at drag start) stays put. */
+  const startDrawerDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const scale = levelAt(zoomIndex).ui
+      const bottom = gridRef.current?.getBoundingClientRect().bottom ?? window.innerHeight
+      let latest = drawerHeight
+
+      const move = (ev: MouseEvent): void => {
+        latest = drawerHeightFromDrag(ev.clientY, bottom, scale)
+        setDrawerHeight(latest)
+      }
+      const up = (): void => {
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+        document.body.style.cursor = ''
+        document.body.classList.remove('dragging')
+        saveDrawerHeight(latest)
+      }
+      document.body.style.cursor = 'row-resize'
+      document.body.classList.add('dragging')
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    },
+    [drawerHeight, zoomIndex]
+  )
+
   /** Vertical twin of startSidebarDrag: trades height between the card rail
    *  and the file explorer below it. The rail's own top is measured at drag
    *  start rather than assumed, so the tab bar's height is never hardcoded. */
@@ -631,6 +665,9 @@ export function App(): React.JSX.Element {
         case 'lookout.toggle':
           setLookoutHidden((h) => !h)
           break
+        case 'drawer.toggle':
+          setDrawerOpen((o) => !o)
+          break
         case 'explorer.toggle':
           dispatch({ type: 'explorer.toggle' })
           break
@@ -868,6 +905,23 @@ export function App(): React.JSX.Element {
     return () => clearTimeout(id)
   }, [state.toast])
 
+  // Closing the drawer hands the keyboard back to the pane that had it. The
+  // ref skips the mount pass, which would otherwise steal focus at boot.
+  // ⚠️ Hooks stop being legal at the `!ready` return below — anything with a
+  // hook in it goes ABOVE this comment. (Learned the hard way: this pair
+  // started out further down and took the whole first paint with it, React
+  // #310.)
+  const drawerWasOpen = useRef(false)
+  useEffect(() => {
+    if (drawerWasOpen.current && !drawerOpen) {
+      const id = activeTab?.focusedPaneId
+      if (id) terminals.get(id)?.term.focus()
+    }
+    drawerWasOpen.current = drawerOpen
+    // Reacts to the toggle alone; the focused pane is read at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawerOpen])
+
   if (!ready) return <div className="empty">Starting SeaShell…</div>
 
   const order = activeTab ? dfsPaneOrder(activeTab.tree) : []
@@ -883,6 +937,14 @@ export function App(): React.JSX.Element {
   // pane, so it does not move just because focus does.
   const suppressedPaneId = activeTab?.focusedPaneId ?? null
   const lookoutCount = lookoutBadgeCount(lookoutCards)
+
+  /** Where a fresh drawer shell starts and where its "cd to pane" button goes:
+   *  the focused pane's live cwd (OSC 7 beats the spawn cwd, same preference
+   *  PaneView uses), the home directory when nothing is focused. */
+  const focusedForDrawer = activeTab?.focusedPaneId
+    ? activeTab.panes[activeTab.focusedPaneId]
+    : undefined
+  const drawerFocusCwd = focusedForDrawer?.metrics?.cwd || focusedForDrawer?.cwd || home
   /** Mirrors CardStack's own "is there anything to show" rule — a card for the
    *  focused pane is suppressed, so it does not make the rail appear. */
   /**
@@ -1204,6 +1266,19 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           )}
+
+          {/* The shell drawer overlays the grid only — never the sidebar —
+              and stays mounted across toggles so its session survives. */}
+          <DrawerShell
+            open={drawerOpen}
+            height={drawerHeight}
+            fontSize={fontSize}
+            focusCwd={drawerFocusCwd}
+            gridWidth={gridSize.width}
+            onReveal={(p, isDir) => revealPath(p, isDir)}
+            onClose={() => setDrawerOpen(false)}
+            onDragStart={startDrawerDrag}
+          />
 
           {state.toast && <div className="toast">{state.toast}</div>}
         </div>

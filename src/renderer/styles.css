@@ -1467,6 +1467,83 @@ body.dragging .rail__grip {
   background: var(--accent);
 }
 
+/* ── Shell drawer (⌘J) ────────────────────────────────────────────────────
+ * The human's shell, slid up over the pane grid. Overlays the grid ONLY —
+ * the sidebar column keeps its full height — and sits above panes and
+ * dividers but below the toast and every modal. */
+.drawer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  background: var(--chrome-bg);
+  border-top: 1px solid var(--chrome-line);
+  box-shadow: 0 -10px 28px #000a;
+}
+
+/* Same invisible grab bar as the sidebar and rail, lying along the top edge. */
+.drawer__grip {
+  height: 6px;
+  margin-top: -3px;
+  margin-bottom: -2px;
+  flex: none;
+  z-index: 6;
+  cursor: row-resize;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.drawer__grip:hover,
+body.dragging .drawer__grip {
+  background: var(--accent);
+}
+
+.drawer__head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: calc(8px * var(--ui-scale));
+  padding: calc(4px * var(--ui-scale)) calc(10px * var(--ui-scale));
+  border-bottom: 1px solid var(--chrome-line);
+}
+
+.drawer__label {
+  color: var(--text-faint);
+  font-size: calc(11px * var(--ui-scale));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The shell's title or live cwd — informational, so it truncates first. */
+.drawer__cwd {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--ui-scale));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer__spacer {
+  flex: 1;
+}
+
+/* Both ride the shared .btn look; pinned so the cwd's ellipsis never
+ * squeezes them. */
+.drawer__cd,
+.drawer__close {
+  flex: none;
+}
+
+.drawer__term {
+  flex: 1;
+  min-height: 0;
+  padding: 2px 0 0 4px;
+}
+
 .lookout-rail:empty {
   display: none;
 }

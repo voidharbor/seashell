@@ -20,6 +20,11 @@ let hostname = ''
 export function setHostname(value: string): void {
   hostname = value
 }
+/** For terminals living outside a pane (the shell drawer), which mount after
+ *  boot has already called setHostname — same value the panes read. */
+export function currentHostname(): string {
+  return hostname
+}
 
 /**
  * Pane generations that already own a PTY.
