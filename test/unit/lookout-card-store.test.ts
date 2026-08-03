@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CardStore, STALE_OUTPUT_BYTES } from '../../src/main/lookout/card-store.js'
+import { CardStore } from '../../src/main/lookout/card-store.js'
 
 function makeStore(overrides: Partial<{ bytes: Map<string, number | null> }> = {}) {
   const bytes = overrides.bytes ?? new Map<string, number | null>([['p1', 1000]])
@@ -44,15 +44,20 @@ describe('CardStore', () => {
     expect(store.createFromDetector('p1', 'deploy?', 'input')).toBe(false)
     expect(store.createFromDetector('p1', 'other thing?', 'input')).toBe(true)
   })
-  it('freshness follows the output counter', () => {
+  // A pane repaints while it sits there waiting — the turn-timing line, the
+  // status line, the input box — and a card is created at the exact moment
+  // claude finishes rendering its question, so those repaints land right after
+  // the baseline. Output volume must never retire an unanswered card, or
+  // Approve disables itself seconds after the card appears.
+  it('a card on a live pane stays answerable no matter how much the pane paints', () => {
     const { store, bytes } = makeStore()
     store.createFromDetector('p1', 'deploy?', 'input')
     const card = store.cards()[0]!
     expect(store.isFresh(card)).toBe(true)
-    bytes.set('p1', 1000 + STALE_OUTPUT_BYTES)
-    expect(store.isFresh(card)).toBe(false)
+    bytes.set('p1', 1_000_000) // a full screen of repaints and then some
+    expect(store.isFresh(card)).toBe(true)
     store.sweep()
-    expect(store.get(card.id)?.state).toBe('stale')
+    expect(store.get(card.id)?.state).toBe('active')
   })
   it('a card is not fresh when its pane restarted and the byte counter dropped below the baseline', () => {
     // A pane restart reuses the pane id and resets the pty's bytesOut

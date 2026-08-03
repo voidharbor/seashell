@@ -933,8 +933,26 @@ export function App(): React.JSX.Element {
       </div>
 
       <div className="body">
-        {state.sidebarVisible && state.explorerRoot && (
-          <>
+        {/* Reserved space, not an overlay: the rail is a column above the file
+            explorer, so a card never covers terminal content and never covers
+            the tree either — the explorer gives up height, the panes give up
+            nothing. Hidden entirely via :empty when CardStack renders nothing,
+            so an empty rail costs the explorer no height at all. Cards stack
+            here and stay until answered; see .lookout-rail in styles.css. */}
+        <div className="sidebar-col">
+          <aside className="lookout-rail">
+            <CardStack
+              cards={lookoutCards}
+              suppressedPaneId={suppressedPaneId}
+              pluginInstalled={lookoutPlugin}
+              open={lookoutOpen}
+              screenMode={lookoutScreenMode}
+              onAction={lookoutOnAction}
+              onGotoPane={lookoutGotoPane}
+              onClose={() => setLookoutOpen(false)}
+            />
+          </aside>
+          {state.sidebarVisible && state.explorerRoot && (
             <Explorer
               root={state.explorerRoot}
               home={home}
@@ -946,16 +964,18 @@ export function App(): React.JSX.Element {
               }
               onToast={(m) => dispatch({ type: 'toast', message: m })}
             />
-            <div
-              className="sidebar__grip"
-              title="Drag to resize · double-click to reset"
-              onMouseDown={startSidebarDrag}
-              onDoubleClick={() => {
-                setSidebarWidth(SIDEBAR_DEFAULT)
-                saveSidebarWidth(SIDEBAR_DEFAULT)
-              }}
-            />
-          </>
+          )}
+        </div>
+        {state.sidebarVisible && state.explorerRoot && (
+          <div
+            className="sidebar__grip"
+            title="Drag to resize · double-click to reset"
+            onMouseDown={startSidebarDrag}
+            onDoubleClick={() => {
+              setSidebarWidth(SIDEBAR_DEFAULT)
+              saveSidebarWidth(SIDEBAR_DEFAULT)
+            }}
+          />
         )}
 
         <div className="grid" ref={gridRef}>
@@ -1079,21 +1099,6 @@ export function App(): React.JSX.Element {
           {state.toast && <div className="toast">{state.toast}</div>}
         </div>
 
-        {/* Reserved space, not an overlay: the rail sits beside the panes so a
-            card never covers terminal content. Hidden entirely via :empty when
-            CardStack renders nothing — see .lookout-rail in styles.css. */}
-        <aside className="lookout-rail">
-          <CardStack
-            cards={lookoutCards}
-            suppressedPaneId={suppressedPaneId}
-            pluginInstalled={lookoutPlugin}
-            open={lookoutOpen}
-            screenMode={lookoutScreenMode}
-            onAction={lookoutOnAction}
-            onGotoPane={lookoutGotoPane}
-            onClose={() => setLookoutOpen(false)}
-          />
-        </aside>
       </div>
 
       <StatusBar

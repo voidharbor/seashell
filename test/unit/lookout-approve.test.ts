@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CardStore, STALE_OUTPUT_BYTES } from '../../src/main/lookout/card-store.js'
+import { CardStore } from '../../src/main/lookout/card-store.js'
 import { approveCard } from '../../src/main/lookout/approve.js'
 
 function setup(
@@ -31,14 +31,24 @@ describe('approveCard', () => {
     expect(writes).toEqual(['yes ship', '\r'])
     expect(store.cards()).toHaveLength(0)
   })
-  it('refuses a stale card without writing', async () => {
+  // The pane restarted under the card: a different pty wearing the same pane
+  // id. Byte volume no longer retires a card, but a counter that went
+  // BACKWARDS still means the session the card belongs to is gone.
+  it('refuses a card whose pane restarted, without writing', async () => {
     const { deps, writes, cardId, bytes, store } = setup()
-    bytes.set('p1', 500 + STALE_OUTPUT_BYTES)
+    bytes.set('p1', 10) // below the creation baseline
     const res = await approveCard(deps, { cardId, text: 'yes ship' })
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.code).toBe('ESTALE')
     expect(writes).toHaveLength(0)
     expect(store.get(cardId)?.state).toBe('stale')
+  })
+  it('still writes after the pane has painted a great deal', async () => {
+    const { deps, writes, cardId, bytes } = setup()
+    bytes.set('p1', 1_000_000)
+    const res = await approveCard(deps, { cardId, text: 'yes ship' })
+    expect(res.ok).toBe(true)
+    expect(writes).toEqual(['yes ship', '\r'])
   })
   it('refuses when foreground is not claude', async () => {
     const { deps, writes, cardId } = setup({ foreground: false })

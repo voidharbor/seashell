@@ -17,7 +17,28 @@ import type { LookoutCard } from '../../shared/ipc.js'
  * still-unanswered question again.
  */
 
-export const STALE_OUTPUT_BYTES = 256 // grace for DA/CPR replies and redraws
+/**
+ * Cards used to go stale once the pane emitted this many bytes since the card
+ * appeared. That measured the wrong thing. A pane repaints constantly while
+ * sitting still — the end-of-turn timing line, the statusline clock, the input
+ * box — and a card is created at exactly the moment claude finishes rendering
+ * its question, so those repaints land immediately after the baseline is taken.
+ * Measured idle drift is bursty: nothing for a minute, then a redraw worth
+ * 130+ bytes. 256 was crossed within seconds of a card appearing, which is why
+ * a card would announce `session moved on` and disable its own Approve button
+ * while claude was still sitting there waiting for an answer.
+ *
+ * Byte drift is no longer a staleness verdict. It is still read to tell a pane
+ * that RESTARTED (counter went backwards) from one that is merely quiet, which
+ * is a fact about the pty, not about the conversation.
+ *
+ * Nothing about approving got looser: approveCard re-validates the picker
+ * screen from main's own stream, re-checks that claude still owns the tty's
+ * foreground process group, and re-checks pane liveness before either write.
+ * Those are checks on what is true NOW; the byte counter was a guess about
+ * what might have happened since.
+ */
+export const RESTART_GRACE_BYTES = 0
 
 export interface CardStoreDeps {
   /** Monotonic pty output counter for the pane, or null when the pane is gone. */
@@ -131,17 +152,17 @@ export class CardStore {
     return card ? toPublicCard(card) : undefined
   }
 
-  /** True while the pane's output has advanced < STALE_OUTPUT_BYTES since
-   *  creation. A negative delta (current below the baseline) means the
-   *  counter went backwards: this is a different pty wearing the same pane
-   *  id (the pane restarted), not a quiet one, so it can never be fresh. */
+  /** True while the card's pane is still the same live pty it was created on.
+   *  A negative delta (current below the baseline) means the counter went
+   *  backwards: a different pty wearing the same pane id (the pane restarted),
+   *  which can never be fresh. Output volume alone no longer decides this —
+   *  see RESTART_GRACE_BYTES. */
   isFresh(card: LookoutCard): boolean {
     const stored = this.findById(card.id)
     if (!stored) return false
     const current = this.deps.bytesOut(stored.paneId)
     if (current === null) return false
-    const delta = current - stored.bytesOutAtCreate
-    return delta >= 0 && delta < STALE_OUTPUT_BYTES
+    return current - stored.bytesOutAtCreate >= RESTART_GRACE_BYTES
   }
 
   markStale(cardId: string): void {
@@ -181,10 +202,11 @@ export class CardStore {
         // drop it rather than merely marking it stale.
         this.dropDeadCard(card.paneId)
         changed = true
-      } else if (delta >= STALE_OUTPUT_BYTES) {
-        card.state = 'stale'
-        changed = true
       }
+      // A live pane that is merely noisy is NOT stale. A card stays until the
+      // user answers or dismisses it, which is the whole point of raising one:
+      // an unanswered question does not stop mattering because the pane
+      // repainted its status line.
     }
 
     // A pane can exit after its last card was already dismissed (and so
