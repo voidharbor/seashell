@@ -56,6 +56,11 @@ export function App(): React.JSX.Element {
   const [zoomIndex, setZoomIndex] = useState(loadZoomIndex)
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
   const [railHeight, setRailHeight] = useState(loadRailHeight)
+  /** Lookout hidden by the user (Cmd+Shift+B). Runtime-only on purpose: cards
+   *  are process-lifetime anyway, and a hidden Lookout that survived a restart
+   *  would look like the feature had broken. The status-bar badge still
+   *  counts while hidden, so nothing waiting goes unannounced. */
+  const [lookoutHidden, setLookoutHidden] = useState(false)
   const railRef = useRef<HTMLElement | null>(null)
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
   const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial())
@@ -313,6 +318,10 @@ export function App(): React.JSX.Element {
       if (!tab) return
       dispatch({ type: 'tab.select', tabId: tab.id })
       dispatch({ type: 'pane.focus', paneId })
+      // Maximize it on arrival: the point of the button is to deal with this
+      // pane, and pane.zoom toggles, so only zoom when it is not already the
+      // zoomed one — otherwise arriving from a card would un-maximize it.
+      if (tab.zoomedPaneId !== paneId) dispatch({ type: 'pane.zoom', paneId })
     },
     [state.tabs]
   )
@@ -593,6 +602,9 @@ export function App(): React.JSX.Element {
         case 'layout.rebalance':
           dispatch({ type: 'layout.rebalance' })
           break
+        case 'lookout.toggle':
+          setLookoutHidden((h) => !h)
+          break
         case 'explorer.toggle':
           dispatch({ type: 'explorer.toggle' })
           break
@@ -847,7 +859,8 @@ export function App(): React.JSX.Element {
   const lookoutCount = lookoutBadgeCount(lookoutCards)
   /** Mirrors CardStack's own "is there anything to show" rule — a card for the
    *  focused pane is suppressed, so it does not make the rail appear. */
-  const railVisible = lookoutOpen || lookoutCards.some((c) => c.paneId !== suppressedPaneId)
+  const railVisible =
+    !lookoutHidden && (lookoutOpen || lookoutCards.some((c) => c.paneId !== suppressedPaneId))
 
   return (
     <div className="app">
@@ -975,6 +988,19 @@ export function App(): React.JSX.Element {
             so an empty rail costs the explorer no height at all. Cards stack
             here and stay until answered; see .lookout-rail in styles.css. */}
         <div className="sidebar-col">
+          {railVisible && (
+            <div className="lookout-head">
+              <span className="lookout-head__title">Lookout</span>
+              {lookoutCount > 0 && <span className="lookout-head__count">{lookoutCount}</span>}
+              <button
+                className="lookout-head__hide"
+                title="Hide Lookout (⇧⌘B)"
+                onClick={() => setLookoutHidden(true)}
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <aside
             className="lookout-rail"
             ref={railRef}

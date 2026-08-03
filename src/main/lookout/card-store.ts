@@ -55,6 +55,19 @@ export interface CardStoreDeps {
  */
 interface StoredCard extends LookoutCard {
   bytesOutAtCreate: number
+  /**
+   * Every phrasing the DETECTOR has reported for this pane while this card was
+   * the one on screen.
+   *
+   * A push card's question is written by the triage model; the detector's is
+   * scraped off the pane. The same underlying ask therefore has two different
+   * strings, and dismissal is remembered per (pane, question). Without this,
+   * denying a drafted card suppressed only the model's phrasing — the detector
+   * was still sitting on the unanswered question, and the moment the pane's
+   * card slot freed up it raised its own card for the ask the user had just
+   * answered. Recording the screen phrasing here lets dismiss() retire both.
+   */
+  screenQuestions: Set<string>
 }
 
 function toPublicCard(card: StoredCard): LookoutCard {
@@ -96,6 +109,10 @@ export class CardStore {
     if (existing && existing.state === 'active') {
       // A push outranks a detector unconditionally while active; a same-question
       // detector card is already showing exactly this, so there is nothing to do.
+      // Either way, record the screen's own phrasing of what is being asked, so
+      // dismissing the card that IS showing also retires this one — see
+      // StoredCard.screenQuestions.
+      existing.screenQuestions.add(question)
       if (existing.source === 'push') return true
       if (existing.question === question) return true
     }
@@ -110,6 +127,7 @@ export class CardStore {
       state: 'active',
       createdAt: this.deps.now(),
       bytesOutAtCreate,
+      screenQuestions: new Set(),
     })
     this.emitChange()
     return true
@@ -134,6 +152,7 @@ export class CardStore {
       state: 'active',
       createdAt: this.deps.now(),
       bytesOutAtCreate,
+      screenQuestions: new Set(),
     })
     this.emitChange()
     return true
@@ -142,7 +161,11 @@ export class CardStore {
   dismiss(cardId: string): void {
     const card = this.findById(cardId)
     if (!card) return
+    // Retire every phrasing of this ask, not just the one that happened to be
+    // on the card — otherwise the detector re-cards the question the user just
+    // answered as soon as the pane's slot is free.
     this.rememberDismissed(card.paneId, card.question)
+    for (const q of card.screenQuestions) this.rememberDismissed(card.paneId, q)
     this.byPane.delete(card.paneId)
     this.emitChange()
   }
@@ -172,9 +195,15 @@ export class CardStore {
     this.emitChange()
   }
 
+  /** Retires a card that has been ANSWERED (approveCard's success path). The
+   *  question is settled, so every phrasing of it is remembered as dismissed —
+   *  without that the detector, which is still looking at the pre-answer
+   *  screen, raises its own card for the ask that was just answered. */
   remove(cardId: string): void {
     const card = this.findById(cardId)
     if (!card) return
+    this.rememberDismissed(card.paneId, card.question)
+    for (const q of card.screenQuestions) this.rememberDismissed(card.paneId, q)
     this.byPane.delete(card.paneId)
     this.emitChange()
   }

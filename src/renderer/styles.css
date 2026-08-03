@@ -1393,6 +1393,51 @@ body.dragging .web__view {
 /* Cards stack here and stay until answered, so the rail is capped at half the
  * window and scrolls past that — five waiting panes must not push the file
  * tree off the bottom of the screen. */
+/* Titled section header, so Lookout reads as its own panel above the file tree
+ * rather than cards floating over it. Rendered only when the rail is. */
+.lookout-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: calc(6px * var(--ui-scale));
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  padding: calc(5px * var(--ui-scale)) calc(10px * var(--ui-scale));
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
+}
+
+.lookout-head__title {
+  color: var(--text-faint);
+  font-size: calc(11px * var(--ui-scale));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lookout-head__count {
+  padding: 0 calc(5px * var(--ui-scale));
+  border-radius: 999px;
+  background: var(--accent);
+  color: #000;
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 600;
+}
+
+.lookout-head__hide {
+  margin-left: auto;
+  padding: 0 calc(4px * var(--ui-scale));
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(11px * var(--ui-scale));
+}
+
+.lookout-head__hide:hover {
+  color: var(--text);
+}
+
 /* Cards stack here and stay until answered, so the rail scrolls rather than
  * growing without bound. Its height is user-set (see layout/rail.ts) and
  * applied inline; the grip below it trades height with the file tree. */
@@ -1461,15 +1506,21 @@ body.dragging .rail__grip {
   user-select: text;
 }
 
+/* The draft is meant to be READ before it is sent, and edited in place. It was
+ * one row tall, which turned any real reply into a two-line peephole with a
+ * scrollbar. Several rows by default, and draggable taller from the corner —
+ * `resize: vertical` only, so it can never push out past the rail's width. */
 .card__draft {
   width: 100%;
+  min-height: calc(72px * var(--ui-scale));
   padding: calc(5px * var(--ui-scale)) calc(8px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
   border-radius: 4px;
   background: var(--surface-sunken);
   color: var(--text);
   font: inherit;
-  resize: none;
+  line-height: 1.45;
+  resize: vertical;
 }
 
 .card__draft:focus {

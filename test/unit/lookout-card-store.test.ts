@@ -59,6 +59,40 @@ describe('CardStore', () => {
     store.sweep()
     expect(store.get(card.id)?.state).toBe('active')
   })
+  // The push card's question is written by the triage model; the detector's is
+  // scraped off the pane. Two strings, one ask. Denying the drafted card used
+  // to retire only the model's phrasing, so the detector raised its own card
+  // for the same question minutes later, once the pane's slot was free.
+  it('denying a drafted card also retires the screen phrasing of the same ask', () => {
+    const { store } = makeStore()
+    store.createFromPush('p1', 'Keep probing for the actual answer?', 'yeah, keep asking')
+    // The detector is looking at the same unanswered screen while the push card
+    // shows; it defers, but its phrasing is recorded.
+    expect(store.createFromDetector('p1', 'Want me to keep asking?', 'input')).toBe(true)
+    expect(store.cards()).toHaveLength(1)
+    expect(store.cards()[0]?.source).toBe('push')
+
+    store.dismiss(store.cards()[0]!.id)
+    expect(store.cards()).toHaveLength(0)
+
+    // The screen has not changed yet — the detector must not re-card it.
+    expect(store.createFromDetector('p1', 'Want me to keep asking?', 'input')).toBe(false)
+    expect(store.cards()).toHaveLength(0)
+  })
+  it('approving a card also retires the screen phrasing, so an answered ask never re-cards', () => {
+    const { store } = makeStore()
+    store.createFromPush('p1', 'Ship it?', 'yes')
+    store.createFromDetector('p1', 'Ready to ship?', 'input')
+    store.remove(store.cards()[0]!.id) // approveCard's success path
+    expect(store.createFromDetector('p1', 'Ready to ship?', 'input')).toBe(false)
+  })
+  it('a genuinely new question still cards after a dismissal', () => {
+    const { store } = makeStore()
+    store.createFromPush('p1', 'Ship it?', 'yes')
+    store.createFromDetector('p1', 'Ready to ship?', 'input')
+    store.dismiss(store.cards()[0]!.id)
+    expect(store.createFromDetector('p1', 'Delete the branch?', 'input')).toBe(true)
+  })
   it('a card is not fresh when its pane restarted and the byte counter dropped below the baseline', () => {
     // A pane restart reuses the pane id and resets the pty's bytesOut
     // counter to 0, so a card created before the restart sees a NEGATIVE

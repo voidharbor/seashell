@@ -150,7 +150,7 @@ function CardItem(props: CardItemProps): React.JSX.Element {
     draftNode = editable ? (
       <textarea
         className="card__draft"
-        rows={1}
+        rows={5}
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
@@ -166,6 +166,12 @@ function CardItem(props: CardItemProps): React.JSX.Element {
           </button>
           <button className="btn" onClick={dismiss}>
             Deny ✕
+          </button>
+          {/* A drafted card is the one most likely to need a look at the pane
+              before answering — approving blind is exactly what it should not
+              encourage. Never disabled: going to a pane sends nothing. */}
+          <button className="btn" onClick={gotoPane}>
+            Go to pane
           </button>
         </>
       )
