@@ -18,21 +18,21 @@ afterEach(() => {
 describe('CardStack', () => {
   it('approve sends the edited textarea text', () => {
     const onAction = vi.fn()
-    render(<CardStack cards={[card]} suppressedPaneId={null} pluginInstalled open={false}
-      screenMode={() => 'input'} onAction={onAction} onGotoPane={() => {}} onClose={() => {}} />)
+    render(<CardStack cards={[card]} suppressedPaneId={null} paneName={(id) => `2 · ${id}`} pluginInstalled
+      screenMode={() => 'input'} onAction={onAction} onGotoPane={() => {}} />)
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'yes ship it tonight' } })
     fireEvent.click(screen.getByText(/approve/i))
     expect(onAction).toHaveBeenCalledWith({ cardId: 'card-1', action: 'approve', text: 'yes ship it tonight' })
   })
   it('suppresses the focused pane but keeps others', () => {
-    render(<CardStack cards={[card]} suppressedPaneId="p1" pluginInstalled open={false}
-      screenMode={() => 'input'} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
+    render(<CardStack cards={[card]} suppressedPaneId="p1" paneName={(id) => `2 · ${id}`} pluginInstalled
+      screenMode={() => 'input'} onAction={() => {}} onGotoPane={() => {}} />)
     expect(screen.queryByText(/ship the release/)).toBeNull()
   })
   it('stale cards disable their buttons', () => {
     const onAction = vi.fn()
-    render(<CardStack cards={[{ ...card, state: 'stale' as const }]} suppressedPaneId={null}
-      pluginInstalled open={false} screenMode={() => 'input'} onAction={onAction} onGotoPane={() => {}} onClose={() => {}} />)
+    render(<CardStack cards={[{ ...card, state: 'stale' as const }]} suppressedPaneId={null} paneName={(id) => `2 · ${id}`}
+      pluginInstalled  screenMode={() => 'input'} onAction={onAction} onGotoPane={() => {}} />)
     expect(screen.getByText(/session moved on/i)).toBeTruthy()
     expect((screen.getByText(/approve/i) as HTMLButtonElement).disabled).toBe(true)
     // Only send affordances are disabled — dismiss never sends, so a stale
@@ -43,28 +43,33 @@ describe('CardStack', () => {
     expect(onAction).toHaveBeenCalledWith({ cardId: 'card-1', action: 'dismiss' })
   })
   it('empty open stack shows install commands when the plugin is absent', () => {
-    render(<CardStack cards={[]} suppressedPaneId={null} pluginInstalled={false} open
-      screenMode={() => 'input'} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
+    render(<CardStack cards={[]} suppressedPaneId={null} paneName={(id) => `2 · ${id}`} pluginInstalled={false}
+      screenMode={() => 'input'} onAction={() => {}} onGotoPane={() => {}} />)
     expect(screen.getByText(/plugin install c-assistant@voidharbor/)).toBeTruthy()
   })
   it('detector cards send canned lowercase words', () => {
     const onAction = vi.fn()
     render(<CardStack cards={[{ ...card, source: 'detector' as const, draft: null }]}
-      suppressedPaneId={null} pluginInstalled open={false} screenMode={() => 'input'}
-      onAction={onAction} onGotoPane={() => {}} onClose={() => {}} />)
+      suppressedPaneId={null} paneName={(id) => `2 · ${id}`} pluginInstalled  screenMode={() => 'input'}
+      onAction={onAction} onGotoPane={() => {}} />)
     fireEvent.click(screen.getByText('Continue'))
     expect(onAction).toHaveBeenCalledWith({ cardId: 'card-1', action: 'approve', text: 'continue' })
   })
   it('selector screens get no send buttons at all', () => {
-    render(<CardStack cards={[card]} suppressedPaneId={null} pluginInstalled open={false}
-      screenMode={() => 'selector'} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
+    render(<CardStack cards={[card]} suppressedPaneId={null} paneName={(id) => `2 · ${id}`} pluginInstalled
+      screenMode={() => 'selector'} onAction={() => {}} onGotoPane={() => {}} />)
     expect(screen.queryByText(/approve/i)).toBeNull()
     expect(screen.queryByText('Continue')).toBeNull()
     expect(screen.getByText(/showing a picker/i)).toBeTruthy()
   })
-  it('an unreadable pane is treated like a selector', () => {
-    render(<CardStack cards={[card]} suppressedPaneId={null} pluginInstalled open={false}
-      screenMode={() => null} onAction={() => {}} onGotoPane={() => {}} onClose={() => {}} />)
-    expect(screen.queryByText(/approve/i)).toBeNull()
+  // Regression: null means "could not parse the pane", NOT "a picker is
+  // showing". Conflating them printed a picker hint on cards whose pane sat at
+  // an ordinary input box and took their send buttons away. Main's click-time
+  // read is the real guard.
+  it('an unreadable pane keeps its send buttons', () => {
+    render(<CardStack cards={[card]} suppressedPaneId={null} paneName={(id) => `2 · ${id}`} pluginInstalled
+      screenMode={() => null} onAction={() => {}} onGotoPane={() => {}} />)
+    expect(screen.queryByText(/approve/i)).not.toBeNull()
+    expect(screen.queryByText(/showing a picker/i)).toBeNull()
   })
 })

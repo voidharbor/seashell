@@ -26,6 +26,12 @@
  *  SELECTOR_SEARCH_WINDOW. */
 const CURSOR_OPTION_WINDOW = 15
 
+/** How many trailing segments count as "the screen showing right now". ink
+ *  repaints its whole widget, so the current frame is always at the bottom of
+ *  the tail; a generous screen's worth keeps a real picker in scope while
+ *  putting an answered one out of it. */
+const CURRENT_SCREEN_SEGMENTS = 60
+
 /** Input-box chrome: a border edge, the `│ >` prompt row, the idle footer, or
  *  the borderless `❯` prompt row — never a `❯ N.` option row, never a
  *  `❯ /cmd` slash echo (both also start with `❯`). */
@@ -70,6 +76,17 @@ export function screenKindOf(rawTail: string): 'input' | 'selector' | null {
     // A footer only counts with the cursor row nearby — a transcript line
     // merely quoting "Enter to confirm" has no `❯ N.` row above it.
     if (SELECTOR_FOOTER_RE.test(seg) && hasCursorOptionAbove(segments, i)) lastSelector = i
+  }
+
+  // A picker refuses a send, so the evidence for one has to be CURRENT. The
+  // tail is a fixed byte budget of history (see TAIL_MAX_CHARS), which can hold
+  // a picker the user answered a while ago; if the pane then goes quiet, no
+  // newer input row arrives to outrank it and the stale frame refuses writes
+  // into a pane that is plainly sitting at its input box. A picture of the
+  // screen ends at the bottom of the tail, so selector evidence further back
+  // than a screen's worth of lines is history, not what is showing.
+  if (lastSelector !== -1 && segments.length - lastSelector > CURRENT_SCREEN_SEGMENTS) {
+    lastSelector = -1
   }
 
   if (lastInput === -1 && lastSelector === -1) return null

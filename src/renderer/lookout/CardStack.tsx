@@ -6,6 +6,10 @@ export interface CardStackProps {
   /** Pane ids the stack must not show cards for (the focused pane). */
   suppressedPaneId: string | null
   pluginInstalled: boolean
+  /** What the pane's own header shows — its claude session title or the user's
+   *  custom label, numbered as in the pane header. The raw pane id is useless
+   *  at a glance once several agents are running. */
+  paneName(paneId: string): string
   /** Live screen mode of a pane, re-derived from its xterm buffer via
    *  extractQuestion at render and click time. 'selector' means typed text +
    *  Enter would blind-confirm the highlighted option — no send buttons. */
@@ -36,6 +40,7 @@ export function CardStack(props: CardStackProps): React.JSX.Element {
         <CardItem
           key={card.id}
           card={card}
+          paneName={props.paneName}
           screenMode={props.screenMode}
           onAction={props.onAction}
           onGotoPane={props.onGotoPane}
@@ -63,6 +68,7 @@ export function CardStack(props: CardStackProps): React.JSX.Element {
 
 interface CardItemProps {
   card: LookoutCard
+  paneName(paneId: string): string
   screenMode(paneId: string): 'input' | 'selector' | null
   onAction(req: LookoutActionRequest): void
   onGotoPane(paneId: string): void
@@ -116,9 +122,26 @@ function gotoPaneAndDismiss(gotoPane: () => void, dismiss: () => void): React.Re
 function CardItem(props: CardItemProps): React.JSX.Element {
   const { card } = props
   const stale = card.state === 'stale'
-  // A card born from a selector screen is look-only for life, whatever the
-  // live read says now — main refuses its approve too (ESELECTOR).
-  const interactive = card.kind !== 'selector' && props.screenMode(card.paneId) === 'input'
+  const mode = props.screenMode(card.paneId)
+  /**
+   * A card born from a selector screen is look-only for life, whatever the live
+   * read says now — main refuses its approve too (ESELECTOR).
+   *
+   * Only a POSITIVE 'selector' read takes the buttons away. `null` means the
+   * renderer could not parse the pane, which is not the same claim at all, and
+   * treating the two alike is what put "it's showing a picker" on cards whose
+   * pane was sitting at an ordinary input box. Extraction returns null for
+   * plenty of ordinary reasons — chrome it does not recognise, a question that
+   * scrolled past its window — and the user was told, wrongly and
+   * unanswerably, to go deal with a picker that was not there.
+   *
+   * Sending on an unreadable screen is safe because the renderer was never the
+   * guard: approveCard re-reads the screen from main's own pty stream at click
+   * time and refuses a real picker there (ESELECTOR). Per screen-kind.ts, that
+   * check "can only block a send, never permit one the renderer would have
+   * blocked".
+   */
+  const interactive = card.kind !== 'selector' && mode !== 'selector'
   const hasDraft = card.draft !== null
   // A stale card keeps its normal button shape (send buttons disabled)
   // instead of collapsing to the look-only fallback — see the doc above.
@@ -128,7 +151,11 @@ function CardItem(props: CardItemProps): React.JSX.Element {
   const [text, setText] = useState(card.draft ?? '')
 
   const send = (value: string): void => {
-    if (card.kind === 'selector' || props.screenMode(card.paneId) !== 'input') return
+    // Same rule as `interactive`: refuse on a positive picker read, not on an
+    // unreadable one. Re-derived here rather than reusing the render-time
+    // value, because the screen behind a rendered card can change without
+    // anything about the card's own props changing.
+    if (card.kind === 'selector' || props.screenMode(card.paneId) === 'selector') return
     props.onAction({ cardId: card.id, action: 'approve', text: value })
   }
   const dismiss = (): void => props.onAction({ cardId: card.id, action: 'dismiss' })
@@ -207,7 +234,9 @@ function CardItem(props: CardItemProps): React.JSX.Element {
 
   return (
     <div className={'card' + (stale ? ' card--stale' : '')}>
-      <div className="card__pane">{card.paneId}</div>
+      <div className="card__pane" title={card.paneId}>
+        {props.paneName(card.paneId)}
+      </div>
       <div className="card__question">{card.question}</div>
       {draftNode}
       {hintNode}

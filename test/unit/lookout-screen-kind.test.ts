@@ -60,6 +60,27 @@ describe('screenKindOf', () => {
     expect(screenKindOf('')).toBeNull()
   })
 
+  /**
+   * The tail is a fixed byte budget of history, so a picker the user answered a
+   * while ago can still be sitting in it. If the pane then goes quiet, no newer
+   * input row arrives to outrank that frame and every send into a pane plainly
+   * showing its input box gets refused with ESELECTOR. Selector evidence older
+   * than the current screen is history.
+   */
+  it('a picker answered long ago does not refuse writes to a live input box', () => {
+    const answeredPicker =
+      'Do you trust this folder?\r\n❯ 1. Yes, I trust it\r\n  2. No, exit\r\nEnter to confirm · Esc to cancel\r\n'
+    // A screen's worth of ordinary output since, ending at the input box.
+    const since = Array.from({ length: 70 }, (_, i) => `⏺ line ${i} of the answer`).join('\r\n')
+    expect(screenKindOf(answeredPicker + since + '\r\n' + INPUT_BOX_PAINT)).toBe('input')
+  })
+
+  it('a picker showing right now still refuses', () => {
+    const live =
+      '⏺ Working on it.\r\n\r\nDo you trust this folder?\r\n❯ 1. Yes, I trust it\r\n  2. No, exit\r\nEnter to confirm · Esc to cancel\r\n'
+    expect(screenKindOf(live)).toBe('selector')
+  })
+
   it('a transcript line merely quoting the footer is not a selector', () => {
     // No option rows anywhere near the quoted footer text — a real selector
     // always paints its numbered options directly above the confirm hint.

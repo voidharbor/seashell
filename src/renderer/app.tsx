@@ -33,7 +33,7 @@ import type { LookoutActionRequest, LookoutCard, Project } from '../shared/ipc.j
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 import { dirtyPreviewPanes } from './viewer/FilePreview.js'
 import { extractQuestion } from './lookout/extract.js'
-import { planDetections } from './lookout/detect.js'
+import { changedQuestions, planDetections } from './lookout/detect.js'
 import { readPaneTail } from './lookout/tail.js'
 import { lookoutBadgeCount } from './lookout/badge.js'
 import { CardStack } from './lookout/CardStack.js'
@@ -266,12 +266,14 @@ export function App(): React.JSX.Element {
     return off
   }, [])
 
-  const lookoutReported = useRef<Set<string>>(new Set())
+  /** paneId -> the last question actually reported for it, so a re-read that
+   *  found the same question costs nothing and a new one cards immediately. */
+  const lookoutReported = useRef<Map<string, string>>(new Map())
   useEffect(() => {
     if (!settings.lookoutCards) {
-      // Disabled means unwatched: drop the reported memory so re-enabling
-      // re-arms every pane from scratch instead of trusting stale bookkeeping.
-      lookoutReported.current = new Set()
+      // Disabled means unwatched: drop the last-sent memory so re-enabling
+      // reports every pane from scratch instead of trusting stale bookkeeping.
+      lookoutReported.current = new Map()
       return
     }
     const panes = state.tabs.flatMap((t) =>
@@ -283,20 +285,21 @@ export function App(): React.JSX.Element {
           focused: t.id === state.activeTabId && t.focusedPaneId === p.id,
         }))
     )
-    const plan = planDetections(panes, lookoutReported.current)
-    lookoutReported.current = plan.nextReported
-    for (const paneId of plan.toScan) {
+    // Read every waiting pane every pass; only the readings that actually
+    // changed cross the IPC boundary. See detect.ts for why re-reading is the
+    // cheap half and re-reporting was the expensive half.
+    const readings = []
+    for (const paneId of planDetections(panes).toScan) {
       const lines = readPaneTail(paneId)
       if (!lines) continue
       const extraction = extractQuestion(lines)
       if (extraction) {
-        window.seashell.lookout.detected({
-          paneId,
-          question: extraction.question,
-          kind: extraction.kind,
-        })
+        readings.push({ paneId, question: extraction.question, kind: extraction.kind })
       }
     }
+    const { toSend, nextSent } = changedQuestions(readings, lookoutReported.current)
+    lookoutReported.current = nextSent
+    for (const reading of toSend) window.seashell.lookout.detected(reading)
   }, [settings.lookoutCards, state.tabs, state.activeTabId])
 
   useEffect(() => {
@@ -310,6 +313,30 @@ export function App(): React.JSX.Element {
     const lines = readPaneTail(paneId)
     return lines ? (extractQuestion(lines)?.kind ?? null) : null
   }, [])
+
+  /**
+   * What a card should call a pane: the same "N · label" the pane's own header
+   * shows, so a card is identifiable at a glance with several agents running.
+   * `label` is already whatever is most specific — the user's custom name when
+   * they set one, otherwise the claude session title. Falls back to the raw id
+   * only when the pane is gone, which is the one case where the id is the only
+   * true thing left to say.
+   */
+  const lookoutPaneName = useCallback(
+    (paneId: string): string => {
+      for (const tab of state.tabs) {
+        const order = dfsPaneOrder(tab.tree)
+        const index = order.indexOf(paneId)
+        const pane = tab.panes[paneId]
+        if (!pane) continue
+        const name = pane.label.trim()
+        const numbered = index >= 0 ? `${index + 1} · ` : ''
+        return name ? `${numbered}${name}` : paneId
+      }
+      return paneId
+    },
+    [state.tabs]
+  )
 
   const lookoutGotoPane = useCallback(
     (paneId: string) => {
@@ -1015,6 +1042,7 @@ export function App(): React.JSX.Element {
               cards={lookoutCards}
               suppressedPaneId={suppressedPaneId}
               pluginInstalled={lookoutPlugin}
+              paneName={lookoutPaneName}
               screenMode={lookoutScreenMode}
               onAction={lookoutOnAction}
               onGotoPane={lookoutGotoPane}
