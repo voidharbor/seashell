@@ -1393,14 +1393,33 @@ body.dragging .web__view {
 /* Cards stack here and stay until answered, so the rail is capped at half the
  * window and scrolls past that — five waiting panes must not push the file
  * tree off the bottom of the screen. */
+/* Cards stack here and stay until answered, so the rail scrolls rather than
+ * growing without bound. Its height is user-set (see layout/rail.ts) and
+ * applied inline; the grip below it trades height with the file tree. */
 .lookout-rail {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
-  max-height: 50vh;
-  border-bottom: 1px solid var(--chrome-line);
   overflow-y: auto;
   padding: calc(12px * var(--ui-scale));
+}
+
+/* The horizontal twin of .sidebar__grip. Same 1px line, same invisible
+ * grab margin around it, same drag affordance — one axis over. */
+.rail__grip {
+  height: 6px;
+  margin-top: -3px;
+  margin-bottom: -2px;
+  flex: none;
+  z-index: 6;
+  cursor: row-resize;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.rail__grip:hover,
+body.dragging .rail__grip {
+  background: var(--accent);
 }
 
 .lookout-rail:empty {

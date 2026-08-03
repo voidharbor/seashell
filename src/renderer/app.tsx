@@ -23,6 +23,7 @@ import {
   saveSidebarWidth,
   widthFromDrag,
 } from './layout/sidebar.js'
+import { RAIL_DEFAULT, heightFromDrag, loadRailHeight, saveRailHeight } from './layout/rail.js'
 import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
 import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
@@ -54,6 +55,8 @@ export function App(): React.JSX.Element {
 
   const [zoomIndex, setZoomIndex] = useState(loadZoomIndex)
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
+  const [railHeight, setRailHeight] = useState(loadRailHeight)
+  const railRef = useRef<HTMLElement | null>(null)
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
   const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial())
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -152,6 +155,35 @@ export function App(): React.JSX.Element {
    * is pinned to the window's left edge. It is divided back out by the current
    * zoom scale before storing, so width and zoom stay independent settings.
    */
+  /** Vertical twin of startSidebarDrag: trades height between the card rail
+   *  and the file explorer below it. The rail's own top is measured at drag
+   *  start rather than assumed, so the tab bar's height is never hardcoded. */
+  const startRailDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const scale = levelAt(zoomIndex).ui
+      const railTop = railRef.current?.getBoundingClientRect().top ?? 0
+      let latest = railHeight
+
+      const move = (ev: MouseEvent): void => {
+        latest = heightFromDrag(ev.clientY, railTop, scale)
+        setRailHeight(latest)
+      }
+      const up = (): void => {
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+        document.body.style.cursor = ''
+        document.body.classList.remove('dragging')
+        saveRailHeight(latest)
+      }
+      document.body.style.cursor = 'row-resize'
+      document.body.classList.add('dragging')
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    },
+    [railHeight, zoomIndex]
+  )
+
   const startSidebarDrag = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
@@ -813,6 +845,9 @@ export function App(): React.JSX.Element {
   // pane, so it does not move just because focus does.
   const suppressedPaneId = activeTab?.focusedPaneId ?? null
   const lookoutCount = lookoutBadgeCount(lookoutCards)
+  /** Mirrors CardStack's own "is there anything to show" rule — a card for the
+   *  focused pane is suppressed, so it does not make the rail appear. */
+  const railVisible = lookoutOpen || lookoutCards.some((c) => c.paneId !== suppressedPaneId)
 
   return (
     <div className="app">
@@ -940,7 +975,11 @@ export function App(): React.JSX.Element {
             so an empty rail costs the explorer no height at all. Cards stack
             here and stay until answered; see .lookout-rail in styles.css. */}
         <div className="sidebar-col">
-          <aside className="lookout-rail">
+          <aside
+            className="lookout-rail"
+            ref={railRef}
+            style={{ height: `calc(${railHeight}px * var(--ui-scale))` }}
+          >
             <CardStack
               cards={lookoutCards}
               suppressedPaneId={suppressedPaneId}
@@ -952,6 +991,19 @@ export function App(): React.JSX.Element {
               onClose={() => setLookoutOpen(false)}
             />
           </aside>
+          {/* Only draggable when there is something to drag: with no cards the
+              rail is display:none and the grip would resize an invisible box. */}
+          {railVisible && state.sidebarVisible && state.explorerRoot && (
+            <div
+              className="rail__grip"
+              title="Drag to resize · double-click to reset"
+              onMouseDown={startRailDrag}
+              onDoubleClick={() => {
+                setRailHeight(RAIL_DEFAULT)
+                saveRailHeight(RAIL_DEFAULT)
+              }}
+            />
+          )}
           {state.sidebarVisible && state.explorerRoot && (
             <Explorer
               root={state.explorerRoot}
