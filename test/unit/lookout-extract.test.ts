@@ -60,6 +60,123 @@ describe('extractQuestion', () => {
     expect(r?.question).toContain('options:')
     expect(r?.question).toContain('No, exit')
   })
+  it('classifies a tall selector whose cursor row sits far above the footer', () => {
+    // AskUserQuestion with per-option descriptions wrapped in a narrow pane:
+    // the ❯ cursor row is 17 lines above the confirm footer. A search window
+    // smaller than a real widget reads this as "no selector" — and a card's
+    // send gate treats an unreadable screen as sendable, so the miss PERMITS
+    // typing into a live picker rather than blocking it.
+    const tall = [
+      'Which database migration strategy should I use?',
+      '❯ 1. Expand and contract',
+      '     Add the new column, dual-write from the app, backfill',
+      '     the rows in batches overnight, then drop the old',
+      '     column in a follow-up release next week',
+      '  2. Blue-green schema swap',
+      '     Clone the table with the new schema, keep it in sync',
+      '     with triggers, and cut reads over atomically behind',
+      '     the connection pooler once the copies converge',
+      '  3. In-place ALTER with downtime',
+      '     Take the maintenance window tonight and run the ALTER',
+      '     directly; simplest possible plan, but the table lock',
+      '     blocks writes for the whole duration',
+      '  4. Defer the migration',
+      '     Keep writing to the current schema for now and come',
+      '     back to this after the read-path refactor lands and',
+      '     the traffic picture is calmer',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ]
+    const r = extractQuestion(tall)
+    expect(r?.kind).toBe('selector')
+    expect(r?.question).toContain('migration strategy')
+    expect(r?.question).toContain('Expand and contract')
+  })
+  /**
+   * The options belong to the WIDGET, not to the transcript above it.
+   *
+   * Option rows were collected as "every `N.` line between the top of the
+   * search window and the footer", and claude renders an ordinary numbered
+   * list in a message exactly that way. So a plan the agent had just printed
+   * — "1. Add the tenant id to the cache key / 2. Backfill..." — was scooped
+   * up as the picker's choices, and because the preamble walks up from the
+   * FIRST option found, the picker's real question (which sits below that
+   * list) could never be reached. The card then named a question the user was
+   * not being asked and offered options that were not the choices.
+   *
+   * This also guards the interaction with the search window: the window has to
+   * stay a full screen tall so a tall picker is never missed (missing one lets
+   * a send through, which is the direction that must never fail), and widening
+   * it is precisely what lets a list further up the transcript into range.
+   * Anchoring on the cursor row is what makes the wide window safe.
+   */
+  it('quotes the picker’s own question, not a numbered list further up the transcript', () => {
+    const tail = [
+      '⏺ Here is the plan:',
+      '',
+      '  1. Add the tenant id to the cache key',
+      '  2. Backfill the existing rows',
+      '  3. Drop the legacy column',
+      '',
+      ...Array.from({ length: 14 }, (_, i) => `⏺ Read(src/cache/key${i}.ts)`),
+      '',
+      'Ready to start. Which step first?',
+      '❯ 1. Cache key',
+      '  2. Backfill',
+      '  3. Drop column',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ]
+    const r = extractQuestion(tail)
+    expect(r?.kind).toBe('selector')
+    expect(r?.question).toContain('Which step first')
+    expect(r?.question).not.toContain('Backfill the existing rows')
+    expect(r?.question).not.toContain('tenant id')
+  })
+
+  /**
+   * NOT EVERY PICKER IS NUMBERED, and the unnumbered ones were being read as
+   * the input box.
+   *
+   * The borderless-input fallback accepts any `❯` row that is not `❯ N.` —
+   * the numbered lookahead was the ONLY thing separating "selection cursor"
+   * from "input prompt". claude draws plenty of pickers whose rows are just
+   * pointer + label (its dialogs render `isSelected ? pointer : " "` with no
+   * index; the spend-limit dialog "What do you want to do?" is one), and those
+   * dialogs have no border either, so nothing else distinguished them.
+   *
+   * The consequence was the worst one available: kind 'input' means the card
+   * gets live send buttons, and a send is text followed by a lone Enter —
+   * which on a picker confirms whatever option is highlighted. The confirm
+   * footer sitting BELOW the row is what gives it away: claude's input box is
+   * the bottom-most chrome on its screen and never has one under it.
+   */
+  it('an unnumbered picker is not read as the input box', () => {
+    const lines = [
+      '⏺ Checking your usage limits.',
+      '',
+      'You have hit the weekly limit. How do you want to continue?',
+      '❯ Switch to a smaller model for the rest of the week',
+      '  Buy extra usage credits now',
+      '  Stop here and wait for the reset',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ]
+    const r = extractQuestion(lines)
+    expect(r?.kind).toBe('selector')
+    expect(r?.question).toContain('How do you want to continue')
+    expect(r?.question).toContain('Switch to a smaller model')
+  })
+
+  it('an ordinary borderless prompt is still an input box', () => {
+    // The guard keys off a confirm footer BELOW the row, so the borderless
+    // prompt — the shape the unnumbered picker was being confused with — must
+    // be entirely unaffected when no footer follows it.
+    const r = extractQuestion(['⏺ Two paths here. Which one do you want?', '', ...RULE_BOX])
+    expect(r?.kind).toBe('input')
+    expect(r?.question).toContain('Which one do you want')
+  })
+
   it('input box wins when both signatures are present', () => {
     const r = extractQuestion([...SELECTOR, '', ...BOX])
     expect(r?.kind).toBe('input')

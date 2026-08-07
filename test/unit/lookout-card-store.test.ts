@@ -36,6 +36,126 @@ describe('CardStore', () => {
     expect(store.cards()[0]?.source).toBe('push')
     expect(store.cards()[0]?.draft).toBe('yes go')
   })
+  /**
+   * Turning Lookout off has to take the cards off the screen, not merely stop
+   * new ones arriving. "Disable" reached for while three cards are sitting
+   * there means "make these go away" — a switch that leaves them showing
+   * looks broken, and the whole point of the one-click toggle on the rail is
+   * to be the fast way out when cards are in the way.
+   */
+  it('disabling clears the cards that are already showing', () => {
+    const { store, emitted } = makeStore({
+      bytes: new Map<string, number | null>([['p1', 1000], ['p2', 500]]),
+    })
+    store.createFromDetector('p1', 'deploy?', 'input')
+    store.createFromPush('p2', 'ship it?', 'yes')
+    expect(store.cards()).toHaveLength(2)
+
+    const before = emitted.length
+    store.setEnabled(false)
+    expect(store.cards()).toHaveLength(0)
+    // The renderer only ever learns about cards from an emit — clearing the
+    // map without one would leave the rail showing cards the store has
+    // already forgotten, and clicking one would act on a card that is gone.
+    expect(emitted.length).toBe(before + 1)
+    expect(emitted[emitted.length - 1]).toBe(0)
+  })
+
+  /**
+   * Clearing on disable is an eviction, not an answer and not a refusal. The
+   * user turned the feature off; they did not decide anything about the
+   * question. So turning it back on must show whatever is still pending,
+   * rather than treating every cleared ask as dismissed forever.
+   */
+  it('a card cleared by disabling is not remembered as dismissed', () => {
+    const { store } = makeStore()
+    store.createFromDetector('p1', 'deploy?', 'input')
+    store.setEnabled(false)
+    expect(store.createFromDetector('p1', 'deploy?', 'input')).toBe(false) // still off
+    store.setEnabled(true)
+    expect(store.createFromDetector('p1', 'deploy?', 'input')).toBe(true)
+  })
+
+  it('disabling an already-empty Lookout emits nothing', () => {
+    const { store, emitted } = makeStore()
+    store.setEnabled(false)
+    expect(emitted.length).toBe(0)
+  })
+
+  /**
+   * A stale card whose pane then dies has to go, like any other dead card.
+   *
+   * The sweep skipped every card that was not `active`, which read as "only
+   * active cards can go stale" — true, but the same loop is also the only
+   * thing that drops cards whose pane has exited. So a card that went stale
+   * first (a failed foreground check, say) and whose pane then closed stayed
+   * in the rail for the life of the window: unanswerable, un-sweepable, and
+   * holding the sweep timer on — that timer is armed only while cards exist,
+   * so a card that can never be removed means it never stops ticking either.
+   */
+  it('drops a stale card once its pane exits', () => {
+    const { store, bytes } = makeStore()
+    store.createFromDetector('p1', 'deploy?', 'input')
+    const card = store.cards()[0]!
+    store.markStale(card.id)
+    expect(store.cards()).toHaveLength(1)
+
+    bytes.set('p1', null) // the pane exits
+    store.sweep()
+    expect(store.cards()).toHaveLength(0)
+  })
+
+  it('drops a stale card when its pane restarts under the same id', () => {
+    const { store, bytes } = makeStore()
+    store.createFromDetector('p1', 'deploy?', 'input')
+    store.markStale(store.cards()[0]!.id)
+    bytes.set('p1', 5) // counter went backwards: a different pty, same pane id
+    store.sweep()
+    expect(store.cards()).toHaveLength(0)
+  })
+
+  /**
+   * A dismissal belongs to the session it was made in, and must not outlive it.
+   *
+   * The only thing that forgot dismissals for a dead pane lived in `sweep()`,
+   * and the sweep timer is armed only while cards exist. So the ordinary
+   * sequence — dismiss the last card, pane goes quiet, shell exits, pane
+   * restarted — never ran it: there were no cards, so nothing swept, and once
+   * the pane is live again its byte counter is non-null so no later sweep
+   * collects it either. The brand-new claude session in that pane then hit the
+   * same permission prompt (identical wording; extraction is deterministic)
+   * and was silently suppressed. A genuinely blocked pane, no card, forever.
+   */
+  it('forgets a dismissal when the pane restarts under the same id', () => {
+    const { store, bytes } = makeStore()
+    store.createFromDetector('p1', 'Do you want to proceed?', 'input')
+    store.dismiss(store.cards()[0]!.id)
+    expect(store.createFromDetector('p1', 'Do you want to proceed?', 'input')).toBe(false)
+
+    // The shell exits and the pane is restarted: a fresh pty under the same
+    // pane id, whose output counter starts again from zero.
+    bytes.set('p1', 0)
+    expect(store.createFromDetector('p1', 'Do you want to proceed?', 'input')).toBe(true)
+  })
+
+  it('still suppresses a repeat within the same session', () => {
+    const { store, bytes } = makeStore()
+    store.createFromDetector('p1', 'Do you want to proceed?', 'input')
+    store.dismiss(store.cards()[0]!.id)
+    bytes.set('p1', 9000) // same session, just noisier
+    expect(store.createFromDetector('p1', 'Do you want to proceed?', 'input')).toBe(false)
+  })
+
+  it('a dismissal does not survive its pane exiting for good', () => {
+    const { store, bytes } = makeStore()
+    store.createFromDetector('p1', 'Do you want to proceed?', 'input')
+    store.dismiss(store.cards()[0]!.id)
+    bytes.set('p1', null) // exited; no sweep runs, because no cards exist
+    // A pane id handed to something live again must start clean.
+    bytes.set('p1', 500)
+    expect(store.createFromDetector('p1', 'Do you want to proceed?', 'input')).toBe(true)
+  })
+
   it('a dismissed question does not re-card; a new question does', () => {
     const { store } = makeStore()
     store.createFromDetector('p1', 'deploy?', 'input')
@@ -85,6 +205,37 @@ describe('CardStore', () => {
     store.createFromDetector('p1', 'Ready to ship?', 'input')
     store.remove(store.cards()[0]!.id) // approveCard's success path
     expect(store.createFromDetector('p1', 'Ready to ship?', 'input')).toBe(false)
+  })
+  // A push outranks the detector only while the screen still shows the ask it
+  // was pushed for. The FIRST screen phrasing seen under a push card is that
+  // same ask as the detector scrapes it (two strings, one ask — unavoidable).
+  // But a SECOND, different phrasing means the screen's question itself
+  // changed: the user answered in the pane and claude moved on. Keeping the
+  // push card then leaves its stale draft one click from landing in a question
+  // it never answered — byte staleness used to bound that window; nothing
+  // else does.
+  it('a push card yields when the screen provably moves to a different ask', () => {
+    const { store } = makeStore()
+    store.createFromPush('p1', 'Ship the release?', 'yes, ship it')
+    // Same ask, scraped off the screen — the push card rightly survives.
+    expect(store.createFromDetector('p1', 'Ready to ship the release?', 'input')).toBe(true)
+    expect(store.cards()[0]).toMatchObject({ source: 'push', question: 'Ship the release?' })
+
+    // The screen now shows a DIFFERENT question: the ask under the card is gone.
+    expect(store.createFromDetector('p1', 'Delete the old feature branch?', 'input')).toBe(true)
+    const card = store.cards()[0]!
+    expect(card.source).toBe('detector')
+    expect(card.question).toBe('Delete the old feature branch?')
+    expect(card.draft).toBeNull()
+  })
+  it('an evicted push card was never answered, so its ask is not remembered as dismissed', () => {
+    const { store } = makeStore()
+    store.createFromPush('p1', 'Ship the release?', 'yes, ship it')
+    store.createFromDetector('p1', 'Ready to ship the release?', 'input')
+    store.createFromDetector('p1', 'Delete the old feature branch?', 'input')
+    store.dismiss(store.cards()[0]!.id)
+    // The ORIGINAL ask coming back must card again — the user never acted on it.
+    expect(store.createFromDetector('p1', 'Ready to ship the release?', 'input')).toBe(true)
   })
   it('a genuinely new question still cards after a dismissal', () => {
     const { store } = makeStore()

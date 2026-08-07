@@ -62,6 +62,24 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
 
     let buf = ''
     let done = false
+    /**
+     * Set the moment a request is HANDED TO `handle`, which is not the same
+     * moment as `done`.
+     *
+     * `done` is set by `respond`, and `respond` only runs once `handle` has
+     * resolved — and `handle` awaits a `ps`, tens of milliseconds. A second
+     * data event inside that window found `done` still false, and because the
+     * buffer is never consumed it found the same complete request line still
+     * sitting at position 0 and dispatched it AGAIN. Measured on a socket
+     * whose client wrote its line and then two more bytes: three dispatches,
+     * three copies of the text typed into the pane, from one request.
+     *
+     * A stream gives no promise about chunk boundaries, so this needed no
+     * misbehaving client — a drafted reply long enough to be split, or any
+     * trailing byte, was enough. One connection carries one request here (the
+     * reply ends it), so the guard is simply: dispatch at most once.
+     */
+    let dispatched = false
     const respond = (res: ControlResponse): void => {
       if (done) return
       done = true
@@ -69,7 +87,7 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
     }
 
     conn.on('data', (chunk: string) => {
-      if (done) return
+      if (done || dispatched) return
       buf += chunk
       if (buf.length > MAX_REQUEST_BYTES) {
         respond({ ok: false, error: 'request too large' })
@@ -78,6 +96,7 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
       }
       const nl = buf.indexOf('\n')
       if (nl === -1) return
+      dispatched = true
       void handle(buf.slice(0, nl)).then(respond)
     })
 

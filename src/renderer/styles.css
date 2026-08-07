@@ -1423,8 +1423,39 @@ body.dragging .web__view {
   font-weight: 600;
 }
 
-.lookout-head__hide {
+/* The one-click off switch, and the only control that actually stops Lookout
+ * watching. ⇧⌘B and the ✕ beside this one HIDE the section — detection keeps
+ * running and cards keep piling up behind it — which is the right behaviour
+ * for a panel toggle and the wrong one for "make these stop". Sits to the LEFT
+ * of the hide button, first of the two, because turning cards off is the thing
+ * someone reaches for in a hurry. */
+.lookout-head__power {
   margin-left: auto;
+  padding: 0 calc(4px * var(--ui-scale));
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(11px * var(--ui-scale));
+}
+
+/* Off is a state you must be able to see without hovering: hollow glyph, faint
+ * colour, and the section title dims with it. A switch whose two positions look
+ * alike is how you end up wondering why no cards ever appear again. */
+.lookout-head__power--off {
+  color: var(--text-faint);
+}
+
+.lookout-head__power:hover {
+  color: var(--text);
+}
+
+.lookout-head--off .lookout-head__title {
+  opacity: 0.55;
+}
+
+.lookout-head__hide {
   padding: 0 calc(4px * var(--ui-scale));
   border: 0;
   background: none;
@@ -1562,9 +1593,30 @@ body.dragging .drawer__grip {
   gap: calc(6px * var(--ui-scale));
   padding: calc(10px * var(--ui-scale));
   border: 1px solid var(--chrome-line);
+  /* The pane's colour tag, painted as the card's left edge (the hex arrives
+   * inline from CardStack). Always 3px whether or not the pane is tagged, so
+   * an untagged pane's card is the same width as every other one — a card
+   * that changed shape when you coloured its pane would read as a bug. */
+  border-left-width: 3px;
   border-radius: 8px;
   background: var(--surface-raised);
   box-shadow: 0 8px 24px #000a;
+}
+
+/* Pane name and age on one line: the age is the second question you have about
+ * a waiting card and does not deserve a row of its own. */
+.card__head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(6px * var(--ui-scale));
+}
+
+.card__age {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
 }
 
 .card--stale {
@@ -1583,6 +1635,9 @@ body.dragging .drawer__grip {
 .card__pane {
   color: var(--text-faint);
   font-size: calc(11px * var(--ui-scale));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card__question {

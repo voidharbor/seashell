@@ -8,6 +8,8 @@ import { PaneView, forgetSpawn, setHostname, terminals } from './panes/PaneView.
 import { Explorer } from './explorer/Explorer.js'
 import { StatusBar } from './status/StatusBar.js'
 import { loadTerminalFont } from './term/terminal.js'
+import { editTargetId, isTextField, terminalOwningFocus } from './term/edit-target.js'
+import { paneColorHex } from './panes/colors.js'
 import {
   applyUiScale,
   clampIndex,
@@ -39,6 +41,8 @@ import { changedQuestions, planDetections } from './lookout/detect.js'
 import { readPaneTail } from './lookout/tail.js'
 import { lookoutBadgeCount } from './lookout/badge.js'
 import { CardStack } from './lookout/CardStack.js'
+import { refusalMessage } from './lookout/refusal.js'
+import type { DraftStore } from './lookout/drafts.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
 
@@ -340,6 +344,32 @@ export function App(): React.JSX.Element {
     window.seashell.lookout.setEnabled(settings.lookoutCards)
   }, [settings.lookoutCards])
 
+  /** Edits in progress, kept across a card unmounting — see lookout/drafts.ts.
+   *  A ref, not state: it is written on every keystroke in a draft box, and
+   *  nothing outside that box reads it. */
+  const lookoutDrafts = useRef<DraftStore>(new Map())
+
+  /**
+   * Clock for card ages, ticked once a minute and ONLY while cards exist.
+   *
+   * Armed off the card list rather than left running, for the same reason
+   * main's sweep timer is: this app has spent real work on costing nothing
+   * while idle, and a timer that re-renders the tree every minute forever —
+   * to update a label on cards that are not there — would give some of that
+   * back. `ageLabel` is minute-granular, so a minute is the fastest tick that
+   * can change anything on screen.
+   */
+  const [lookoutNow, setLookoutNow] = useState(() => Date.now())
+  const hasCards = lookoutCards.length > 0
+  useEffect(() => {
+    if (!hasCards) return
+    // Stamped immediately as well as on the interval: a card raised 50s after
+    // the last tick would otherwise read "now" for its first ten seconds.
+    setLookoutNow(Date.now())
+    const timer = setInterval(() => setLookoutNow(Date.now()), 60_000)
+    return () => clearInterval(timer)
+  }, [hasCards])
+
   // Live per-pane screen shape for the card stack's send-button gate — a
   // fresh xterm-buffer read on every call (render *and* click time), never a
   // cached value. See CardStack's doc comment for why click time re-reads.
@@ -372,6 +402,19 @@ export function App(): React.JSX.Element {
     [state.tabs]
   )
 
+  /** The pane's colour tag as hex, so a card carries the same identity the
+   *  pane header and tab strip use. Null for an untagged pane. */
+  const lookoutPaneColor = useCallback(
+    (paneId: string): string | null => {
+      for (const tab of state.tabs) {
+        const pane = tab.panes[paneId]
+        if (pane) return paneColorHex(pane.color)
+      }
+      return null
+    },
+    [state.tabs]
+  )
+
   const lookoutGotoPane = useCallback(
     (paneId: string) => {
       const tab = state.tabs.find((t) => t.panes[paneId] !== undefined)
@@ -387,7 +430,13 @@ export function App(): React.JSX.Element {
   )
 
   const lookoutOnAction = useCallback((req: LookoutActionRequest) => {
-    void window.seashell.lookout.action(req)
+    // The response was discarded, which made every refusal indistinguishable
+    // from a success: click Approve, nothing happens, card still there. Main
+    // refuses for good reasons — a picker painted, the pane exited, the draft
+    // grew a line break — and each of them is actionable once said out loud.
+    void window.seashell.lookout.action(req).then((res) => {
+      if (!res.ok) dispatch({ type: 'toast', message: refusalMessage(res.code) })
+    })
   }, [])
 
   const activeTab = useMemo(
@@ -609,12 +658,42 @@ export function App(): React.JSX.Element {
     setFind((f) => ({ nonce: f.nonce + 1, direction }))
   }, [])
 
-  // Menu accelerators arrive here regardless of DOM focus.
+  // Menu accelerators arrive here regardless of DOM focus — which is exactly
+  // why the Edit commands have to work out their own target (see below).
   useEffect(() => {
     const off = window.seashell.app.onCommand(({ command }) => {
       if (command.startsWith('tab.select.')) {
         dispatch({ type: 'tab.selectIndex', index: Number(command.split('.')[2]) })
         return
+      }
+      /**
+       * The terminal an Edit command acts on: whichever one actually holds the
+       * keyboard, falling back to the focused pane when focus is elsewhere.
+       *
+       * NOT `focusedPaneId` on its own. The ⌘J drawer is a terminal that is
+       * deliberately not a pane, so while the user typed in the drawer these
+       * commands still resolved to the pane behind it — ⌘V pasted the
+       * clipboard into an agent's pty (submitting itself if it ended in a
+       * newline), ⌘K cleared that agent's pane, ⌘C copied its selection.
+       * See term/edit-target.ts.
+       */
+      const editTarget = (): string | null =>
+        editTargetId(terminals, document.activeElement, activeTab?.focusedPaneId ?? null)
+
+      /**
+       * Focus in an ordinary text field — a card's draft box, the find bar, a
+       * project name — where the edit belongs to the field, not to any pane.
+       *
+       * These menu items are deliberately not `role:'paste'` (a role would
+       * swallow the chord before a focused terminal saw it), so the browser's
+       * own paste never runs and the command has to do the work itself. Asked
+       * only AFTER the terminal check, because xterm's keystroke sink is
+       * itself a <textarea>. See term/edit-target.ts.
+       */
+      const textField = (): HTMLElement | null => {
+        const el = document.activeElement
+        if (terminalOwningFocus(terminals, el)) return null
+        return isTextField(el) ? (el as HTMLElement) : null
       }
       switch (command) {
         case 'tab.new':
@@ -648,7 +727,11 @@ export function App(): React.JSX.Element {
           dispatch({ type: 'pane.zoom' })
           break
         case 'pane.clear': {
-          const id = activeTab?.focusedPaneId
+          // Nothing to clear in a text box, and clearing the pane behind it is
+          // not what ⌘K in a draft box could possibly mean — throwing away a
+          // pane's scrollback as a side effect of a keystroke aimed at a form.
+          if (textField()) break
+          const id = editTarget()
           if (id) terminals.get(id)?.term.clear()
           break
         }
@@ -711,7 +794,16 @@ export function App(): React.JSX.Element {
           stepFind('prev')
           break
         case 'edit.copy': {
-          const id = activeTab?.focusedPaneId
+          const field = textField()
+          if (field) {
+            // The field's own selection, not the pane's. Copying a terminal's
+            // selection while the user has text highlighted in a draft box is
+            // simply the wrong text.
+            const sel = window.getSelection()?.toString() ?? ''
+            if (sel) void navigator.clipboard.writeText(sel)
+            break
+          }
+          const id = editTarget()
           const t = id ? terminals.get(id) : undefined
           const sel = t?.term.getSelection() ?? ''
           // No selection must be a no-op. Falling through to anything else here
@@ -720,10 +812,27 @@ export function App(): React.JSX.Element {
           break
         }
         case 'edit.paste': {
-          const id = activeTab?.focusedPaneId
-          if (!id) break
+          // Both targets are resolved BEFORE the await: the clipboard read is
+          // async, and reading focus after it would let a focus change land
+          // the paste somewhere the user was no longer looking when they hit
+          // ⌘V — including, in the worst case, an agent's pty.
+          const field = textField()
+          const id = field ? null : editTarget()
+          if (!field && !id) break
           void navigator.clipboard.readText().then((text) => {
-            if (text) terminals.get(id)?.term.paste(text)
+            if (!text) return
+            if (field) {
+              // insertText rather than assigning .value: it goes in at the
+              // caret, replaces the selection, keeps the field's native undo
+              // stack, and emits the input event React needs to see for a
+              // controlled component (the card's draft box is one — assigning
+              // .value directly would be silently reverted on the next
+              // render).
+              field.focus()
+              document.execCommand('insertText', false, text)
+              return
+            }
+            if (id) terminals.get(id)?.term.paste(text)
           })
           break
         }
@@ -731,7 +840,16 @@ export function App(): React.JSX.Element {
           // Scoped to the line being typed, not the whole scrollback — see
           // inputline.ts. Selecting thousands of transcript lines is not what
           // anyone means by select-all in a pane running an agent.
-          const id = activeTab?.focusedPaneId
+          const field = textField()
+          if (field) {
+            // ⌘A in a text box selects that box. It used to arm the pane's
+            // input-line selection instead, which leaves the pane primed to
+            // kill its line on the next keystroke — a ⌘A aimed at a draft box
+            // could wipe what the user had typed at an agent's prompt.
+            ;(field as HTMLInputElement | HTMLTextAreaElement).select?.()
+            break
+          }
+          const id = editTarget()
           if (id) terminals.get(id)?.selectInputLine()
           break
         }
@@ -936,7 +1054,14 @@ export function App(): React.JSX.Element {
   // visibility rule only — the badge counts every active card regardless of
   // pane, so it does not move just because focus does.
   const suppressedPaneId = activeTab?.focusedPaneId ?? null
-  const lookoutCount = lookoutBadgeCount(lookoutCards)
+  /**
+   * Zeroed the instant Lookout is switched off, without waiting for main to
+   * clear the store and push an empty list back. That round trip is short, but
+   * it is long enough to paint one frame of "cards are off" next to a status
+   * bar badge reading 3 — and a count of things the user just turned off is
+   * exactly the kind of small lie that makes a switch look untrustworthy.
+   */
+  const lookoutCount = settings.lookoutCards ? lookoutBadgeCount(lookoutCards) : 0
 
   /** Where a fresh drawer shell starts and where its "cd to pane" button goes:
    *  the focused pane's live cwd (OSC 7 beats the spawn cwd, same preference
@@ -1083,9 +1208,32 @@ export function App(): React.JSX.Element {
             here and stay until answered; see .lookout-rail in styles.css. */}
         <div className="sidebar-col">
           {railVisible && (
-            <div className="lookout-head">
+            <div className={'lookout-head' + (settings.lookoutCards ? '' : ' lookout-head--off')}>
               <span className="lookout-head__title">Lookout</span>
               {lookoutCount > 0 && <span className="lookout-head__count">{lookoutCount}</span>}
+              {/* The actual off switch. Distinct from ✕ on purpose: ✕ (and
+                  ⇧⌘B) hide the section while detection carries on behind it,
+                  which is what you want for a panel and not what you want when
+                  cards are in your way. This one stops the watching and clears
+                  what is showing, and it is the same setting the Settings panel
+                  writes — one truth, two places to reach it. */}
+              <button
+                className={
+                  'lookout-head__power' +
+                  (settings.lookoutCards ? '' : ' lookout-head__power--off')
+                }
+                title={
+                  settings.lookoutCards
+                    ? 'Turn cards off — stops watching panes and clears the rail'
+                    : 'Cards are off. Click to start watching panes again.'
+                }
+                aria-pressed={!settings.lookoutCards}
+                onClick={() =>
+                  updateSettings({ ...settings, lookoutCards: !settings.lookoutCards })
+                }
+              >
+                {settings.lookoutCards ? '◉' : '○'}
+              </button>
               <button
                 className="lookout-head__hide"
                 title="Hide Lookout (⇧⌘B)"
@@ -1095,21 +1243,34 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           )}
-          <aside
-            className="lookout-rail"
-            ref={railRef}
-            style={{ height: `calc(${railHeight}px * var(--ui-scale))` }}
-          >
-            <CardStack
-              cards={lookoutCards}
-              suppressedPaneId={suppressedPaneId}
-              pluginInstalled={lookoutPlugin}
-              paneName={lookoutPaneName}
-              screenMode={lookoutScreenMode}
-              onAction={lookoutOnAction}
-              onGotoPane={lookoutGotoPane}
-            />
-          </aside>
+          {/* Gated on railVisible like the header and the grip. It was not,
+              which made "Hide Lookout" hide the word Lookout and nothing else:
+              ⇧⌘B, the ✕ and the status-bar badge all left every card sitting
+              in the sidebar, send buttons and all, with the header that
+              explained them gone. The cards ARE the section — hiding the label
+              while leaving them on screen is the one reading of the command
+              nobody wants. */}
+          {railVisible && (
+            <aside
+              className="lookout-rail"
+              ref={railRef}
+              style={{ height: `calc(${railHeight}px * var(--ui-scale))` }}
+            >
+              <CardStack
+                cards={lookoutCards}
+                suppressedPaneId={suppressedPaneId}
+                pluginInstalled={lookoutPlugin}
+                enabled={settings.lookoutCards}
+                paneName={lookoutPaneName}
+                paneColor={lookoutPaneColor}
+                screenMode={lookoutScreenMode}
+                nowMs={lookoutNow}
+                drafts={lookoutDrafts.current}
+                onAction={lookoutOnAction}
+                onGotoPane={lookoutGotoPane}
+              />
+            </aside>
+          )}
           {/* Only draggable when there is something to drag: with no cards the
               rail is display:none and the grip would resize an invisible box. */}
           {railVisible && state.sidebarVisible && state.explorerRoot && (

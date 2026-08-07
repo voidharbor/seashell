@@ -182,8 +182,14 @@ const MESSAGE_BLOCK_MAX_LINES = 40
 const QUESTION_TAIL_MAX_LINES = 6
 /** Step 5: final question string cap, kept to one collapsed line. */
 const QUESTION_MAX_CHARS = 500
-/** Selector: how many non-empty lines from the bottom to search for the footer + its options. */
-const SELECTOR_SEARCH_WINDOW = 15
+/** Selector: how many non-empty lines from the bottom to search for the
+ *  footer + its options. The whole tail the caller reads: a real widget can
+ *  be tall — cursor on option 1 with wrapped per-option descriptions puts the
+ *  `❯` row 17+ lines above the footer — and a window shorter than the widget
+ *  reads a live picker as "no selector", which the send gates treat as
+ *  sendable. Too small fails toward permitting; the input-box-first ordering
+ *  already keeps an idle box classified as input whatever this window sees. */
+const SELECTOR_SEARCH_WINDOW = TAIL_LINES
 /** Selector: only the first N option lines are quoted in the question. */
 const SELECTOR_OPTION_MAX_LINES = 4
 
@@ -269,6 +275,18 @@ function findInputBoxTop(lines: string[]): number | null {
   return null
 }
 
+/** Whether a selector's confirm footer appears anywhere below `rowIndex`.
+ *  See findBarePromptRow: the input box is the bottom-most chrome claude
+ *  draws, so a confirm hint underneath a `❯` row means that row belongs to a
+ *  widget, not to the prompt. */
+function hasConfirmFooterBelow(lines: string[], rowIndex: number): boolean {
+  for (let i = rowIndex + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (line !== undefined && ENTER_TO_CONFIRM_RE.test(line)) return true
+  }
+  return false
+}
+
 /**
  * Borderless fallback, tried only when the edge trio found nothing: the
  * bottommost `❯` input row (never a `❯ N.` selector option, never a slash
@@ -289,6 +307,24 @@ function findBarePromptRow(lines: string[]): number | null {
     nonEmptySeen++
     if (SLASH_ECHO_RE.test(line)) continue
     if (/^\s*❯(?!\s*\d+[.)]\s)/.test(line)) {
+      /**
+       * ...unless a confirm footer sits below it, in which case this `❯` row
+       * is a PICKER'S CURSOR, not a prompt.
+       *
+       * The lookahead above rules out `❯ N.` option rows, and that used to be
+       * the entire distinction — which quietly assumed every picker numbers
+       * its options. Many of claude's own dialogs do not (pointer + label,
+       * indexes hidden), and they are borderless too, so an unnumbered picker
+       * matched this line exactly and was reported as `kind: 'input'`. That
+       * kind is what gives a card live send buttons, and a send ends in a
+       * lone Enter — on a picker, Enter confirms whatever is highlighted.
+       *
+       * The footer is the reliable tell in the other direction: claude's
+       * input box is the bottom-most chrome on its screen and never has
+       * `Enter to confirm` beneath it. Returning null here hands the screen
+       * to trySelector, which reads it as the picker it is.
+       */
+      if (hasConfirmFooterBelow(lines, i)) return null
       return lines.slice(0, i).some((l) => l !== undefined && CLAUDE_CHROME_RE.test(l)) ? i : null
     }
   }
@@ -366,23 +402,93 @@ function findSelectorFooter(lines: string[], windowStart: number): number | null
   return null
 }
 
-/** Every option-shaped line between `windowStart` and `footerIndex`, in
+/** Every option-shaped line between `from` and `footerIndex`, in
  *  top-to-bottom order. */
-function collectSelectorOptions(lines: string[], windowStart: number, footerIndex: number): SelectorOption[] {
+function collectSelectorOptions(lines: string[], from: number, footerIndex: number): SelectorOption[] {
   const options: SelectorOption[] = []
-  for (let i = windowStart; i < footerIndex; i++) {
+  for (let i = from; i < footerIndex; i++) {
     const line = lines[i]
     if (line !== undefined && SELECTOR_OPTION_RE.test(line)) options.push({ index: i, text: line })
   }
   return options
 }
 
+/**
+ * The `❯` cursor row nearest the footer: the widget's anchor.
+ *
+ * Everything else about a picker is shaped like ordinary prose. `1. Do the
+ * thing` is how claude renders a numbered list in any message, so
+ * option-shape alone cannot tell a widget from a transcript. The cursor row
+ * can: it is drawn by the widget and appears nowhere else on the screen.
+ * Searched upward from the footer so that, if a screen somehow held two, the
+ * one belonging to the picker being confirmed wins.
+ */
+function findSelectorCursorRow(lines: string[], windowStart: number, footerIndex: number): number | null {
+  for (let i = footerIndex - 1; i >= windowStart; i--) {
+    const line = lines[i]
+    if (line !== undefined && line.includes('❯') && SELECTOR_OPTION_RE.test(line)) return i
+  }
+  return null
+}
+
+/** A cursor row with no index on it: `❯ Dark mode`. claude renders several of
+ *  its own dialogs this way (indexes hidden), and they are borderless, so
+ *  this row is the only structural evidence the screen offers. Requiring a
+ *  non-space after the `❯` keeps the idle prompt row (`❯ ` and nothing else)
+ *  out; a slash echo is excluded for the same reason it is elsewhere. */
+const BARE_CURSOR_RE = /^\s*❯\s*(?!\/)\S/
+
+function findBareCursorRow(lines: string[], windowStart: number, footerIndex: number): number | null {
+  for (let i = footerIndex - 1; i >= windowStart; i--) {
+    const line = lines[i]
+    if (line !== undefined && BARE_CURSOR_RE.test(line)) return i
+  }
+  return null
+}
+
+/** The rows of an unnumbered picker: the cursor row and every non-blank row
+ *  under it up to the footer. There is no `N.` to filter on, so the widget's
+ *  own block boundaries are all there is — which is exactly why the block is
+ *  bounded by a blank line above and the footer below. */
+function collectBareOptions(lines: string[], cursorIndex: number, footerIndex: number): SelectorOption[] {
+  const options: SelectorOption[] = []
+  for (let i = cursorIndex; i < footerIndex; i++) {
+    const line = lines[i]
+    if (line !== undefined && !isBlank(line)) options.push({ index: i, text: line })
+  }
+  return options
+}
+
+/**
+ * Where the widget starts: walk up from the cursor row to the first blank
+ * line.
+ *
+ * ink paints the whole widget — question, options, wrapped descriptions — as
+ * one unbroken block, and puts a blank line between it and whatever the
+ * transcript printed before. That blank is therefore the boundary, and it is
+ * the only reliable one: option rows are not contiguous (a wrapped
+ * per-option description sits between them), so "walk while it still looks
+ * like an option" would stop at the first description line.
+ */
+function selectorBlockStart(lines: string[], windowStart: number, cursorIndex: number): number {
+  for (let i = cursorIndex - 1; i >= windowStart; i--) {
+    const line = lines[i]
+    if (line === undefined || isBlank(line)) return i + 1
+  }
+  return windowStart
+}
+
 /** The contiguous non-option block directly above the first option line:
- *  walks up until a blank, another option-shaped line, the start of
- *  `lines`, or the shared block cap. Returned in top-to-bottom order. */
-function collectSelectorPreamble(lines: string[], firstOptionIndex: number): string[] {
+ *  walks up until a blank, another option-shaped line, `floor`, or the shared
+ *  block cap. Returned in top-to-bottom order.
+ *
+ *  `floor` is the widget's own top: without it a widget that reaches the top
+ *  of the search window with no blank above it would keep walking into
+ *  whatever came before, which is the same transcript bleed the anchor exists
+ *  to stop. */
+function collectSelectorPreamble(lines: string[], firstOptionIndex: number, floor: number): string[] {
   const block: string[] = []
-  for (let i = firstOptionIndex - 1; i >= 0; i--) {
+  for (let i = firstOptionIndex - 1; i >= floor; i--) {
     const line = lines[i]
     if (line === undefined) continue
     if (isBlank(line) || SELECTOR_OPTION_RE.test(line)) break // contiguity ends here
@@ -398,12 +504,48 @@ function trySelector(lines: string[]): Extraction | null {
   const footerIndex = findSelectorFooter(lines, windowStart)
   if (footerIndex === null) return null
 
-  const options = collectSelectorOptions(lines, windowStart, footerIndex)
+  /**
+   * Anchor on the cursor row, then read only the block it belongs to — NOT
+   * every option-shaped line between the window and the footer.
+   *
+   * Reading the whole window let a numbered list the agent had merely printed
+   * ("1. Add the tenant id to the cache key / 2. Backfill...") become "the
+   * options", and since the preamble is taken from directly above the FIRST
+   * option found, the picker's real question — which sits below that list —
+   * became unreachable. The card then quoted a question the user was not
+   * being asked, above choices that were not the choices, which detect.ts
+   * rightly calls worse than raising no card at all.
+   *
+   * This is also what makes the full-screen search window safe. That window
+   * has to stay a screen tall so a TALL picker is never missed (missing one
+   * permits a send, the one direction this must never fail in), and widening
+   * it is exactly what brings more of the transcript into range. The anchor
+   * decouples the two: however wide we search for the widget, we only ever
+   * read the widget.
+   */
+  // A numbered picker first: its `N.` rows are the precise signal, and only
+  // they can be told apart from the wrapped description lines that sit
+  // between them. An unnumbered picker has no such marker, so it falls back
+  // to the widget block itself — see collectBareOptions.
+  const numberedCursor = findSelectorCursorRow(lines, windowStart, footerIndex)
+  const cursorIndex = numberedCursor ?? findBareCursorRow(lines, windowStart, footerIndex)
+  if (cursorIndex === null) return null
+  const blockStart = selectorBlockStart(lines, windowStart, cursorIndex)
+
+  const options =
+    numberedCursor !== null
+      ? collectSelectorOptions(lines, blockStart, footerIndex)
+      : collectBareOptions(lines, cursorIndex, footerIndex)
+  // Non-empty by construction: the cursor row is itself an option row inside
+  // [blockStart, footerIndex), which is also why the old "does any option
+  // carry a ❯" check is gone — it is now an invariant, not a test.
   const [firstOption] = options
   if (!firstOption) return null
-  if (!options.some((o) => o.text.includes('❯'))) return null
 
-  const preamble = tailLines(collectSelectorPreamble(lines, firstOption.index), QUESTION_TAIL_MAX_LINES)
+  const preamble = tailLines(
+    collectSelectorPreamble(lines, firstOption.index, blockStart),
+    QUESTION_TAIL_MAX_LINES
+  )
   const optionText = options
     .slice(0, SELECTOR_OPTION_MAX_LINES)
     .map((o) => o.text.replaceAll('❯', '').trim())

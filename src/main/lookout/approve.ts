@@ -84,7 +84,7 @@ export async function approveCard(
   // option. The renderer gates this too, but its xterm buffer lags the pty —
   // this is the check that holds when the renderer's is stale. The card is
   // not marked stale: the session has not moved on, the user should answer
-  // in the pane.
+  // in the pane. Asked here to fail fast, and asked AGAIN below — see there.
   if (deps.screenKind(card.paneId) === 'selector') {
     return { ok: false, code: 'ESELECTOR', message: 'pane is showing a picker' }
   }
@@ -98,6 +98,27 @@ export async function approveCard(
   if (!foreground) {
     deps.store.markStale(req.cardId)
     return { ok: false, code: 'EFOREGROUND', message: 'pane foreground is not claude' }
+  }
+
+  /**
+   * THE SAME QUESTION AGAIN, ON THE FAR SIDE OF THE AWAIT.
+   *
+   * `checkForeground` shells out to `ps`. That is tens of milliseconds during
+   * which the pane goes on painting, and a check made before it describes a
+   * screen that is already history by the time the write happens. A pane
+   * sitting at an input box when the user clicked, which paints an
+   * AskUserQuestion picker while the `ps` is in flight, used to reach the two
+   * writes below — text, then the only Enter in the system — into a live
+   * picker, confirming whatever option happened to be highlighted.
+   *
+   * Every other guard in this function re-validates at click time rather than
+   * trusting the card it was shown. This one has to re-validate after the
+   * await for exactly the same reason: nothing checked before a suspension
+   * point is still known when execution resumes. There is no await between
+   * here and the write, so this is as tight as the window gets.
+   */
+  if (deps.screenKind(card.paneId) === 'selector') {
+    return { ok: false, code: 'ESELECTOR', message: 'pane is showing a picker' }
   }
 
   // The pane can exit between the checks above and here; writeIfLive re-checks.

@@ -1,19 +1,43 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LookoutActionRequest, LookoutCard } from '../../shared/ipc.js'
+import { ageLabel } from './age.js'
+import { pruneDrafts, type DraftStore } from './drafts.js'
 
 export interface CardStackProps {
   cards: LookoutCard[]
   /** Pane ids the stack must not show cards for (the focused pane). */
   suppressedPaneId: string | null
   pluginInstalled: boolean
+  /**
+   * False when the user has switched Lookout off. The stack still renders —
+   * it is what carries the "off" state and the way back on. Cards are already
+   * cleared in main when this flips (CardStore.setEnabled), so this is about
+   * saying so, not about hiding anything.
+   */
+  enabled: boolean
   /** What the pane's own header shows — its claude session title or the user's
    *  custom label, numbered as in the pane header. The raw pane id is useless
    *  at a glance once several agents are running. */
   paneName(paneId: string): string
+  /** The pane's colour tag, as hex, or null for an untagged pane. Panes are
+   *  told apart by colour everywhere else in this app; a card that does not
+   *  carry its pane's colour makes you read the label to find out which agent
+   *  is asking. */
+  paneColor(paneId: string): string | null
   /** Live screen mode of a pane, re-derived from its xterm buffer via
    *  extractQuestion at render and click time. 'selector' means typed text +
    *  Enter would blind-confirm the highlighted option — no send buttons. */
   screenMode(paneId: string): 'input' | 'selector' | null
+  /** Wall clock for card ages. Passed in rather than read here so the caller
+   *  owns the ticking — it arms a once-a-minute tick only while cards exist,
+   *  and an idle Lookout re-renders nothing. */
+  nowMs: number
+  /**
+   * Where edited drafts live while their card is unmounted. Owned by the
+   * caller so it outlives this component — hiding Lookout unmounts the whole
+   * stack, and an edit has to survive that too. See drafts.ts.
+   */
+  drafts: DraftStore
   onAction(req: LookoutActionRequest): void
   onGotoPane(paneId: string): void
 }
@@ -32,7 +56,38 @@ const STALE_LABEL = 'session moved on'
  * from a build that never had it.
  */
 export function CardStack(props: CardStackProps): React.JSX.Element {
-  const visible = props.cards.filter((c) => c.paneId !== props.suppressedPaneId)
+  const visible = props.enabled
+    ? props.cards.filter((c) => c.paneId !== props.suppressedPaneId)
+    : []
+
+  /**
+   * Forget drafts for cards that are gone.
+   *
+   * In an effect, not during render, and the ordering is the point: a card
+   * leaving the list unmounts its CardItem, whose cleanup writes the draft it
+   * was holding. React runs that cleanup during the commit, AFTER render — so
+   * a prune done in the render body ran first and the unmounting card wrote
+   * its draft straight back in behind it, leaking one entry per card ever
+   * edited. Effects run after the commit, which is after every cleanup.
+   *
+   * Against the FULL card list, not the visible one: a card suppressed because
+   * its own pane has focus is still very much alive, and dropping its draft
+   * would defeat the entire point of keeping it.
+   *
+   * `liveKey` is a change-detection key and nothing more — the prune reads the
+   * live array through a ref rather than splitting the key back apart, so no
+   * delimiter has to be chosen or trusted.
+   */
+  const liveKey = props.cards.map((c) => c.id).join(',')
+  const cardsRef = useRef(props.cards)
+  cardsRef.current = props.cards
+  useEffect(() => {
+    pruneDrafts(
+      props.drafts,
+      cardsRef.current.map((c) => c.id)
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveKey])
 
   return (
     <div className="lookout-stack">
@@ -41,7 +96,10 @@ export function CardStack(props: CardStackProps): React.JSX.Element {
           key={card.id}
           card={card}
           paneName={props.paneName}
+          paneColor={props.paneColor}
           screenMode={props.screenMode}
+          nowMs={props.nowMs}
+          drafts={props.drafts}
           onAction={props.onAction}
           onGotoPane={props.onGotoPane}
         />
@@ -51,7 +109,20 @@ export function CardStack(props: CardStackProps): React.JSX.Element {
           belongs to the section header (and ⇧⌘B), not to a placeholder. */}
       {visible.length === 0 && (
         <div className="card card--idle">
-          {props.pluginInstalled ? (
+          {/* Off is a state the user chose, and it outranks every other thing
+              this placeholder could say: telling someone who switched cards
+              off that "nothing needs you" is a lie by omission, and telling
+              them to install a plugin for a feature they just turned off is
+              noise. The way back on is the toggle in the section header. */}
+          {!props.enabled ? (
+            <div className="card__question">cards are off</div>
+          ) : props.cards.length > 0 ? (
+            // There IS something waiting — it is the pane you are looking at,
+            // whose card is suppressed for exactly that reason. Saying
+            // "nothing needs you" here flatly contradicted the count in the
+            // header directly above, which counts suppressed cards too.
+            <div className="card__question">the pane you’re in is the one asking</div>
+          ) : props.pluginInstalled ? (
             <div className="card__question">nothing needs you</div>
           ) : (
             <>
@@ -69,9 +140,26 @@ export function CardStack(props: CardStackProps): React.JSX.Element {
 interface CardItemProps {
   card: LookoutCard
   paneName(paneId: string): string
+  paneColor(paneId: string): string | null
   screenMode(paneId: string): 'input' | 'selector' | null
+  nowMs: number
+  drafts: DraftStore
   onAction(req: LookoutActionRequest): void
   onGotoPane(paneId: string): void
+}
+
+/**
+ * Rows for the draft box, from the draft itself.
+ *
+ * A fixed five rows meant "yes ship it" got a box with three empty lines under
+ * it, and four cards like that pushed the file tree off the bottom of the
+ * screen for no content at all. Clamped at both ends: two rows so a one-word
+ * draft still looks like something you can type in, eight so a long one
+ * scrolls instead of eating the rail. Line count only — a wrapped long line
+ * scrolls, which is what the resize handle is for.
+ */
+export function draftRows(draft: string): number {
+  return Math.min(8, Math.max(2, draft.split('\n').length))
 }
 
 /**
@@ -148,7 +236,32 @@ function CardItem(props: CardItemProps): React.JSX.Element {
   const showShape = stale || interactive
   const editable = interactive && !stale
 
-  const [text, setText] = useState(card.draft ?? '')
+  /**
+   * Seeded from the edit in progress if there is one, and only otherwise from
+   * the model's draft.
+   *
+   * A card unmounts whenever its own pane takes focus (it is suppressed — you
+   * are looking at the pane) and whenever Lookout is hidden. Both are things
+   * people do in the middle of editing a reply, to go and read the question.
+   * Re-seeding from `card.draft` on the way back replaced what they had
+   * written with wording they had already rejected, still sitting one click
+   * from being sent.
+   */
+  const [text, setText] = useState(() => props.drafts.get(card.id) ?? card.draft ?? '')
+
+  // Written on unmount rather than on every keystroke: this only has to be
+  // right at the moment the component goes away.
+  const textRef = useRef(text)
+  textRef.current = text
+  useEffect(() => {
+    const store = props.drafts
+    const id = card.id
+    return () => {
+      store.set(id, textRef.current)
+    }
+    // Mount/unmount only — the ref carries the latest value into the cleanup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const send = (value: string): void => {
     // Same rule as `interactive`: refuse on a positive picker read, not on an
@@ -169,12 +282,18 @@ function CardItem(props: CardItemProps): React.JSX.Element {
     draftNode = editable ? (
       <textarea
         className="card__draft"
-        rows={5}
+        rows={draftRows(text)}
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
     ) : (
-      <div className="card__draft card__draft--ref">{card.draft}</div>
+      // The user's current text, not `card.draft`. This branch is what a card
+      // drops to when a picker appears on the pane or the card goes stale —
+      // and showing the model's original wording at that moment tells someone
+      // who had rewritten the reply that their edit is gone, when it is not:
+      // it is held in the draft store and comes straight back the moment the
+      // card is answerable again.
+      <div className="card__draft card__draft--ref">{text}</div>
     )
     if (showShape) {
       hintNode = stale ? <div className="card__hint">{STALE_LABEL}</div> : null
@@ -232,10 +351,24 @@ function CardItem(props: CardItemProps): React.JSX.Element {
     actions = gotoPaneAndDismiss(gotoPane, dismiss)
   }
 
+  const colour = props.paneColor(card.paneId)
+  const age = ageLabel(card.createdAt, props.nowMs)
+
   return (
-    <div className={'card' + (stale ? ' card--stale' : '')}>
-      <div className="card__pane" title={card.paneId}>
-        {props.paneName(card.paneId)}
+    <div
+      className={'card' + (stale ? ' card--stale' : '')}
+      // The pane's colour as a left edge on the whole card, not just a dot:
+      // with several agents running, which pane is asking is the first thing
+      // you need and the last thing you should have to read a label for. Falls
+      // back to the chrome line for an untagged pane, so the border is always
+      // drawn and cards never differ in width.
+      style={{ borderLeftColor: colour ?? undefined }}
+    >
+      <div className="card__head">
+        <span className="card__pane" title={card.paneId}>
+          {props.paneName(card.paneId)}
+        </span>
+        {age && <span className="card__age">{age}</span>}
       </div>
       <div className="card__question">{card.question}</div>
       {draftNode}

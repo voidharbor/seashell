@@ -243,4 +243,62 @@ describe.skipIf(process.platform === 'win32')('control server', () => {
     expect(res).toMatch(/large/i)
     expect(writes).toEqual([])
   })
+
+  /**
+   * One request must produce one write, whatever the client's writes are cut
+   * into on the way over.
+   *
+   * `handle` is async — it awaits a `ps` — and the guard that stopped a second
+   * dispatch was the same flag that guards the REPLY, which is only set once
+   * that await resolves. The buffer is never consumed either, so a second data
+   * event arriving in that window found the very same complete line still
+   * sitting at position 0 and dispatched it again: the pane got the text
+   * twice. A socket is a byte stream with no promise about chunk boundaries,
+   * and the client here sends a JSON line whose length is whatever the drafted
+   * reply happens to be, so "it arrives in one chunk" was never guaranteed.
+   */
+  it('types once when a request is split across two writes', async () => {
+    // The window is exactly as wide as the foreground check, which in
+    // production shells out to `ps` — tens of milliseconds, not a microtask.
+    // A fake that resolves instantly closes the window by accident and the
+    // bug goes unseen.
+    const { deps, writes } = makeFakes({
+      checkForeground: () => new Promise((r) => setTimeout(() => r(true), 40)),
+    })
+    await start(deps)
+    const res = await new Promise<string>((resolve, reject) => {
+      const conn = net.createConnection(deps.socketPath)
+      let got = ''
+      const finish = (): void => {
+        conn.destroy()
+        resolve(got.trim())
+      }
+      conn.setEncoding('utf8')
+      conn.on('data', (d: string) => {
+        got += d
+      })
+      conn.on('end', finish)
+      conn.on('close', finish)
+      conn.on('error', reject)
+      // Written from 'connect', NOT straight after createConnection: writes
+      // issued before the socket is up are buffered and flushed together, so
+      // they reach the server as one chunk and the split never happens.
+      conn.on('connect', () => {
+        // A COMPLETE request first...
+        conn.write(typeReq())
+        // ...then a trailing byte, arriving while the foreground check for the
+        // first one is still in flight. The buffer still holds that whole
+        // first line, so this used to dispatch it a second time.
+        setTimeout(() => conn.write('\n'), 10)
+      })
+    })
+    expect(JSON.parse(res)).toEqual({ ok: true })
+    // The duplicate lands AFTER the reply: the second dispatch is still inside
+    // its own foreground check when the first one answers and closes the
+    // socket, so asserting the moment the client sees `{ok:true}` misses it.
+    // The client is gone by then and the write goes into the pane regardless —
+    // which is exactly what makes this one hard to notice in the wild.
+    await new Promise((r) => setTimeout(r, 150))
+    expect(writes).toEqual([['pane-1', 'yes go ahead']])
+  })
 })

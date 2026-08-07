@@ -262,6 +262,36 @@ export class PtyManager {
     const rec = this.panes.get(paneId)
     if (!rec) return { ok: true, survivors: 0 }
 
+    /**
+     * A pane whose shell has already exited gets no ladder — only cleanup.
+     *
+     * The ladder does not target a process, it targets a process TREE, and it
+     * finds part of that tree by controlling tty: on macOS every process group
+     * whose tty matches the pane's recorded ttys number is signalled (see
+     * platform/darwin.ts, `paneProcessGroups`). A pane's record deliberately
+     * outlives its shell — spawn() explains why — so that tty name is still
+     * here after the shell is gone.
+     *
+     * But the kernel hands `/dev/ttysNNN` slots back out as soon as they are
+     * free, and the next taker is very often the next pane opened in this same
+     * window. Closing an already-exited pane would then aim SIGHUP → SIGTERM →
+     * SIGKILL at a LIVE pane's process groups: a running agent killed by
+     * tidying up a pane that had already quit. The recorded pid is recyclable
+     * for the same reason.
+     *
+     * Nothing is lost by skipping it. The kernel SIGHUPs the foreground group
+     * when the controlling terminal's last descriptor closes, so the ordinary
+     * children are already gone; what survives that is something the user
+     * explicitly detached, which was never this function's to kill — and it
+     * can no longer be identified, only guessed at from two recycled numbers.
+     */
+    if (rec.exited) {
+      this.panes.delete(paneId)
+      this.batcher.removePane(paneId)
+      if (this.panes.size === 0) this.stopFlushLoop()
+      return { ok: true, survivors: 0 }
+    }
+
     const { survivors } = await platform.killPaneTree({
       shellPid: rec.proc.pid,
       ttyName: rec.ttyName,

@@ -135,7 +135,11 @@ installs all of voidharbor's skills at once, Lookout hooks included, so the bund
 enough for drafted cards. Installing both is also fine: the hooks detect the duplicate and
 only one copy runs per session.
 
-A master toggle in Settings turns Lookout off.
+**Turning it off.** The **◉** button in the Lookout header is the switch: one click stops the
+watching and clears whatever is already in the rail. The same toggle lives in Settings under
+*Approval cards*. Note the difference from **⇧⌘B** and the **✕** beside it — those hide the
+section, which is a panel toggle, not an off switch: detection keeps running behind it and
+cards keep stacking up out of sight.
 
 ## What it does
 

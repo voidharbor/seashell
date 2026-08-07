@@ -79,13 +79,44 @@ export class CardStore {
   private isEnabled = true
   private nextCardId = 1
   private readonly byPane = new Map<string, StoredCard>()
-  /** Questions dismissed per pane, so a re-detect of the same question does not re-card. */
-  private readonly dismissedByPane = new Map<string, Set<string>>()
+  /**
+   * Questions dismissed per pane, so a re-detect of the same question does not
+   * re-card — stamped with the pane's output counter at the time.
+   *
+   * The stamp is what ties a dismissal to the SESSION it was made in. A pane's
+   * counter only ever grows, so a reading below the stamp can mean exactly one
+   * thing: a different pty wearing the same pane id, i.e. the pane restarted.
+   * Its dismissals belong to a conversation that no longer exists and must not
+   * suppress the new one. See `isDismissed`.
+   */
+  private readonly dismissedByPane = new Map<string, { at: number; questions: Set<string> }>()
 
   constructor(private readonly deps: CardStoreDeps) {}
 
+  /**
+   * Turning Lookout off clears what is already on screen, not just what would
+   * arrive next.
+   *
+   * "Disable" is reached for *because* cards are in the way, so a switch that
+   * silences the future and leaves three cards sitting in the rail reads as
+   * broken. This is the behaviour the one-click toggle on the rail depends on.
+   *
+   * The clear is an EVICTION, not an answer and not a refusal: nothing is
+   * remembered as dismissed, because the user decided about the feature, not
+   * about the question. Whatever is still pending must card again when they
+   * turn it back on. (The renderer drops its own last-reported memory on
+   * disable for the same reason, so the detector re-reports from scratch.)
+   */
   setEnabled(enabled: boolean): void {
+    if (this.isEnabled === enabled) return
     this.isEnabled = enabled
+    if (enabled || this.byPane.size === 0) return
+    this.byPane.clear()
+    // The renderer only ever learns the card list from an emit. Clearing the
+    // map without one would leave the rail rendering cards the store has
+    // already forgotten — and a click on one of those would act on a card id
+    // that no longer resolves.
+    this.emitChange()
   }
 
   enabled(): boolean {
@@ -107,14 +138,28 @@ export class CardStore {
 
     const existing = this.byPane.get(paneId)
     if (existing && existing.state === 'active') {
-      // A push outranks a detector unconditionally while active; a same-question
-      // detector card is already showing exactly this, so there is nothing to do.
-      // Either way, record the screen's own phrasing of what is being asked, so
-      // dismissing the card that IS showing also retires this one — see
-      // StoredCard.screenQuestions.
+      // A push outranks a detector — but only while the screen still shows
+      // the ask it was pushed for. The FIRST phrasing the detector reports
+      // under a push card is that same ask as scraped off the screen (two
+      // strings, one ask; that ambiguity is why screenQuestions exists). A
+      // LATER reading matching none of the recorded phrasings means the
+      // screen's question itself changed — the user answered in the pane and
+      // claude moved on — and keeping the push card would leave its draft one
+      // click from landing in a question it never answered. Extraction is a
+      // pure function of the buffer, so a changed phrasing is a changed
+      // screen, not jitter. Record the phrasing either way, so dismissing the
+      // card that IS showing also retires it — see StoredCard.screenQuestions.
+      const samePushAsk =
+        existing.question === question ||
+        existing.screenQuestions.size === 0 ||
+        existing.screenQuestions.has(question)
       existing.screenQuestions.add(question)
-      if (existing.source === 'push') return true
-      if (existing.question === question) return true
+      if (existing.source === 'push' && samePushAsk) return true
+      if (existing.source === 'detector' && existing.question === question) return true
+      // Falls through to replace: a detector card whose question changed, or
+      // a push card whose screen has provably moved to a different ask. The
+      // evicted card was never acted on, so nothing is remembered as
+      // dismissed — the old ask coming back must card again.
     }
 
     this.byPane.set(paneId, {
@@ -218,10 +263,18 @@ export class CardStore {
   sweep(): void {
     let changed = false
     for (const card of this.byPane.values()) {
-      if (card.state !== 'active') continue
-
-      // Dead must be checked before staleness: a dead pane outranks a
-      // staleness verdict anyway, and a gone one has no counter to diff.
+      // Every card, whatever its state — NOT just the active ones.
+      //
+      // This loop is the only thing that drops a card whose pane has died, and
+      // it used to skip anything already stale. A card that went stale first
+      // (a failed foreground check marks one) and whose pane then exited was
+      // therefore never removed: it sat in the rail for the life of the
+      // window, unanswerable and un-dismissable-by-anything-but-hand, holding
+      // on the sweep timer that is armed only while cards exist.
+      //
+      // Dead outranks stale anyway, so there is nothing to preserve by
+      // skipping: a stale card on a dead pane is exactly as gone as an active
+      // one on a dead pane.
       const current = this.deps.bytesOut(card.paneId)
       const delta = current === null ? null : current - card.bytesOutAtCreate
       if (delta === null || delta < 0) {
@@ -270,14 +323,43 @@ export class CardStore {
     this.dismissedByPane.delete(paneId)
   }
 
+  /**
+   * Checked at the moment a card would be raised, and it collects as it goes.
+   *
+   * The sweep also prunes dismissals for dead panes, but the sweep timer is
+   * armed only while cards exist — so the ordinary case (dismiss the last
+   * card, pane later exits, pane restarted) never reached it, and the next
+   * session in that pane was suppressed for a question it had never been
+   * asked about. Deciding it here instead means the check cannot be skipped:
+   * this runs on exactly the path that would suppress a card.
+   */
   private isDismissed(paneId: string, question: string): boolean {
-    return this.dismissedByPane.get(paneId)?.has(question) ?? false
+    const entry = this.dismissedByPane.get(paneId)
+    if (!entry) return false
+
+    const current = this.deps.bytesOut(paneId)
+    // null: the pane is gone. Below the stamp: the counter restarted, so this
+    // is a different pty under the same pane id. Either way the session that
+    // did the dismissing is over and its memory goes with it.
+    if (current === null || current < entry.at) {
+      this.dismissedByPane.delete(paneId)
+      return false
+    }
+    return entry.questions.has(question)
   }
 
   private rememberDismissed(paneId: string, question: string): void {
     const existing = this.dismissedByPane.get(paneId)
-    if (existing) existing.add(question)
-    else this.dismissedByPane.set(paneId, new Set([question]))
+    if (existing) {
+      existing.questions.add(question)
+      return
+    }
+    // Stamped with the counter now, which is the baseline a later reading is
+    // compared against to spot a restart.
+    this.dismissedByPane.set(paneId, {
+      at: this.deps.bytesOut(paneId) ?? 0,
+      questions: new Set([question]),
+    })
   }
 
   private emitChange(): void {

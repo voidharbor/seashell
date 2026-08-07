@@ -106,8 +106,15 @@ const STEPS: Step[] = [
     title: 'Lookout',
     body:
       'When an agent pane stops to ask you something, a card appears in the ' +
-      "corner — Approve answers the pane without leaving the one you're in. " +
-      'Smart drafted replies come from the c-assistant plugin.',
+      "Lookout section above the file tree, edged in that pane's colour — " +
+      "Approve answers the pane without leaving the one you're in. Smart " +
+      'drafted replies come from the c-assistant plugin. ◉ in the Lookout ' +
+      'header turns cards off and clears the ones showing; ⇧⌘B just ' +
+      'hides the section and leaves them piling up behind it.',
+    keys: [
+      ['⇧⌘B', 'Hide or show the Lookout section'],
+      ['◉', 'Turn cards off entirely, in the Lookout header'],
+    ],
   },
   {
     title: 'Previews are panes, not windows',

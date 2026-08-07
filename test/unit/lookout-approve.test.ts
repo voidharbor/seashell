@@ -90,6 +90,37 @@ describe('approveCard', () => {
     if (!res.ok) expect(res.code).toBe('ESELECTOR')
     expect(writes).toHaveLength(0)
   })
+  /**
+   * The render-to-click window is not the only window. `checkForeground` shells
+   * out to `ps` — tens of milliseconds during which the pane keeps painting —
+   * and the selector check sat entirely BEFORE that await. So a pane that was
+   * at an input box when the click arrived, and painted an AskUserQuestion
+   * picker while the `ps` was in flight, still reached the write: text, then
+   * the only Enter in the system, into a live picker. Enter on a picker
+   * confirms whatever option is highlighted, which is the one outcome this
+   * whole subsystem exists to make impossible.
+   *
+   * The check has to be re-asked on the far side of every await, immediately
+   * before the write, for the same reason every other guard here re-validates
+   * at click time instead of trusting what the card was born with.
+   */
+  it('refuses a picker that paints DURING the foreground check, and writes nothing', async () => {
+    const { deps, writes, cardId, store } = setup()
+    let screen: 'input' | 'selector' = 'input'
+    deps.screenKind = () => screen
+    deps.checkForeground = async () => {
+      // The pane repaints as a picker while `ps` is in flight.
+      screen = 'selector'
+      return true
+    }
+    const res = await approveCard(deps, { cardId, text: 'yes ship' })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.code).toBe('ESELECTOR')
+    expect(writes).toHaveLength(0)
+    // Not stale: the session has not moved on, the user answers in the pane.
+    expect(store.get(cardId)?.state).toBe('active')
+  })
+
   it('refuses a card already marked stale even when the byte delta is small', async () => {
     // markStale is main's own verdict (e.g. a failed foreground check); the
     // renderer disables the buttons, and main must agree with itself.

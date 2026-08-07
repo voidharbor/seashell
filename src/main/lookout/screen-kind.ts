@@ -22,9 +22,14 @@
  */
 
 /** How many ANSI-stripped stream segments above a confirm-footer to search
- *  for the selector's `❯ N.` cursor row. Mirrors extract.ts's
- *  SELECTOR_SEARCH_WINDOW. */
-const CURSOR_OPTION_WINDOW = 15
+ *  for the selector's `❯ N.` cursor row. Must be at least as tall as a real
+ *  widget can paint: with the cursor on option 1 and per-option descriptions
+ *  wrapped to a narrow pane, the footer lands 17+ segments below the `❯ 1.`
+ *  row, and a window smaller than that loses the pairing — the picker showing
+ *  right now goes unseen and the misread PERMITS a send instead of blocking
+ *  one. One screen's worth (the same bound recency uses) covers any widget;
+ *  mirrors extract.ts's SELECTOR_SEARCH_WINDOW. */
+const CURSOR_OPTION_WINDOW = 60
 
 /** How many trailing segments count as "the screen showing right now". ink
  *  repaints its whole widget, so the current frame is always at the bottom of
@@ -40,8 +45,28 @@ const INPUT_ROW_RE = /^\s*(╭─|╰─|│\s*>)|\? for shortcuts|^\s*❯(?!\s*
 /** A selector's confirm hint (`Enter to confirm · Esc to cancel`). */
 const SELECTOR_FOOTER_RE = /Enter to confirm/
 
-/** The selector's highlighted option row: `❯ 1. Yes, …`. */
-const CURSOR_OPTION_RE = /^\s*❯\s*\d+[.)]\s/
+/**
+ * The selector's highlighted row — `❯ 1. Yes, …`, and equally `❯ Dark mode`.
+ *
+ * The number is NOT part of what makes a picker. claude renders plenty of its
+ * own dialogs with indexes hidden (pointer + label, nothing more) — the theme
+ * chooser and the spend-limit "What do you want to do?" prompt among them —
+ * and those dialogs are borderless, so the cursor row was the only thing on
+ * screen to go on. Requiring `N.` here meant the confirm footer below such a
+ * picker found no cursor row to pair with and was discarded as an unpaired
+ * quote, while INPUT_ROW_RE happily claimed that same `❯ Dark mode` row as
+ * the input prompt. Verdict: 'input' — the one verdict that PERMITS a write,
+ * on the one screen where a write ends in Enter confirming a highlighted
+ * option.
+ *
+ * Requiring a non-space after the `❯` is what keeps the real prompt out: an
+ * idle input row is `❯ ` with nothing after it. A prompt with half-typed text
+ * in it does match — and that is fine, because this pattern is only ever
+ * consulted for a row sitting ABOVE a confirm footer, which the input box
+ * never has beneath it. Erring that way costs a refused send; erring the
+ * other way is the failure this module promises cannot happen.
+ */
+const CURSOR_OPTION_RE = /^\s*❯\s*(?!\/)\S/
 
 /**
  * Strips ANSI escape sequences and stray control characters, keeping \r and
