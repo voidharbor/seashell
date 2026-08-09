@@ -301,4 +301,44 @@ describe.skipIf(process.platform === 'win32')('control server', () => {
     await new Promise((r) => setTimeout(r, 150))
     expect(writes).toEqual([['pane-1', 'yes go ahead']])
   })
+
+  /**
+   * The idle timer must not fire on a request that is merely slow.
+   *
+   * After the request line arrives there is no traffic while `handle` awaits
+   * its `ps`, so a foreground check slower than the timeout used to look
+   * exactly like a silent client: the socket was destroyed, the pusher saw EOF
+   * with no JSON — indistinguishable from a refusal — and its retry typed the
+   * same text into the agent a second time.
+   *
+   * `idleTimeoutMs` is injected so this costs milliseconds instead of the five
+   * seconds production waits.
+   */
+  it('answers a request whose foreground check outlasts the idle timeout', async () => {
+    const { deps, writes } = makeFakes({
+      idleTimeoutMs: 30,
+      checkForeground: () => new Promise<boolean>((r) => setTimeout(() => r(true), 120)),
+    })
+    await start(deps)
+
+    const res = await request(deps.socketPath, typeReq())
+
+    expect(JSON.parse(res)).toEqual({ ok: true })
+    expect(writes).toEqual([['pane-1', 'yes go ahead']])
+  })
+
+  it('still reaps a client that connects and says nothing', async () => {
+    const { deps } = makeFakes({ idleTimeoutMs: 30 })
+    await start(deps)
+
+    const closedAt = await new Promise<number>((resolve, reject) => {
+      const started = Date.now()
+      const conn = net.createConnection(deps.socketPath)
+      conn.on('close', () => resolve(Date.now() - started))
+      conn.on('error', reject)
+      // Deliberately never writes.
+    })
+
+    expect(closedAt).toBeLessThan(1000)
+  })
 })

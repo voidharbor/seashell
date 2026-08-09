@@ -131,4 +131,70 @@ describe('approveCard', () => {
     if (!res.ok) expect(res.code).toBe('ESTALE')
     expect(writes).toHaveLength(0)
   })
+
+  /**
+   * The `ps` window.
+   *
+   * `checkForeground` shells out, and everything below re-enters during that
+   * suspension: a second click (ipcMain.handle dispatches invokes
+   * concurrently), a Deny, or the detector replacing the card. All three used
+   * to reach the write, because the card was read once before the await and
+   * never again.
+   */
+  describe('while the foreground check is in flight', () => {
+    it('writes once when two approves race', async () => {
+      const { deps, writes, cardId, store } = setup()
+      deps.checkForeground = () => new Promise<boolean>((r) => setTimeout(() => r(true), 40))
+
+      const [a, b] = await Promise.all([
+        approveCard(deps, { cardId, text: 'yes ship' }),
+        approveCard(deps, { cardId, text: 'yes ship' }),
+      ])
+
+      expect(writes).toEqual(['yes ship', '\r'])
+      expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1)
+      expect(store.cards()).toHaveLength(0)
+    })
+
+    it('does not deliver a card the user denied mid-flight', async () => {
+      const { deps, writes, cardId, store } = setup()
+      deps.checkForeground = () =>
+        new Promise<boolean>((r) => {
+          // Exactly what a user does when Approve looks like it did nothing.
+          store.dismiss(cardId)
+          setTimeout(() => r(true), 10)
+        })
+
+      const res = await approveCard(deps, { cardId, text: 'yes ship' })
+
+      expect(res.ok).toBe(false)
+      if (!res.ok) expect(res.code).toBe('ENOTFOUND')
+      expect(writes).toHaveLength(0)
+    })
+
+    it('does not answer a question the pane has already moved past', async () => {
+      const { deps, writes, cardId, store } = setup()
+      deps.checkForeground = () =>
+        new Promise<boolean>((r) => {
+          store.createFromPush('p1', 'actually, deploy to prod?', 'no')
+          setTimeout(() => r(true), 10)
+        })
+
+      const res = await approveCard(deps, { cardId, text: 'yes ship' })
+
+      expect(res.ok).toBe(false)
+      expect(writes).toHaveLength(0)
+    })
+
+    it('still delivers when nothing changes during the check', async () => {
+      const { deps, writes, cardId, store } = setup()
+      deps.checkForeground = () => new Promise<boolean>((r) => setTimeout(() => r(true), 20))
+
+      const res = await approveCard(deps, { cardId, text: 'yes ship' })
+
+      expect(res.ok).toBe(true)
+      expect(writes).toEqual(['yes ship', '\r'])
+      expect(store.cards()).toHaveLength(0)
+    })
+  })
 })
