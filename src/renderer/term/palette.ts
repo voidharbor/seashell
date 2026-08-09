@@ -20,9 +20,19 @@ import type { ITheme } from '@xterm/xterm'
  * (#00FF00) and xterm's ITheme has no slot for it, so bold text renders in the
  * normal foreground green rather than the brighter one.
  *
- * Main sets `force-color-profile=srgb` before app ready, because Terminal's
- * NSColor archives are device RGB while Chromium would otherwise composite in
- * the display's P3 profile.
+ * No `force-color-profile` switch is set, and none is needed. This comment used
+ * to claim main set one before app ready; it never did, and the claim survived
+ * long enough to nearly talk a later reader into adding a global rendering
+ * switch to fix a problem that does not exist.
+ *
+ * Measured instead, on the external 1x panel, as the most common fully-lit
+ * green pixel: Apple Terminal's Homebrew text and a SeaShell pane both land on
+ * exactly the same value, and so does a plain DOM swatch declared #28FE14. The
+ * three agree to the byte, so whatever the panel profile does to these values
+ * on the way to glass, it does identically to both apps — a channel delta of
+ * zero against the design's ±2/255 gate. If that is ever revisited, measure
+ * first: the numbers here are one capture apart, and the switch is not free
+ * (it would reach the webview guests and the PDF viewer too).
  */
 export const TERMINAL_APP_PALETTE: ITheme = {
   background: '#000000',
