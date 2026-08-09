@@ -392,16 +392,24 @@ body.dragging .sidebar__grip {
   font-size: calc(13.5px * var(--ui-scale));
 }
 
-.node:hover {
-  background: #16241660;
+/* Opaque and token-derived, because the old value was invisible. #16241660 is
+   37.6% alpha; composited over --chrome-bg it resolves to #0e170e — a step of
+   4, 8 and 4 parts in 255, or 1.06:1 against an unhovered row. That is inside
+   the same dead band this file's own token comment uses to argue that five
+   greys were one colour written five ways. --chrome-line measures 1.31:1,
+   which is exactly the step .sidebar__path:hover above already uses, and the
+   tree is the surface where you most need to see which row is under the
+   pointer before committing a double-click that opens something.
+
+   The exclusions are load-bearing rather than tidy. `.node:hover` is (0,2,0)
+   and outranks a bare state class at (0,1,0), and all three classes land on
+   the same element, so an opaque hover would paint straight over the selection
+   pill of the row you just clicked. The state rules below are written doubled
+   for the same reason, so either guard holds on its own. */
+.node:not(.node--selected):not(.node--revealed):hover {
+  background: var(--chrome-line);
 }
 
-/* Doubled deliberately. `.node:hover` is (0,2,0) — a class plus a pseudo-class
-   — and a single `.node--selected` is only (0,1,0), so specificity beat source
-   order and the hover tint replaced the selection pill on the most common
-   gesture in the tree: moving the pointer onto the row you just clicked. The
-   white text survived, leaving white-on-tint. Doubling ties the specificity,
-   and these rules already sit below the hover rule, so they win. */
 .node.node--selected {
   background: var(--select);
   color: #ffffff;

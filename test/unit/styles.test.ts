@@ -85,12 +85,26 @@ describe('the stylesheet covers what the components ask for', () => {
    * A DOM test cannot cover this: happy-dom never enters :hover state, so
    * getComputedStyle never exercises the cascade.
    */
-  it('keeps the explorer state rules at hover specificity', () => {
+  it('keeps the explorer state rules safe from the hover rule', () => {
+    // Guard one: the hover rule refuses to apply to a selected or revealed row.
+    const hover = /\.node(?=[^{]*:hover)[^{]*\{/.exec(css)?.[0] ?? ''
+    expect(hover, 'no .node hover rule found at all').not.toBe('')
+    expect(hover).toContain(':not(.node--selected)')
+    expect(hover).toContain(':not(.node--revealed)')
+
+    // Guard two: the state rules match hover's specificity anyway, so removing
+    // the exclusions above cannot silently bring the bug back.
     expect(css).toMatch(/\.node\.node--selected\s*\{/)
     expect(css).toMatch(/\.node\.node--revealed\s*\{/)
-    // The rules only win by being later in the file, so order is load-bearing.
-    expect(css.indexOf('.node:hover')).toBeLessThan(css.indexOf('.node.node--selected'))
-    expect(css.indexOf('.node.node--selected')).toBeLessThan(css.indexOf('.node.node--revealed'))
+
+    // Equal specificity means source order decides, so order is load-bearing.
+    const at = (needle: string): number => {
+      const i = css.indexOf(needle)
+      expect(i, `${needle} missing from the stylesheet`).toBeGreaterThan(-1)
+      return i
+    }
+    expect(at(hover)).toBeLessThan(at('.node.node--selected'))
+    expect(at('.node.node--selected')).toBeLessThan(at('.node.node--revealed'))
   })
 
   it('is actually looking at something', () => {
