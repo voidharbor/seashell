@@ -7,6 +7,8 @@ import {
   drawerHeightFromDrag,
 } from '../../src/renderer/layout/drawer.js'
 import { cdCommandFor } from '../../src/renderer/drawer/cd.js'
+import { DRAWER_PTY_PREFIX, drawerPtyId } from '../../src/renderer/drawer/id.js'
+import { paneById, type AppState } from '../../src/renderer/store.js'
 
 describe('clampDrawer', () => {
   it('holds the range', () => {
@@ -73,5 +75,50 @@ describe('cdCommandFor', () => {
   it('refuses empty and absurdly long paths', () => {
     expect(cdCommandFor('')).toBeNull()
     expect(cdCommandFor('/x'.repeat(3000))).toBeNull()
+  })
+})
+
+/**
+ * The drawer is one shell per pane, so its pty ids share the PtyManager map
+ * with every pane's. They must be unmistakable in it: main reaps by id, the
+ * renderer routes output by id, and a collision would send an agent's bytes
+ * into a scratch shell or vice versa.
+ */
+describe('drawerPtyId', () => {
+  it('namespaces the id so it can never be mistaken for a pane id', () => {
+    expect(drawerPtyId('p1')).toBe('drawer:p1')
+    expect(drawerPtyId('p1').startsWith(DRAWER_PTY_PREFIX)).toBe(true)
+  })
+
+  it('gives each pane its own, which is the whole feature', () => {
+    expect(drawerPtyId('p1')).not.toBe(drawerPtyId('p2'))
+  })
+
+  it('round-trips back to the pane it belongs to', () => {
+    const paneId = 'pane-abc123'
+    expect(drawerPtyId(paneId).slice(DRAWER_PTY_PREFIX.length)).toBe(paneId)
+  })
+})
+
+describe('paneById', () => {
+  const state = {
+    tabs: [
+      { id: 't1', panes: { a: { id: 'a', label: 'first' } } },
+      { id: 't2', panes: { b: { id: 'b', label: 'second' } } },
+    ],
+  } as unknown as AppState
+
+  it('finds a pane in a tab that is not the active one', () => {
+    // The drawer mount list is window-wide: a pane keeps its shell while you
+    // work in another tab, and rendering it needs that pane's label and cwd.
+    expect(paneById(state, 'b')?.label).toBe('second')
+  })
+
+  it('finds one in the first tab too', () => {
+    expect(paneById(state, 'a')?.label).toBe('first')
+  })
+
+  it('returns undefined for a pane that is gone, which is what triggers a reap', () => {
+    expect(paneById(state, 'nope')).toBeUndefined()
   })
 })

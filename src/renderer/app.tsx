@@ -3,7 +3,7 @@ import { computeLayout } from './layout/resize.js'
 import { dfsPaneOrder } from './layout/tree.js'
 import { MAX_PANES_PER_TAB, type RowNode } from './layout/types.js'
 import { applyDividerDrag, deriveDividers, type DividerSpec } from './layout/dividers.js'
-import { MAX_TAB_NAME, reducer, uid, type AppState, type PaneCommand } from './store.js'
+import { MAX_TAB_NAME, paneById, reducer, uid, type AppState, type PaneCommand } from './store.js'
 import {
   PaneView,
   forgetSpawn,
@@ -35,6 +35,7 @@ import {
 import { RAIL_DEFAULT, heightFromDrag, loadRailHeight, saveRailHeight } from './layout/rail.js'
 import { drawerHeightFromDrag, loadDrawerHeight, saveDrawerHeight } from './layout/drawer.js'
 import { DrawerShell } from './drawer/DrawerShell.js'
+import { drawerPtyId } from './drawer/id.js'
 import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
 import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
@@ -79,6 +80,15 @@ export function App(): React.JSX.Element {
    *  reopened itself on launch would be presuming; height persists. */
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(loadDrawerHeight)
+  /**
+   * Panes that have a drawer shell, in the order they first opened one.
+   *
+   * The drawer is one shell PER PANE, so this is the mount list: every id here
+   * gets a DrawerShell instance, and all but the focused one render hidden so
+   * their session, history and scrollback survive switching panes. Grown
+   * lazily — a pane that never opens the drawer never costs a shell.
+   */
+  const [drawerPanes, setDrawerPanes] = useState<string[]>([])
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
   const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial())
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1051,6 +1061,59 @@ export function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawerOpen])
 
+  /**
+   * Give the focused pane a drawer shell the first time it needs one.
+   *
+   * Lazy on purpose: mounting a DrawerShell spawns a login shell, so doing it
+   * for every pane up front would cost six shells nobody asked for. Runs while
+   * the drawer is open, which also covers switching panes with it open.
+   */
+  /**
+   * Which pane the drawer belongs to right now.
+   *
+   * Falls back to the first pane in the tab rather than trusting
+   * `focusedPaneId`, which is legitimately null — `focusAfterClose` returns
+   * null once the last pane in a tab goes, and a restored project can land the
+   * same way. With one shared drawer that never mattered because it was always
+   * mounted; now the mount list is keyed by pane, so a null here would mean
+   * ⌘J opens nothing at all, which reads as the feature being broken rather
+   * than as "no pane is focused".
+   */
+  const drawerPaneId = useMemo(() => {
+    if (!activeTab) return null
+    return activeTab.focusedPaneId ?? Object.keys(activeTab.panes)[0] ?? null
+  }, [activeTab])
+
+  useEffect(() => {
+    if (!drawerOpen || !drawerPaneId) return
+    setDrawerPanes((ids) => (ids.includes(drawerPaneId) ? ids : [...ids, drawerPaneId]))
+  }, [drawerOpen, drawerPaneId])
+
+  /**
+   * Reap a drawer shell whose pane is gone.
+   *
+   * Derived from live state rather than hooked into each of the several paths
+   * that destroy a pane — closing one, closing a tab, opening a project (which
+   * reaps every pane at once). Any of those that was missed would leave a
+   * login shell running with no way to reach it, and the app's one promise is
+   * that nothing it started outlives it.
+   *
+   * Unmounting alone is not enough: the component's cleanup disposes the
+   * terminal but a pty is main's, so it is killed explicitly here.
+   */
+  const livePaneIds = useMemo(
+    () => new Set(state.tabs.flatMap((t) => Object.keys(t.panes))),
+    [state.tabs]
+  )
+  useEffect(() => {
+    const orphans = drawerPanes.filter((id) => !livePaneIds.has(id))
+    if (orphans.length === 0) return
+    setDrawerPanes((ids) => ids.filter((id) => livePaneIds.has(id)))
+    for (const id of orphans) {
+      void window.seashell.pty.kill({ paneId: drawerPtyId(id) })
+    }
+  }, [drawerPanes, livePaneIds])
+
   if (!ready) return <div className="empty">Starting SeaShell…</div>
 
   const order = activeTab ? dfsPaneOrder(activeTab.tree) : []
@@ -1074,13 +1137,6 @@ export function App(): React.JSX.Element {
    */
   const lookoutCount = settings.lookoutCards ? lookoutBadgeCount(lookoutCards) : 0
 
-  /** Where a fresh drawer shell starts and where its "cd to pane" button goes:
-   *  the focused pane's live cwd (OSC 7 beats the spawn cwd, same preference
-   *  PaneView uses), the home directory when nothing is focused. */
-  const focusedForDrawer = activeTab?.focusedPaneId
-    ? activeTab.panes[activeTab.focusedPaneId]
-    : undefined
-  const drawerFocusCwd = focusedForDrawer?.metrics?.cwd || focusedForDrawer?.cwd || home
   /** Mirrors CardStack's own "is there anything to show" rule — a card for the
    *  focused pane is suppressed, so it does not make the rail appear. */
   /**
@@ -1439,18 +1495,27 @@ export function App(): React.JSX.Element {
             </div>
           )}
 
-          {/* The shell drawer overlays the grid only — never the sidebar —
-              and stays mounted across toggles so its session survives. */}
-          <DrawerShell
-            open={drawerOpen}
-            height={drawerHeight}
-            fontSize={fontSize}
-            focusCwd={drawerFocusCwd}
-            gridWidth={gridSize.width}
-            onReveal={(p, isDir) => revealPath(p, isDir)}
-            onClose={() => setDrawerOpen(false)}
-            onDragStart={startDrawerDrag}
-          />
+          {/* The shell drawer overlays the grid only — never the sidebar. One
+              instance per pane that has opened it, all mounted so their
+              sessions survive, and only the focused pane's is visible. */}
+          {drawerPanes.map((id) => {
+            const p = paneById(state, id)
+            return (
+              <DrawerShell
+                key={id}
+                paneId={id}
+                paneLabel={p?.label ?? 'pane'}
+                open={drawerOpen && id === drawerPaneId}
+                height={drawerHeight}
+                fontSize={fontSize}
+                focusCwd={p?.metrics?.cwd || p?.cwd || home}
+                gridWidth={gridSize.width}
+                onReveal={(path, isDir) => revealPath(path, isDir)}
+                onClose={() => setDrawerOpen(false)}
+                onDragStart={startDrawerDrag}
+              />
+            )
+          })}
 
           {state.toast && <div className="toast">{state.toast}</div>}
         </div>

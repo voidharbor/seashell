@@ -80,6 +80,22 @@ export interface PaneState {
 }
 
 /** Only terminal panes own a process, so only they can be spawned or reaped. */
+/**
+ * Finds a pane by id across every tab.
+ *
+ * Panes are keyed per tab, which is right for everything that works inside one
+ * tab. The drawer's mount list is window-wide, though: a pane that opened a
+ * drawer keeps its shell while you work in another tab, and rendering it needs
+ * that pane's label and cwd without knowing which tab it sits in.
+ */
+export function paneById(state: AppState, paneId: string): PaneState | undefined {
+  for (const tab of state.tabs) {
+    const pane = tab.panes[paneId]
+    if (pane) return pane
+  }
+  return undefined
+}
+
 export function isTerm(p: PaneState): boolean {
   return p.kind === 'term'
 }

@@ -3,24 +3,29 @@ import { PaneTerminal } from '../term/terminal.js'
 import { pathAtPoint } from '../panes/pathclick.js'
 import { currentHostname, terminals } from '../panes/PaneView.js'
 import { cdCommandFor } from './cd.js'
+import { drawerPtyId } from './id.js'
 
 /**
- * The drawer's pty id. It lives in the same PtyManager map as the panes, so
- * the quit drain kills it like any other shell and no process it started can
- * outlive the window — the promise the app is named for. It is NOT a pane:
- * never in a tab's state, never saved into a project, never scanned by the
- * Lookout detector, and opening a project (which reaps every live pane) leaves
- * it running. One drawer per window, its session persisting across toggles.
+ * These ptys live in the same PtyManager map as the panes, so the quit drain
+ * kills them like any other shell and nothing they started can outlive the
+ * window — the promise the app is named for. They are NOT panes: never in a
+ * tab's state, never saved into a project, never scanned by the Lookout
+ * detector. Main has no idea the drawer exists, which is what made re-keying
+ * these ids from one shared shell to one per pane safe.
  */
-export const DRAWER_PANE_ID = 'drawer-shell'
 
 export interface DrawerShellProps {
+  /** The pane this drawer belongs to. One shell per pane, so switching panes
+   *  switches shells rather than sharing one across all of them. */
+  paneId: string
+  /** Shown in the header so it is obvious whose shell this is. */
+  paneLabel: string
   open: boolean
   /** Base height in CSS px at zoom 1 (layout/drawer.ts owns the clamp). */
   height: number
   fontSize: number
-  /** The focused pane's live cwd — where a fresh drawer shell starts, and
-   *  where the "cd to pane" button goes. */
+  /** This pane's live cwd — where its drawer shell starts, and where the
+   *  "cd to pane" button goes. */
   focusCwd: string
   /** Grid width in px; only watched so the terminal refits when it changes. */
   gridWidth: number
@@ -35,22 +40,32 @@ export interface DrawerShellProps {
  * (SEASHELL-2): the agent owns each pane's pty, so a quick `git status` used
  * to mean making (and then closing) a whole new pane.
  *
- * The component stays mounted whatever `open` is, hidden with display:none —
- * the same technique pane zoom uses — so the shell session, its history and
- * its scrollback survive toggles. It is never refit while hidden (SIGWINCH
- * discipline, same as background panes) and WebGL is only held while visible.
+ * **One shell per pane.** The first version shared a single shell across every
+ * pane, which was the follow-up report: "it seems to be independent of the
+ * selected pane, just one shell for all of them". Each pane now gets its own,
+ * spawned lazily the first time you open the drawer while that pane is
+ * focused, starting in that pane's working directory. Switching panes switches
+ * shells, each keeping its own history, cwd and scrollback.
  *
- * The shell is spawned lazily on first open, at the focused pane's cwd. After
- * the user exits it (`exit`, ctrl-d), the next open builds a fresh terminal
- * and spawns a fresh shell — which starts at the *now*-focused pane's cwd, so
- * an exited drawer follows focus again.
+ * One instance of this component is mounted per pane that has ever opened a
+ * drawer, and all but the focused one are hidden with display:none — the same
+ * technique pane zoom uses — so a shell survives both toggling the drawer and
+ * switching away and back. Hidden instances are never refit (SIGWINCH
+ * discipline, same as background panes) and hold no WebGL context.
+ *
+ * After the user exits a shell (`exit`, ctrl-d), the next open of that pane's
+ * drawer builds a fresh terminal and spawns a fresh shell at the pane's
+ * current cwd.
  *
  * Isolation rule (the constraint the feature ask came with): nothing here can
- * reach an agent's pty. Input is wired straight to DRAWER_PANE_ID and the one
- * composed command (`cd`, quoted and control-char-refused in cd.ts) is typed
- * visibly into the drawer itself, never into a pane.
+ * reach an agent's pty. Input is wired straight to this drawer's own pty id,
+ * which is namespaced away from every pane id, and the one composed command
+ * (`cd`, quoted and control-char-refused in cd.ts) is typed visibly into the
+ * drawer itself, never into a pane.
  */
 export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
+  /** Stable for this instance: app.tsx keys one DrawerShell per pane. */
+  const ptyId = drawerPtyId(props.paneId)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const spawnedRef = useRef(false)
   const exitedRef = useRef(false)
@@ -69,10 +84,10 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
     if (!host) return
 
     const t = new PaneTerminal({
-      paneId: DRAWER_PANE_ID,
+      paneId: ptyId,
       container: host,
-      onInput: (data) => window.seashell.pty.write({ paneId: DRAWER_PANE_ID, data }),
-      onResize: (cols, rows) => window.seashell.pty.resize({ paneId: DRAWER_PANE_ID, cols, rows }),
+      onInput: (data) => window.seashell.pty.write({ paneId: ptyId, data }),
+      onResize: (cols, rows) => window.seashell.pty.resize({ paneId: ptyId, cols, rows }),
       onHttpLink: (url) => void window.seashell.open.externalHttp({ url }),
       onTitle: setTitle,
       hostname: currentHostname(),
@@ -93,14 +108,14 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
           })
       },
     })
-    terminals.set(DRAWER_PANE_ID, t)
+    terminals.set(ptyId, t)
     return () => {
-      terminals.delete(DRAWER_PANE_ID)
+      terminals.delete(ptyId)
       t.dispose()
     }
     // Recreated only after an exit (gen); font size is applied by the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gen])
+  }, [gen, ptyId])
 
   // The drawer's own exit watch. The global onExit handler dispatches
   // pane.exited, which no-ops for an id no tab owns — this is the handler
@@ -108,17 +123,17 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
   useEffect(
     () =>
       window.seashell.pty.onExit((e) => {
-        if (e.paneId !== DRAWER_PANE_ID) return
+        if (e.paneId !== ptyId) return
         spawnedRef.current = false
         exitedRef.current = true
-        terminals.get(DRAWER_PANE_ID)?.markExited()
+        terminals.get(ptyId)?.markExited()
       }),
-    []
+    [ptyId]
   )
 
   // Open/close: spawn if needed, refit + WebGL only while visible, focus.
   useEffect(() => {
-    const t = terminals.get(DRAWER_PANE_ID)
+    const t = terminals.get(ptyId)
     if (!props.open) {
       t?.disableWebgl()
       return
@@ -137,7 +152,7 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
       spawnedRef.current = true
       void window.seashell.pty
         .spawn({
-          paneId: DRAWER_PANE_ID,
+          paneId: ptyId,
           file: '/bin/zsh',
           args: ['-l'],
           cwd: props.focusCwd,
@@ -155,15 +170,15 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
     // focusCwd is read at spawn time only — the drawer starting where focus
     // WAS when it first opened is the feature, not a stale dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.open, gen])
+  }, [props.open, gen, ptyId])
 
   // Geometry and font follow the app; never refit while hidden.
   useEffect(() => {
-    if (props.open) terminals.get(DRAWER_PANE_ID)?.refit()
-  }, [props.open, props.height, props.gridWidth])
+    if (props.open) terminals.get(ptyId)?.refit()
+  }, [props.open, props.height, props.gridWidth, ptyId])
   useEffect(() => {
-    terminals.get(DRAWER_PANE_ID)?.setFontSize(props.fontSize)
-  }, [props.fontSize, gen])
+    terminals.get(ptyId)?.setFontSize(props.fontSize)
+  }, [props.fontSize, gen, ptyId])
 
   const cdToPane = (): void => {
     const cmd = cdCommandFor(props.focusCwd)
@@ -172,8 +187,8 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
     // stray byte from a terminal-response race (observed once live: a lone "2"
     // turned the command into `2cd …`). Killing the line makes the write mean
     // "run this", not "append this to whatever was there".
-    window.seashell.pty.write({ paneId: DRAWER_PANE_ID, data: `\x15${cmd}\r` })
-    terminals.get(DRAWER_PANE_ID)?.term.focus()
+    window.seashell.pty.write({ paneId: ptyId, data: `\x15${cmd}\r` })
+    terminals.get(ptyId)?.term.focus()
   }
 
   return (
@@ -190,7 +205,9 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
         onMouseDown={props.onDragStart}
       />
       <div className="drawer__head">
-        <span className="drawer__label">Shell</span>
+        {/* Names the pane, because "which shell am I looking at" was the whole
+            complaint that turned one shared shell into one per pane. */}
+        <span className="drawer__label">Shell · {props.paneLabel}</span>
         <span className="drawer__cwd" title={cwd || props.focusCwd}>
           {title || cwd || props.focusCwd}
         </span>
