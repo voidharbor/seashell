@@ -73,6 +73,26 @@ describe('the stylesheet covers what the components ask for', () => {
     expect(missing).toEqual([])
   })
 
+  /**
+   * `.node:hover` is (0,2,0) — a class and a pseudo-class. A state rule written
+   * as a bare `.node--selected` is (0,1,0), so specificity beat source order
+   * and hovering the row you had just clicked replaced its blue selection pill
+   * with the hover tint, leaving the white text on it. The fix is to double the
+   * selector, and the only thing that can undo it is someone tidying the
+   * "redundant" `.node` back off — which looks like a cleanup and is a
+   * regression, so it is pinned here.
+   *
+   * A DOM test cannot cover this: happy-dom never enters :hover state, so
+   * getComputedStyle never exercises the cascade.
+   */
+  it('keeps the explorer state rules at hover specificity', () => {
+    expect(css).toMatch(/\.node\.node--selected\s*\{/)
+    expect(css).toMatch(/\.node\.node--revealed\s*\{/)
+    // The rules only win by being later in the file, so order is load-bearing.
+    expect(css.indexOf('.node:hover')).toBeLessThan(css.indexOf('.node.node--selected'))
+    expect(css.indexOf('.node.node--selected')).toBeLessThan(css.indexOf('.node.node--revealed'))
+  })
+
   it('is actually looking at something', () => {
     // A guard on the guard: if the scan silently found nothing, the assertion
     // above would pass forever while checking nothing at all.

@@ -396,7 +396,13 @@ body.dragging .sidebar__grip {
   background: #16241660;
 }
 
-.node--selected {
+/* Doubled deliberately. `.node:hover` is (0,2,0) — a class plus a pseudo-class
+   — and a single `.node--selected` is only (0,1,0), so specificity beat source
+   order and the hover tint replaced the selection pill on the most common
+   gesture in the tree: moving the pointer onto the row you just clicked. The
+   white text survived, leaving white-on-tint. Doubling ties the specificity,
+   and these rules already sit below the hover rule, so they win. */
+.node.node--selected {
   background: var(--select);
   color: #ffffff;
 }
@@ -405,7 +411,11 @@ body.dragging .sidebar__grip {
   color: #ffffffcc;
 }
 
-.node--revealed {
+/* Doubled for the same reason as .node.node--selected above, and it hid the bug
+   better: an animation outranks author declarations, so the reveal highlight
+   held for the 1.4s flash and then lost to hover for the rest of its 2.5s
+   life. Stays below the selected rule, so a revealed+selected row is green. */
+.node.node--revealed {
   background: #2f6b28;
   color: #ffffff;
   animation: revealFlash 1.4s ease-out;
