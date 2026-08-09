@@ -226,6 +226,36 @@ export class PaneTerminal {
   private attachKeyHandler(): void {
     this.term.attachCustomKeyEventHandler((ev) => {
       if (ev.type === 'keydown' && ev.key === 'Enter' && ev.shiftKey && !ev.metaKey && !ev.ctrlKey) {
+        /**
+         * `preventDefault` is load-bearing, and its absence is why this
+         * binding did not work.
+         *
+         * Returning false makes xterm return early from its own keydown
+         * handler, but xterm does NOT call preventDefault for you — see
+         * CoreBrowserTerminal `_keyDown`, which simply `return false`s. The
+         * browser then goes on to deliver the same Enter to xterm's hidden
+         * textarea, and a second CR reaches the pty behind the escape
+         * sequence.
+         *
+         * Captured off a real pane, `cat` receiving the raw bytes (the tty
+         * turns CR into LF on input):
+         *
+         *   Shift+Enter   1b 0a 0a      <- ESC CR, then a stray CR
+         *   Alt+Enter     1b 0a
+         *   Enter         0a
+         *
+         * A coding agent reads that pair as "insert a newline, then submit",
+         * so Shift+Enter sent the message instead of adding a line — while
+         * Alt+Enter, which xterm encodes itself and which therefore has no
+         * duplicate, worked. That is exactly the difference a user would
+         * report as "shift-return does not work here but alt-return does".
+         *
+         * Deliberately not added to the other two `return false` branches
+         * below: both WANT the default. The Cmd chord branch needs the
+         * browser's own copy/paste on the textarea, and the kill-line branch
+         * sends Ctrl+U in place of an erase the program may not honour.
+         */
+        ev.preventDefault()
         this.opts.onInput('\x1b\r')
         return false
       }

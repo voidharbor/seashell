@@ -77,6 +77,36 @@ describe('terminal host surfaces', () => {
     expect(terminalTs).toMatch(/new FontFace\([\s\S]{0,120}weight: TERMINAL_FONT_WEIGHTS/)
   })
 
+  /**
+   * Shift+Enter must preventDefault, or it sends a stray second CR.
+   *
+   * xterm returns early when a custom key handler returns false but does not
+   * preventDefault, so the browser still delivers the Enter to xterm's hidden
+   * textarea. Measured off a real pane: `1b 0a 0a` before, `1b 0a` after,
+   * against `1b 0a` for Alt+Enter. An agent read the extra byte as "submit".
+   *
+   * There is no way to reach this from a unit test — it needs a real xterm, a
+   * real browser default and a real pty — so the source is pinned instead. The
+   * other two `return false` branches must NOT gain a preventDefault: the Cmd
+   * branch needs the browser's own copy, and the kill-line branch deliberately
+   * lets the erase through.
+   */
+  it('cancels the browser default on Shift+Enter, and only there', () => {
+    // Comments are stripped first: the note on this very branch says the words
+    // "return false", which a naive scan happily matched instead of the code.
+    const code = terminalTs.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+
+    const handler = /attachCustomKeyEventHandler\(\(ev\) => \{[\s\S]*?\n    \}\)/.exec(code)?.[0] ?? ''
+    expect(handler, 'could not find the custom key handler').not.toBe('')
+
+    const shiftEnter = /ev\.key === 'Enter' && ev\.shiftKey[\s\S]*?return false/.exec(handler)?.[0] ?? ''
+    expect(shiftEnter, 'could not find the Shift+Enter branch').not.toBe('')
+    expect(shiftEnter).toContain('ev.preventDefault()')
+
+    // Exactly one preventDefault in the whole handler.
+    expect(handler.match(/ev\.preventDefault\(\)/g) ?? []).toHaveLength(1)
+  })
+
   it('does not force grayscale font smoothing on the chrome', () => {
     // `-webkit-font-smoothing: antialiased` measured ~70% fewer fully-covered
     // pixels on a 1x display, i.e. visibly lighter text than any native window.
