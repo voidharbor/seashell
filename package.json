@@ -1,6 +1,6 @@
 {
   "name": "seashell",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "description": "A terminal window manager for macOS — tiled panes, a built-in file explorer, and clickable file paths.",
   "license": "Apache-2.0",
   "private": true,
