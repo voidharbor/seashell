@@ -20,6 +20,7 @@ import { writeTextFile } from './fs/write.js'
 import { statBatch } from './fs/stat-batch.js'
 import { decideRoute, VIEWER_MAX_BYTES } from './fs/route.js'
 import { denyOpenPath, extOf } from './fs/path-guard.js'
+import { statForOpen, type OpenTarget } from './fs/open-target.js'
 import { platform } from './platform/index.js'
 import {
   MAX_NAME_LENGTH,
@@ -182,17 +183,21 @@ export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
     // The renderer is never an authority on paths: resolve and stat here.
     const abs = path.resolve(parsed.data.path)
     try {
-      const st = await fs.lstat(abs)
-      const isDir = st.isDirectory()
+      // Routed on the target for the same reason the open handler guards it —
+      // decideRoute calls denyOpenPath, whose whole contract is that it is
+      // handed a realpath. `ext` stays the name the user sees in the tree;
+      // only the safety decision follows the link. `size` follows it too, so
+      // the viewer's size ceiling is measured against the bytes it would
+      // actually read.
+      const target = await statForOpen(abs)
       const ext = extOf(path.basename(abs))
-      const execBit = (st.mode & 0o111) !== 0 && st.isFile()
       const route = decideRoute({
-        resolvedPath: abs,
-        isDir,
-        size: st.size,
-        isExecutable: execBit,
+        resolvedPath: target.real,
+        isDir: target.isDir,
+        size: target.size,
+        isExecutable: target.isExecutable,
       })
-      return { exists: true, isDir, size: st.size, ext, route }
+      return { exists: true, isDir: target.isDir, size: target.size, ext, route }
     } catch {
       return miss
     }
@@ -263,10 +268,21 @@ export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
     const parsed = OpenReq.safeParse(raw)
     if (!parsed.success) return { ok: false, error: 'invalid path' }
     const abs = path.resolve(parsed.data.path)
+    let target: OpenTarget
     try {
-      const st = await fs.lstat(abs)
-      const execBit = (st.mode & 0o111) !== 0 && st.isFile()
-      if (denyOpenPath({ resolvedPath: abs, isExecutable: execBit, isDir: st.isDirectory() })) {
+      // Guard the target, not the link — see statForOpen. LaunchServices
+      // follows the link either way, so anything less was inspecting one file
+      // and opening another.
+      target = await statForOpen(abs)
+      if (
+        denyOpenPath({
+          resolvedPath: target.real,
+          isExecutable: target.isExecutable,
+          isDir: target.isDir,
+        })
+      ) {
+        // Reveal the path the user actually clicked, not its target: that is
+        // the row they can see.
         shell.showItemInFolder(abs)
         return { ok: false, error: 'refused-executable' }
       }
@@ -275,7 +291,7 @@ export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
     }
     // openPath goes through NSWorkspace with the path as a single argument.
     // No shell is involved, so a filename containing `;` or `$(...)` is inert.
-    const err = await shell.openPath(abs)
+    const err = await shell.openPath(target.real)
     return err ? { ok: false, error: err } : { ok: true }
   })
 
