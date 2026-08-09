@@ -397,7 +397,15 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
     // keystroke the user is trying to type into the query field.
     if (!focused || hidden || props.findOpen) return
     terminals.get(pane.id)?.term.focus()
-  }, [focused, hidden, pane.id, props.findOpen])
+    // `generation` for the same reason as the WebGL effect above: on a restart
+    // the pane was already focused, so nothing in the other deps moves, and
+    // this never ran against the replacement terminal. Disposing the old one
+    // takes xterm's helper textarea out of the DOM with it, so activeElement
+    // falls back to <body> and the shell you just restarted cannot be typed
+    // into until you click the pane. Focusing an already-focused textarea is a
+    // no-op, so the extra runs cost nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focused, hidden, pane.id, generation, props.findOpen])
 
   useEffect(() => {
     if (pane.status === 'exited') terminals.get(pane.id)?.markExited()

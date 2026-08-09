@@ -146,3 +146,38 @@ describe('a restarted pane keeps its WebGL renderer', () => {
     expect(built).toHaveLength(1)
   })
 })
+
+/**
+ * The same miss, in the focus effect. Restarting a pane you were already
+ * focused on moves none of `[focused, hidden, pane.id, findOpen]`, so the
+ * effect never ran against the replacement — and disposing the old terminal
+ * takes xterm's helper textarea out of the DOM, dropping activeElement to
+ * <body>. The shell you just restarted could not be typed into until you
+ * clicked the pane.
+ */
+describe('a restarted pane takes keyboard focus back', () => {
+  it('focuses the terminal built for a new generation', () => {
+    const { rerender } = render(<PaneView {...props()} />)
+    expect(built[0]!.term.focus).toHaveBeenCalled()
+
+    rerender(<PaneView {...props({ pane: pane({ generation: 1 }) })} />)
+
+    expect(built).toHaveLength(2)
+    expect(
+      built[1]!.term.focus,
+      'the restarted pane never took focus, so the new shell could not be typed into'
+    ).toHaveBeenCalled()
+  })
+
+  it('does not steal focus for an unfocused pane', () => {
+    const { rerender } = render(<PaneView {...props({ focused: false })} />)
+    rerender(<PaneView {...props({ focused: false, pane: pane({ generation: 1 }) })} />)
+    expect(built[1]!.term.focus).not.toHaveBeenCalled()
+  })
+
+  it('does not steal focus from an open find bar', () => {
+    const { rerender } = render(<PaneView {...props({ findOpen: true })} />)
+    rerender(<PaneView {...props({ findOpen: true, pane: pane({ generation: 1 }) })} />)
+    expect(built[1]!.term.focus).not.toHaveBeenCalled()
+  })
+})
