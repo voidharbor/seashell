@@ -89,15 +89,34 @@ body {
   color: var(--text);
   font-family: var(--ui-font);
   font-size: var(--ui-font-size);
-  /* Deliberately NOT `antialiased`, which is the reflex for a dark UI and is
-     wrong on this one. It forces plain grayscale rasterization and throws away
-     the contrast enhancement Chromium normally applies, which on a 1x display
-     is most of the ink: measured on a row of 13px text, fully-covered pixels
-     fell from 690 to 206 under `antialiased`, i.e. the chrome rendered
-     markedly lighter and thinner than the macOS windows next to it. `auto`
-     matches what every native app gets. It is not subpixel/LCD rendering and
-     carries no fringing risk — macOS has been grayscale-only since Mojave, and
-     `auto` and `subpixel-antialiased` measured pixel-identical here. */
+  /* Deliberately NOT `antialiased`. That is the reflex setting for a dark UI,
+     it was here from the first commit, and it was the single largest cause of
+     terminal text looking worse than the Terminal.app window next to it.
+
+     It does not stay in the chrome. `-webkit-font-smoothing` is inherited, and
+     the WebGL glyph atlas rasterizes every glyph with fillText on a canvas it
+     deliberately appends into the terminal element so that it inherits font
+     CSS — see the comment at TextureAtlas.ts `_drawToCache`, and the
+     `this._terminal.element` passed from GlyphRenderer. So this one line
+     reached the panes' glyph rasterization, where it disables the contrast
+     enhancement Chromium normally applies and leaves 13px stems as partial
+     coverage instead of solid pixels.
+
+     Measured in the running app on the 1x display, over a pane of output, as
+     the share of inked pixels at full strength:
+
+       antialiased   8.5% full   87.0% mid    <- what shipped
+       auto         34.2% full   60.8% mid
+       Apple Terminal (the target)  27.5% full  63.0% mid
+
+     `auto` is not subpixel/LCD rendering and carries no fringing risk: macOS
+     has been grayscale-only since Mojave, and `auto` and
+     `subpixel-antialiased` measured pixel-identical here.
+
+     It also removes an inconsistency. xterm pre-rasterizes ASCII 33-126 in an
+     idle task with the atlas canvas still detached, so those glyphs were baked
+     under the document default while later ones were baked under this rule —
+     whichever won the race. With `auto` both paths agree. */
   -webkit-font-smoothing: auto;
   user-select: none;
   cursor: default;

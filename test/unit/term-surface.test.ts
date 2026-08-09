@@ -67,6 +67,16 @@ describe('terminal host surfaces', () => {
     for (const host of TERMINAL_HOSTS) expect(sources).toContain(host)
   })
 
+  it('declares a weight range on the terminal face so bold reaches the real Bold cut', () => {
+    // SFMono-Terminal.ttf is a variable font. With no weight descriptor the
+    // face declares 400 only, a request for bold is clamped back to it, and
+    // bold text measured within 1% of normal weight — see the note on
+    // TERMINAL_FONT_WEIGHTS. document.fonts.check('bold …') returns true either
+    // way, so the descriptor itself is the only honest thing to assert on.
+    expect(terminalTs).toMatch(/TERMINAL_FONT_WEIGHTS\s*=\s*'295 900'/)
+    expect(terminalTs).toMatch(/new FontFace\([\s\S]{0,120}weight: TERMINAL_FONT_WEIGHTS/)
+  })
+
   it('does not force grayscale font smoothing on the chrome', () => {
     // `-webkit-font-smoothing: antialiased` measured ~70% fewer fully-covered
     // pixels on a 1x display, i.e. visibly lighter text than any native window.
