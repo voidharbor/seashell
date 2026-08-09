@@ -114,6 +114,17 @@ export class MetricsMonitor {
     this.sleeping = false
     try {
       await this.tick()
+    } catch {
+      // A failed sample is never fatal, and skipping the send is already how
+      // an empty sweep reports itself — the status bar keeps its last good
+      // reading rather than showing invented zeroes.
+      //
+      // Without this the rejection escapes a `void this.run()`: readSystemMemory
+      // is the one sampler with no internal catch, and it shells out to
+      // /usr/bin/vm_stat, which does not exist off macOS and which fails to
+      // fork under exactly the memory pressure this monitor exists to display.
+      // `finally` has already re-armed the next tick, so the loop survived —
+      // but every tick raised an unhandled rejection.
     } finally {
       // The window is created before the monitor starts, but re-attaching is
       // cheap and covers a window replaced under a long-lived monitor.
