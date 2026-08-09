@@ -47,9 +47,22 @@ mac:
   extendInfo:
     NSSupportsAutomaticGraphicsSwitching: true
     NSHighResolutionCapable: true
-  # Unsigned local build. Distribution requires signing + notarization;
-  # arm64 in particular will not launch without at least an ad-hoc signature.
-  identity: null
+  # Ad-hoc signed, which is not the same as unsigned and is not optional.
+  #
+  # This used to be `null`, directly under a comment saying arm64 will not
+  # launch without at least an ad-hoc signature — `null` tells electron-builder
+  # to skip signing altogether, so the comment described the requirement and
+  # the setting broke it. @electron/universal rewrites the merged binary, which
+  # invalidates the signature Electron shipped with, and macOS refuses to
+  # execute arm64 code whose signature does not verify. On an Intel host
+  # nothing complains, so the x64 half kept working and the arm64 half was
+  # never exercised here.
+  #
+  # `-` is codesign's ad-hoc identity: no certificate, no Apple Developer
+  # account, nothing that can leave this machine. It does not touch Gatekeeper
+  # — a downloaded dmg still needs the quarantine step in the README — it only
+  # makes the code loadable.
+  identity: '-'
   hardenedRuntime: false
   gatekeeperAssess: false
 
