@@ -88,7 +88,51 @@ export class PaneTerminal {
 
       scrollback: 5000,
       smoothScrollDuration: 0,
-      allowTransparency: false,
+
+      /**
+       * On, and measured rather than reasoned — the name is misleading here.
+       *
+       * With this off, the WebGL glyph atlas rasterizes each glyph onto an
+       * opaque canvas filled with the cell's background colour and then runs
+       * `clearColor()` to turn that background back into alpha. That pass does
+       * not only clear exact background pixels: it also zeroes every pixel
+       * within `(|Δr| + |Δg| + |Δb|) / 12` of it. For this palette — #28FE14 on
+       * #000000 — that threshold is 26, which deletes every antialiased edge
+       * pixel below roughly 8% coverage. That faint tail is precisely what
+       * makes a curve read as a curve rather than as a staircase.
+       *
+       * Measured in the running app on a 1x display, as the share of a pane's
+       * inked pixels that are faint (sub-12%-coverage) edge pixels:
+       *
+       *   Apple Terminal, the fidelity target      9.6%
+       *   allowTransparency: true                 14.6%
+       *   allowTransparency: false                 4.9%   <- what shipped
+       *
+       * This is the second half of the fix; the first is the font-smoothing
+       * note in styles.css, which mattered more. Together they take a pane
+       * from 8.5% of ink at full strength to 31.8%, against Terminal's 27.5%.
+       *
+       * On, the atlas skips clearColor entirely and keeps the whole alpha ramp.
+       * It costs nothing measurable: writing 1,200 lines of 110 varied
+       * characters went 14.6ms -> 15.8ms, and mean frame time did not move.
+       *
+       * Two things do change, both checked against every zoom rung:
+       *  - An underline no longer breaks around a descender. The gap came from
+       *    a background-coloured outline stroke that is only drawable on an
+       *    opaque atlas. A continuous rule is what Terminal draws anyway.
+       *  - xterm's rescue for an underscore that renders below its cell is
+       *    skipped. Verified unnecessary for this face: `_` stays inside the
+       *    cell at all eight ladder sizes, at both 1x and 2x.
+       *
+       * Nothing becomes see-through. What changes is *who paints the black*:
+       * xterm stops baking the cell background into the atlas and leaves
+       * default-background cells to the element underneath, so every element
+       * hosting a terminal must paint --term-bg itself. .pane__term and
+       * .drawer__term do, and term-surface.test.ts holds them to it — without
+       * that, the drawer's terminal composites over --chrome-bg and reads
+       * green-tinted instead of black.
+       */
+      allowTransparency: true,
       allowProposedApi: true,
       theme: TERMINAL_APP_PALETTE,
 
@@ -505,6 +549,51 @@ export function effectiveFontSize(px: number): number {
 }
 
 /**
+ * The declared weight range. Without it, bold text was not bold.
+ *
+ * `SFMono-Terminal.ttf` is a two-axis variable font: `wght` runs 294.673–900
+ * (default 294.673, the `Light` position — `name` ID 2 is literally "Light"),
+ * and the named instances put `Regular` at 400 and `Bold` at 683.29.
+ *
+ * `new FontFace(family, buf)` with no descriptor object declares a weight
+ * capability of `normal`, i.e. 400 alone. A request for 700 is then clamped
+ * back into that range and never reaches the Bold cut.
+ *
+ * What that actually cost, measured in the app by rasterizing a stem-heavy
+ * sample into a 2D canvas and summing coverage:
+ *
+ *                        no descriptor    weight: '295 900'
+ *   font-weight normal        102,746          102,746
+ *   font-weight bold          103,661          138,190
+ *
+ * So normal text was never the problem — Chromium maps the CSS font-weight
+ * onto the registered `wght` axis whatever the descriptor says, and 400 was
+ * already 400. Bold was the problem: it landed within 1% of normal weight.
+ * Claude Code uses bold constantly, so most of what it emphasised was not
+ * visibly emphasised at all.
+ *
+ * Note that `document.fonts.check('bold 13px "SF Mono Terminal"')` returns
+ * true in *both* columns above. It reports family availability, not whether
+ * the weight was honoured, so it is useless as a guard here — which is why
+ * the test asserts on the descriptor instead.
+ *
+ * Declaring the range cannot move any cell: the advance is invariant across
+ * the axis, 1266/2048 = 0.618164 em at Light, at 400 and at Bold alike. That
+ * is the same advance the residual ladder in zoom.ts and palette.ts is built
+ * on.
+ *
+ * `YAXS`, the second axis, is deliberately left alone. It is not
+ * CSS-registered, so reaching it means a blanket `font-variation-settings`,
+ * which would override the property-derived value for bold cells too and pin
+ * them away from the real Bold instance's 335.84 — a new fidelity error at
+ * exactly the weight this fix exists to correct, in exchange for 0.058px on a
+ * horizontal hairline.
+ *
+ * This is what §4.2 and hazard row 11 of the design spec asked for.
+ */
+const TERMINAL_FONT_WEIGHTS = '295 900'
+
+/**
  * Loads Terminal.app's own private monospace face at runtime.
  *
  * It is not registered system-wide, so CSS cannot reach it by name without
@@ -517,7 +606,10 @@ export async function loadTerminalFont(): Promise<boolean> {
   try {
     const buf = await window.seashell.app.getTerminalFont?.()
     if (!buf) return false
-    const face = new FontFace('SF Mono Terminal', buf)
+    const face = new FontFace('SF Mono Terminal', buf, {
+      weight: TERMINAL_FONT_WEIGHTS,
+      style: 'normal',
+    })
     await face.load()
     document.fonts.add(face)
     fontLoaded = true

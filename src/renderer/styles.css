@@ -89,7 +89,35 @@ body {
   color: var(--text);
   font-family: var(--ui-font);
   font-size: var(--ui-font-size);
-  -webkit-font-smoothing: antialiased;
+  /* Deliberately NOT `antialiased`. That is the reflex setting for a dark UI,
+     it was here from the first commit, and it was the single largest cause of
+     terminal text looking worse than the Terminal.app window next to it.
+
+     It does not stay in the chrome. `-webkit-font-smoothing` is inherited, and
+     the WebGL glyph atlas rasterizes every glyph with fillText on a canvas it
+     deliberately appends into the terminal element so that it inherits font
+     CSS — see the comment at TextureAtlas.ts `_drawToCache`, and the
+     `this._terminal.element` passed from GlyphRenderer. So this one line
+     reached the panes' glyph rasterization, where it disables the contrast
+     enhancement Chromium normally applies and leaves 13px stems as partial
+     coverage instead of solid pixels.
+
+     Measured in the running app on the 1x display, over a pane of output, as
+     the share of inked pixels at full strength:
+
+       antialiased   8.5% full   87.0% mid    <- what shipped
+       auto         34.2% full   60.8% mid
+       Apple Terminal (the target)  27.5% full  63.0% mid
+
+     `auto` is not subpixel/LCD rendering and carries no fringing risk: macOS
+     has been grayscale-only since Mojave, and `auto` and
+     `subpixel-antialiased` measured pixel-identical here.
+
+     It also removes an inconsistency. xterm pre-rasterizes ASCII 33-126 in an
+     idle task with the atlas canvas still detached, so those glyphs were baked
+     under the document default while later ones were baked under this rule —
+     whichever won the race. With `auto` both paths agree. */
+  -webkit-font-smoothing: auto;
   user-select: none;
   cursor: default;
 }
@@ -364,11 +392,25 @@ body.dragging .sidebar__grip {
   font-size: calc(13.5px * var(--ui-scale));
 }
 
-.node:hover {
-  background: #16241660;
+/* Opaque and token-derived, because the old value was invisible. #16241660 is
+   37.6% alpha; composited over --chrome-bg it resolves to #0e170e — a step of
+   4, 8 and 4 parts in 255, or 1.06:1 against an unhovered row. That is inside
+   the same dead band this file's own token comment uses to argue that five
+   greys were one colour written five ways. --chrome-line measures 1.31:1,
+   which is exactly the step .sidebar__path:hover above already uses, and the
+   tree is the surface where you most need to see which row is under the
+   pointer before committing a double-click that opens something.
+
+   The exclusions are load-bearing rather than tidy. `.node:hover` is (0,2,0)
+   and outranks a bare state class at (0,1,0), and all three classes land on
+   the same element, so an opaque hover would paint straight over the selection
+   pill of the row you just clicked. The state rules below are written doubled
+   for the same reason, so either guard holds on its own. */
+.node:not(.node--selected):not(.node--revealed):hover {
+  background: var(--chrome-line);
 }
 
-.node--selected {
+.node.node--selected {
   background: var(--select);
   color: #ffffff;
 }
@@ -377,7 +419,11 @@ body.dragging .sidebar__grip {
   color: #ffffffcc;
 }
 
-.node--revealed {
+/* Doubled for the same reason as .node.node--selected above, and it hid the bug
+   better: an animation outranks author declarations, so the reveal highlight
+   held for the 1.4s flash and then lost to hover for the rest of its 2.5s
+   life. Stays below the selected rule, so a revealed+selected row is green. */
+.node.node--revealed {
   background: #2f6b28;
   color: #ffffff;
   animation: revealFlash 1.4s ease-out;
@@ -654,10 +700,14 @@ body.dragging .sidebar__grip {
   color: var(--text-faint);
 }
 
+/* Load-bearing background, not decoration. The terminal canvas is transparent
+   wherever a cell uses the default background — see allowTransparency in
+   term/terminal.ts — so the black has to come from the host element. */
 .pane__term {
   flex: 1;
   min-height: 0;
   padding: 2px 0 0 4px;
+  background: var(--term-bg);
 }
 
 .pane__exit {
@@ -1569,10 +1619,14 @@ body.dragging .drawer__grip {
   flex: none;
 }
 
+/* Same load-bearing background as .pane__term, and the reason the rule cannot
+   be dropped: .drawer is --chrome-bg, so without this the drawer's terminal
+   would composite over a green-tinted surface instead of black. */
 .drawer__term {
   flex: 1;
   min-height: 0;
   padding: 2px 0 0 4px;
+  background: var(--term-bg);
 }
 
 .lookout-rail:empty {

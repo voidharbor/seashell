@@ -27,6 +27,25 @@ export function currentHostname(): string {
 }
 
 /**
+ * Re-fit every terminal that is actually on screen.
+ *
+ * Used by the device-pixel-ratio watcher, which has no React surface to hang a
+ * per-pane effect on. A zero-size host is the test for "not visible" and it
+ * covers both cases that matter: a pane hidden with `display: none` by zoom or
+ * a background tab, and the collapsed shell drawer. Refitting either would
+ * SIGWINCH a full-screen program into reflowing its whole UI for a size nobody
+ * can see, which is the same reason the per-pane refit effect bails on
+ * `hidden`.
+ */
+export function refitVisibleTerminals(): void {
+  for (const t of terminals.values()) {
+    const el = t.term.element
+    if (!el || el.clientWidth === 0 || el.clientHeight === 0) continue
+    t.refit()
+  }
+}
+
+/**
  * Pane generations that already own a PTY.
  *
  * A component effect is not a safe place to own a process. StrictMode
@@ -356,7 +375,17 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
     if (!t) return
     if (hidden) t.disableWebgl()
     else t.enableWebgl()
-  }, [pane.id, hidden])
+    // `generation` is not read in the body, and that is deliberate: a restart
+    // disposes the old terminal and builds a new one without touching pane.id
+    // or hidden, so without it here the replacement is never handed a WebGL
+    // context. It runs on the DOM renderer instead — where customGlyphs does
+    // nothing, so every TUI border grows 1px gaps — until the pane happens to
+    // be hidden and shown again. That reads as an intermittent rendering
+    // glitch, not as a restart bug, which is why it survived this long.
+    // exhaustive-deps would class this as unnecessary and its autofix would
+    // delete it, so it is spelled out rather than left to look like a slip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane.id, generation, hidden])
 
   useEffect(() => {
     if (hidden) return
@@ -368,7 +397,15 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
     // keystroke the user is trying to type into the query field.
     if (!focused || hidden || props.findOpen) return
     terminals.get(pane.id)?.term.focus()
-  }, [focused, hidden, pane.id, props.findOpen])
+    // `generation` for the same reason as the WebGL effect above: on a restart
+    // the pane was already focused, so nothing in the other deps moves, and
+    // this never ran against the replacement terminal. Disposing the old one
+    // takes xterm's helper textarea out of the DOM with it, so activeElement
+    // falls back to <body> and the shell you just restarted cannot be typed
+    // into until you click the pane. Focusing an already-focused textarea is a
+    // no-op, so the extra runs cost nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focused, hidden, pane.id, generation, props.findOpen])
 
   useEffect(() => {
     if (pane.status === 'exited') terminals.get(pane.id)?.markExited()

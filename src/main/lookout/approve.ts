@@ -121,6 +121,36 @@ export async function approveCard(
     return { ok: false, code: 'ESELECTOR', message: 'pane is showing a picker' }
   }
 
+  /**
+   * And the same question about the CARD, for the same reason.
+   *
+   * The screen is not the only thing that moves during the `ps`. The card was
+   * read once, before the await, and the store is mutable throughout: a Deny
+   * calls `dismiss` and deletes it, a changed question replaces it under a new
+   * id, and `ipcMain.handle` dispatches every invoke concurrently so a second
+   * Approve click runs its whole course in the same window.
+   *
+   * Both of those were reachable, and the first is worse than it sounds:
+   * approving is silent by design, so a user who clicks Approve, sees nothing
+   * happen and clicks Deny is doing the obvious thing — and the resumed
+   * approve still wrote the text and the Enter into the pane. A card the user
+   * explicitly denied got delivered, with nothing left in the rail to show for
+   * it.
+   *
+   * Re-reading here makes exactly one caller win: the writes below and the
+   * `remove` are synchronous with no suspension point between them, so on a
+   * single-threaded loop whichever continuation resumes first retires the card
+   * and every other one finds it gone. That covers the duplicate click, the
+   * Deny race and a mid-flight dismiss in one check, without any module state.
+   */
+  const still = deps.store.get(req.cardId)
+  if (!still) {
+    return { ok: false, code: 'ENOTFOUND', message: 'card already answered or dismissed' }
+  }
+  if (still.state !== 'active') {
+    return { ok: false, code: 'ESTALE', message: 'session moved on' }
+  }
+
   // The pane can exit between the checks above and here; writeIfLive re-checks.
   if (!deps.writeIfLive(card.paneId, text)) {
     return { ok: false, code: 'EGONE', message: 'unknown or exited pane' }

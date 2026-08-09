@@ -31,6 +31,9 @@ export interface ControlServerDeps {
   screenKind(paneId: string): 'input' | 'selector' | null
   /** Create a pushed card. Returns null on success, else a refusal message. */
   postCard(req: { paneId: string; question: string; draft: string | null }): string | null
+  /** Idle timeout override. Production leaves this unset; tests shorten it so
+   *  the reaping behaviour can be asserted without a five-second test. */
+  idleTimeoutMs?: number
 }
 
 export interface ControlServer {
@@ -57,7 +60,6 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
     connections.add(conn)
     conn.on('close', () => connections.delete(conn))
     conn.on('error', () => conn.destroy())
-    conn.setTimeout(IDLE_TIMEOUT_MS, () => conn.destroy())
     conn.setEncoding('utf8')
 
     let buf = ''
@@ -80,6 +82,30 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
      * reply ends it), so the guard is simply: dispatch at most once.
      */
     let dispatched = false
+
+    /**
+     * The idle timer reaps a silent client, and must stop there.
+     *
+     * Node fires this on *inactivity*, and once a request has been handed to
+     * `handle` there is deliberately no traffic at all: `handle` is awaiting a
+     * `ps`. So a slow foreground check used to trip the timer and destroy the
+     * socket mid-flight — after which `handle` carried on, typed the text into
+     * the live pane, and `respond` called `conn.end` on a dead socket whose
+     * error the handler above swallows. The pusher saw EOF with no JSON, which
+     * is indistinguishable from a refusal, so a retry typed the same text into
+     * the agent a second time: the exact duplicate delivery `dispatched`
+     * exists to prevent, reached through a different door.
+     *
+     * Every pre-dispatch reason for the timeout survives. A client that
+     * connects and says nothing, or sends half a line and stops, still leaves
+     * `dispatched` false and is still reaped. Once dispatched, `handle` always
+     * resolves — its only await is wrapped in try/catch and every branch
+     * returns a response — and the reply closes the socket itself.
+     */
+    conn.setTimeout(deps.idleTimeoutMs ?? IDLE_TIMEOUT_MS, () => {
+      if (!dispatched) conn.destroy()
+    })
+
     const respond = (res: ControlResponse): void => {
       if (done) return
       done = true

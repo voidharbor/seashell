@@ -73,6 +73,40 @@ describe('the stylesheet covers what the components ask for', () => {
     expect(missing).toEqual([])
   })
 
+  /**
+   * `.node:hover` is (0,2,0) — a class and a pseudo-class. A state rule written
+   * as a bare `.node--selected` is (0,1,0), so specificity beat source order
+   * and hovering the row you had just clicked replaced its blue selection pill
+   * with the hover tint, leaving the white text on it. The fix is to double the
+   * selector, and the only thing that can undo it is someone tidying the
+   * "redundant" `.node` back off — which looks like a cleanup and is a
+   * regression, so it is pinned here.
+   *
+   * A DOM test cannot cover this: happy-dom never enters :hover state, so
+   * getComputedStyle never exercises the cascade.
+   */
+  it('keeps the explorer state rules safe from the hover rule', () => {
+    // Guard one: the hover rule refuses to apply to a selected or revealed row.
+    const hover = /\.node(?=[^{]*:hover)[^{]*\{/.exec(css)?.[0] ?? ''
+    expect(hover, 'no .node hover rule found at all').not.toBe('')
+    expect(hover).toContain(':not(.node--selected)')
+    expect(hover).toContain(':not(.node--revealed)')
+
+    // Guard two: the state rules match hover's specificity anyway, so removing
+    // the exclusions above cannot silently bring the bug back.
+    expect(css).toMatch(/\.node\.node--selected\s*\{/)
+    expect(css).toMatch(/\.node\.node--revealed\s*\{/)
+
+    // Equal specificity means source order decides, so order is load-bearing.
+    const at = (needle: string): number => {
+      const i = css.indexOf(needle)
+      expect(i, `${needle} missing from the stylesheet`).toBeGreaterThan(-1)
+      return i
+    }
+    expect(at(hover)).toBeLessThan(at('.node.node--selected'))
+    expect(at('.node.node--selected')).toBeLessThan(at('.node.node--revealed'))
+  })
+
   it('is actually looking at something', () => {
     // A guard on the guard: if the scan silently found nothing, the assertion
     // above would pass forever while checking nothing at all.
