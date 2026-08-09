@@ -4,7 +4,14 @@ import { dfsPaneOrder } from './layout/tree.js'
 import { MAX_PANES_PER_TAB, type RowNode } from './layout/types.js'
 import { applyDividerDrag, deriveDividers, type DividerSpec } from './layout/dividers.js'
 import { MAX_TAB_NAME, reducer, uid, type AppState, type PaneCommand } from './store.js'
-import { PaneView, forgetSpawn, setHostname, terminals } from './panes/PaneView.js'
+import {
+  PaneView,
+  forgetSpawn,
+  refitVisibleTerminals,
+  setHostname,
+  terminals,
+} from './panes/PaneView.js'
+import { watchDevicePixelRatio } from './term/dpr.js'
 import { Explorer } from './explorer/Explorer.js'
 import { StatusBar } from './status/StatusBar.js'
 import { loadTerminalFont } from './term/terminal.js'
@@ -267,6 +274,10 @@ export function App(): React.JSX.Element {
       const paths = await window.seashell.app.getPaths()
       setHome(paths.home)
       setHostname(paths.hostname)
+      // Dragging the window between screens of different density changes the
+      // CSS cell size under a grid nobody re-measures. One watcher for every
+      // terminal, started once — see term/dpr.ts.
+      watchDevicePixelRatio({ onChange: refitVisibleTerminals })
       dispatch({ type: 'explorer.setRoot', root: paths.home })
       dispatch({
         type: 'tab.new',

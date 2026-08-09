@@ -27,6 +27,25 @@ export function currentHostname(): string {
 }
 
 /**
+ * Re-fit every terminal that is actually on screen.
+ *
+ * Used by the device-pixel-ratio watcher, which has no React surface to hang a
+ * per-pane effect on. A zero-size host is the test for "not visible" and it
+ * covers both cases that matter: a pane hidden with `display: none` by zoom or
+ * a background tab, and the collapsed shell drawer. Refitting either would
+ * SIGWINCH a full-screen program into reflowing its whole UI for a size nobody
+ * can see, which is the same reason the per-pane refit effect bails on
+ * `hidden`.
+ */
+export function refitVisibleTerminals(): void {
+  for (const t of terminals.values()) {
+    const el = t.term.element
+    if (!el || el.clientWidth === 0 || el.clientHeight === 0) continue
+    t.refit()
+  }
+}
+
+/**
  * Pane generations that already own a PTY.
  *
  * A component effect is not a safe place to own a process. StrictMode
