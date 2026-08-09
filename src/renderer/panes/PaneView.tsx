@@ -356,7 +356,17 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
     if (!t) return
     if (hidden) t.disableWebgl()
     else t.enableWebgl()
-  }, [pane.id, hidden])
+    // `generation` is not read in the body, and that is deliberate: a restart
+    // disposes the old terminal and builds a new one without touching pane.id
+    // or hidden, so without it here the replacement is never handed a WebGL
+    // context. It runs on the DOM renderer instead — where customGlyphs does
+    // nothing, so every TUI border grows 1px gaps — until the pane happens to
+    // be hidden and shown again. That reads as an intermittent rendering
+    // glitch, not as a restart bug, which is why it survived this long.
+    // exhaustive-deps would class this as unnecessary and its autofix would
+    // delete it, so it is spelled out rather than left to look like a slip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane.id, generation, hidden])
 
   useEffect(() => {
     if (hidden) return
