@@ -89,7 +89,16 @@ body {
   color: var(--text);
   font-family: var(--ui-font);
   font-size: var(--ui-font-size);
-  -webkit-font-smoothing: antialiased;
+  /* Deliberately NOT `antialiased`, which is the reflex for a dark UI and is
+     wrong on this one. It forces plain grayscale rasterization and throws away
+     the contrast enhancement Chromium normally applies, which on a 1x display
+     is most of the ink: measured on a row of 13px text, fully-covered pixels
+     fell from 690 to 206 under `antialiased`, i.e. the chrome rendered
+     markedly lighter and thinner than the macOS windows next to it. `auto`
+     matches what every native app gets. It is not subpixel/LCD rendering and
+     carries no fringing risk — macOS has been grayscale-only since Mojave, and
+     `auto` and `subpixel-antialiased` measured pixel-identical here. */
+  -webkit-font-smoothing: auto;
   user-select: none;
   cursor: default;
 }
@@ -654,10 +663,14 @@ body.dragging .sidebar__grip {
   color: var(--text-faint);
 }
 
+/* Load-bearing background, not decoration. The terminal canvas is transparent
+   wherever a cell uses the default background — see allowTransparency in
+   term/terminal.ts — so the black has to come from the host element. */
 .pane__term {
   flex: 1;
   min-height: 0;
   padding: 2px 0 0 4px;
+  background: var(--term-bg);
 }
 
 .pane__exit {
@@ -1569,10 +1582,14 @@ body.dragging .drawer__grip {
   flex: none;
 }
 
+/* Same load-bearing background as .pane__term, and the reason the rule cannot
+   be dropped: .drawer is --chrome-bg, so without this the drawer's terminal
+   would composite over a green-tinted surface instead of black. */
 .drawer__term {
   flex: 1;
   min-height: 0;
   padding: 2px 0 0 4px;
+  background: var(--term-bg);
 }
 
 .lookout-rail:empty {

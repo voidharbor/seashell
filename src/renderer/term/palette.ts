@@ -11,7 +11,10 @@ import type { ITheme } from '@xterm/xterm'
  * Homebrew does not override the 16 ANSI colors, so those still inherit
  * Terminal.app's hardcoded defaults; only foreground, cursor and background
  * differ. Its real background is translucent black, flattened here to opaque
- * #000000 since `allowTransparency` is off.
+ * #000000: SeaShell does not do window transparency. (`allowTransparency` is
+ * on, but that is a glyph-rasterization choice and not a see-through window —
+ * see the note on it in terminal.ts. The black is painted by .pane__term and
+ * .drawer__term instead of by the atlas.)
  *
  * Known accepted deviation: Homebrew carries a separate `TextBoldColor`
  * (#00FF00) and xterm's ITheme has no slot for it, so bold text renders in the

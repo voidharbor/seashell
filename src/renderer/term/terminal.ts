@@ -88,7 +88,47 @@ export class PaneTerminal {
 
       scrollback: 5000,
       smoothScrollDuration: 0,
-      allowTransparency: false,
+
+      /**
+       * On, and measured rather than reasoned — the name is misleading here.
+       *
+       * With this off, the WebGL glyph atlas rasterizes each glyph onto an
+       * opaque canvas filled with the cell's background colour and then runs
+       * `clearColor()` to turn that background back into alpha. That pass does
+       * not only clear exact background pixels: it also zeroes every pixel
+       * within `(|Δr| + |Δg| + |Δb|) / 12` of it. For this palette — #28FE14 on
+       * #000000 — that threshold is 26, which deletes every antialiased edge
+       * pixel below roughly 8% coverage. That faint tail is precisely what
+       * makes a curve read as a curve rather than as a staircase.
+       *
+       * Measured on a 1x display, as the share of a text row's inked pixels
+       * that are faint (sub-12%-coverage) edge pixels:
+       *
+       *   Apple Terminal, the fidelity target      9.6%
+       *   allowTransparency: true                 12.7%
+       *   allowTransparency: false                 3.9%   <- what shipped
+       *
+       * On, the atlas skips clearColor entirely and keeps the whole alpha ramp.
+       * It costs nothing measurable: writing 1,200 lines of 110 varied
+       * characters went 14.6ms -> 15.8ms, and mean frame time did not move.
+       *
+       * Two things do change, both checked against every zoom rung:
+       *  - An underline no longer breaks around a descender. The gap came from
+       *    a background-coloured outline stroke that is only drawable on an
+       *    opaque atlas. A continuous rule is what Terminal draws anyway.
+       *  - xterm's rescue for an underscore that renders below its cell is
+       *    skipped. Verified unnecessary for this face: `_` stays inside the
+       *    cell at all eight ladder sizes, at both 1x and 2x.
+       *
+       * Nothing becomes see-through. What changes is *who paints the black*:
+       * xterm stops baking the cell background into the atlas and leaves
+       * default-background cells to the element underneath, so every element
+       * hosting a terminal must paint --term-bg itself. .pane__term and
+       * .drawer__term do, and term-surface.test.ts holds them to it — without
+       * that, the drawer's terminal composites over --chrome-bg and reads
+       * green-tinted instead of black.
+       */
+      allowTransparency: true,
       allowProposedApi: true,
       theme: TERMINAL_APP_PALETTE,
 
