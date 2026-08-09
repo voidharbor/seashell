@@ -249,6 +249,7 @@ export type Action =
   | { type: 'tab.cycle'; delta: number }
   | { type: 'tab.rename'; tabId: string; name: string; home: string }
   | { type: 'tabs.replace'; tabs: TabState[] }
+  | { type: 'tabs.append'; tabs: TabState[] }
   | { type: 'pane.new'; home: string; command: PaneCommand; commandText?: string; autoColor?: boolean }
   | { type: 'pane.newFile'; path: string; autoColor?: boolean }
   | { type: 'pane.newWeb'; url: string; autoColor?: boolean }
@@ -335,6 +336,26 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'tabs.replace': {
       if (action.tabs.length === 0) return state
       return { ...state, tabs: action.tabs, activeTabId: action.tabs[0]!.id }
+    }
+
+    /**
+     * Adds a project's tabs alongside what is already open, rather than
+     * replacing the window.
+     *
+     * The distinction is the whole point of saving a single tab: a project at
+     * tab scope is a thing you bring *into* a session, not a session you swap
+     * to. Replacing would reap every live pane, which is right for "open this
+     * saved window" and wrong for "add my Solar Bear tab to what I am doing".
+     *
+     * Focus moves to the first added tab, because the user just asked for it.
+     */
+    case 'tabs.append': {
+      if (action.tabs.length === 0) return state
+      return {
+        ...state,
+        tabs: [...state.tabs, ...action.tabs],
+        activeTabId: action.tabs[0]!.id,
+      }
     }
 
     case 'tab.select':

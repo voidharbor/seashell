@@ -72,6 +72,9 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
         { type: 'separator' },
         item('Projects…', 'Cmd+Shift+P', 'app.projects'),
         item('Save Project…', 'Cmd+S', 'app.saveProject'),
+        /* Both open the same panel; this one lands on tab scope, which is the
+           level people mean when they ask to save "a project". */
+        { label: 'Save Tab as Project…', click: send('app.saveTab') },
         { type: 'separator' },
         item('New Pane', 'Cmd+D', 'pane.new'),
         { type: 'separator' },

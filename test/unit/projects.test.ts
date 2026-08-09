@@ -6,7 +6,8 @@ import {
   tabsFromSaved,
 } from '../../src/renderer/projects/serialize.js'
 import { isValidProject, upsertProject } from '../../src/main/state/store.js'
-import type { PaneState, TabState } from '../../src/renderer/store.js'
+import { reducer } from '../../src/renderer/store.js'
+import type { AppState, PaneState, TabState } from '../../src/renderer/store.js'
 import type { Project } from '../../src/shared/ipc.js'
 
 function pane(id: string, extra: Partial<PaneState> = {}): PaneState {
@@ -269,5 +270,81 @@ describe('isValidProject', () => {
     expect(isValidProject({ ...good, id: '' })).toBe(false)
     expect(isValidProject({ ...good, tabs: [] })).toBe(false)
     expect(isValidProject({ ...good, tabs: [{ ...good.tabs[0], panes: { a: { label: 'l', kind: 'nope', cwd: '/' } } }] })).toBe(false)
+  })
+})
+
+/**
+ * Adding a project alongside what is open, rather than replacing the window.
+ *
+ * This is the half that makes a one-tab project worth saving: you bring it
+ * into a session you are already in. Replacing is right for "open this saved
+ * window" and catastrophic here — it reaps every live pane, so an agent you
+ * were mid-conversation with dies to make room.
+ */
+describe('adding a project to the window', () => {
+  const base = (): AppState => ({
+    tabs: [tab([pane('a')])],
+    activeTabId: 'tab-1',
+    sidebarVisible: true,
+    explorerRoot: '/Users/j',
+    revealPath: null,
+    system: null,
+    toast: null,
+  })
+
+  it('keeps every tab that was already open', () => {
+    const incoming = tabsFromSaved([tabToSaved(tab([pane('b')]))], mint)
+    const next = reducer(base(), { type: 'tabs.append', tabs: incoming })
+
+    expect(next.tabs).toHaveLength(2)
+    expect(next.tabs[0]!.id).toBe('tab-1')
+    expect(next.tabs[0]!.panes.a).toBeDefined()
+  })
+
+  it('focuses the tab that was just added, because that is what was asked for', () => {
+    const incoming = tabsFromSaved([tabToSaved(tab([pane('b')]))], mint)
+    const next = reducer(base(), { type: 'tabs.append', tabs: incoming })
+    expect(next.activeTabId).toBe(incoming[0]!.id)
+  })
+
+  it('is a no-op for an empty project rather than blanking the window', () => {
+    const before = base()
+    const next = reducer(before, { type: 'tabs.append', tabs: [] })
+    expect(next).toBe(before)
+  })
+
+  it('still replaces the window when that is what was asked for', () => {
+    const incoming = tabsFromSaved([tabToSaved(tab([pane('b')]))], mint)
+    const next = reducer(base(), { type: 'tabs.replace', tabs: incoming })
+    expect(next.tabs).toHaveLength(1)
+    expect(next.tabs[0]!.id).toBe(incoming[0]!.id)
+  })
+})
+
+/**
+ * A single tab round-trips as a project on its own — no format change was
+ * needed, a project has always been a list of saved tabs.
+ */
+describe('a one-tab project', () => {
+  it('saves and restores the tab, its panes and its name', () => {
+    const source = tab([pane('a'), pane('b')])
+    source.name = 'Solar Bear'
+    source.nameIsCustom = true
+
+    const restored = tabsFromSaved([tabToSaved(source)], mint)
+
+    expect(restored).toHaveLength(1)
+    expect(restored[0]!.name).toBe('Solar Bear')
+    expect(Object.keys(restored[0]!.panes)).toHaveLength(2)
+    // Fresh ids, so adding the same project twice cannot collide.
+    expect(Object.keys(restored[0]!.panes)).not.toContain('a')
+  })
+
+  it('gives different ids each time it is added, so it can be added twice', () => {
+    const source = tab([pane('a')])
+    const first = tabsFromSaved([tabToSaved(source)], mint)
+    const second = tabsFromSaved([tabToSaved(source)], mint)
+    expect(first[0]!.id).not.toBe(second[0]!.id)
+    expect(Object.keys(first[0]!.panes)[0]).not.toBe(Object.keys(second[0]!.panes)[0])
   })
 })

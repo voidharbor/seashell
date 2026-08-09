@@ -39,8 +39,8 @@ import { drawerPtyId } from './drawer/id.js'
 import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
 import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
-import { ProjectsPanel } from './projects/ProjectsPanel.js'
-import { stateToTabs, tabsFromSaved } from './projects/serialize.js'
+import { ProjectsPanel, type SaveScope } from './projects/ProjectsPanel.js'
+import { stateToTabs, tabToSaved, tabsFromSaved } from './projects/serialize.js'
 import type { LookoutActionRequest, LookoutCard, Project } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 import { dirtyPreviewPanes } from './viewer/FilePreview.js'
@@ -93,6 +93,9 @@ export function App(): React.JSX.Element {
   const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial())
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
+  /** Which scope the projects panel opens on. The panel is mounted only while
+   *  open, so it reads this once per open rather than tracking it. */
+  const [projectsScope, setProjectsScope] = useState<SaveScope>('window')
   const [projects, setProjects] = useState<Project[]>([])
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [lookoutCards, setLookoutCards] = useState<LookoutCard[]>([])
@@ -535,8 +538,22 @@ export function App(): React.JSX.Element {
   const [currentProject, setCurrentProject] = useState<{ id: string; name: string } | null>(null)
 
   /** Closes every preview pane in the active tab, leaving the terminals alone. */
+  /**
+   * Saves the window, or just the active tab.
+   *
+   * Tab scope is the "project" level people ask for by name: a tab is already
+   * a named group of panes, so saving one is saving a project you can bring
+   * into any window later. Window scope stays what it always was — the whole
+   * arrangement, which is the workspace.
+   *
+   * A tab-scope save deliberately does NOT adopt the project as this window's
+   * `currentProject`. The in-place Save button writes the whole window, so
+   * adopting one would arm a button that silently overwrites a one-tab project
+   * with every tab open. Re-saving a tab project is done by name, which the
+   * store upserts and the panel confirms.
+   */
   const saveProject = useCallback(
-    async (name: string, id?: string) => {
+    async (name: string, id?: string, scope: 'window' | 'tab' = 'window') => {
       // Capture the claude session ids live in these panes right now — a
       // restarted claude has a new id, and saving must record the current
       // one, not the one from when the project was first created.
@@ -552,20 +569,37 @@ export function App(): React.JSX.Element {
       } catch {
         sessionIds = undefined // registry unavailable: panes save as plain claude
       }
+      const tabs =
+        scope === 'tab'
+          ? activeTab
+            ? [tabToSaved(activeTab, sessionIds)]
+            : []
+          : stateToTabs(state, sessionIds)
+      if (tabs.length === 0) {
+        dispatch({ type: 'toast', message: 'Nothing to save' })
+        return
+      }
+
       const res = await window.seashell.projects.save({
         ...(id ? { id } : {}),
         name,
-        tabs: stateToTabs(state, sessionIds),
+        tabs,
       })
       if (!res.ok) {
         dispatch({ type: 'toast', message: `Could not save project (${res.code})` })
         return
       }
-      setCurrentProject({ id: res.project.id, name: res.project.name })
+      if (scope === 'window') setCurrentProject({ id: res.project.id, name: res.project.name })
       await refreshProjects()
-      dispatch({ type: 'toast', message: `Saved project “${res.project.name}”` })
+      dispatch({
+        type: 'toast',
+        message:
+          scope === 'tab'
+            ? `Saved tab as “${res.project.name}”`
+            : `Saved project “${res.project.name}”`,
+      })
     },
-    [state, refreshProjects]
+    [state, activeTab, refreshProjects]
   )
 
   /**
@@ -575,35 +609,73 @@ export function App(): React.JSX.Element {
    * orphaned-process outcome this app exists to prevent, made worse by being
    * invisible.
    */
+  /**
+   * A project's saved tabs, rebuilt with fresh ids and their claude sessions
+   * resolved. Shared by opening a project (which replaces the window) and
+   * adding one (which does not), so the two can never drift on the part that
+   * decides whether a restored agent pane resumes its session or starts cold.
+   */
+  const restoreProjectTabs = useCallback(async (project: Project) => {
+    const restored = tabsFromSaved(project.tabs, uid)
+    if (restored.length === 0) return []
+
+    // A project saved before its panes could be matched to sessions carries no
+    // ids at all, and re-saving it is not something the user should have to
+    // know to do. Any claude pane still missing one gets resolved here, from
+    // the newest transcript for its own directory.
+    const needIds = restored.flatMap((t) =>
+      Object.values(t.panes)
+        .filter((p) => p.kind === 'term' && p.command === 'claude' && !p.claudeSessionId)
+        .map((p) => ({ paneId: p.id, cwd: p.cwd }))
+    )
+    if (needIds.length > 0) {
+      try {
+        const res = await window.seashell.projects.sessionIds({ panes: needIds.slice(0, 64) })
+        for (const tab of restored) {
+          for (const pane of Object.values(tab.panes)) {
+            const sid = res.ids[pane.id]
+            if (sid) pane.claudeSessionId = sid
+          }
+        }
+      } catch {
+        /* unresolved panes just open as a fresh claude, the old behaviour */
+      }
+    }
+    return restored
+  }, [])
+
+  /**
+   * Adds a project's tabs to this window, leaving everything already open
+   * alone — the counterpart to Open, and the reason saving a single tab is
+   * useful. Nothing is reaped here precisely because nothing is being
+   * replaced.
+   */
+  const addProject = useCallback(
+    async (project: Project) => {
+      const restored = await restoreProjectTabs(project)
+      if (restored.length === 0) {
+        dispatch({ type: 'toast', message: 'That project has nothing to add' })
+        return
+      }
+      dispatch({ type: 'tabs.append', tabs: restored })
+      setProjectsOpen(false)
+      dispatch({
+        type: 'toast',
+        message:
+          restored.length === 1
+            ? `Added “${project.name}”`
+            : `Added “${project.name}” (${restored.length} tabs)`,
+      })
+    },
+    [restoreProjectTabs]
+  )
+
   const openProject = useCallback(
     async (project: Project) => {
-      const restored = tabsFromSaved(project.tabs, uid)
+      const restored = await restoreProjectTabs(project)
       if (restored.length === 0) {
         dispatch({ type: 'toast', message: 'That project has nothing to open' })
         return
-      }
-
-      // A project saved before its panes could be matched to sessions carries no
-      // ids at all, and re-saving it is not something the user should have to
-      // know to do. Any claude pane still missing one gets resolved here, from
-      // the newest transcript for its own directory.
-      const needIds = restored.flatMap((t) =>
-        Object.values(t.panes)
-          .filter((p) => p.kind === 'term' && p.command === 'claude' && !p.claudeSessionId)
-          .map((p) => ({ paneId: p.id, cwd: p.cwd }))
-      )
-      if (needIds.length > 0) {
-        try {
-          const res = await window.seashell.projects.sessionIds({ panes: needIds.slice(0, 64) })
-          for (const tab of restored) {
-            for (const pane of Object.values(tab.panes)) {
-              const sid = res.ids[pane.id]
-              if (sid) pane.claudeSessionId = sid
-            }
-          }
-        } catch {
-          /* unresolved panes just open as a fresh claude, the old behaviour */
-        }
       }
 
       const live = state.tabs.flatMap((t) =>
@@ -621,7 +693,7 @@ export function App(): React.JSX.Element {
       setProjectsOpen(false)
       dispatch({ type: 'toast', message: `Opened “${project.name}”` })
     },
-    [state.tabs]
+    [state.tabs, restoreProjectTabs]
   )
 
   const deleteProject = useCallback(
@@ -790,6 +862,12 @@ export function App(): React.JSX.Element {
           break
         case 'app.saveProject':
           // Saving needs a name, and the panel is where names are entered.
+          setProjectsScope('window')
+          setProjectsOpen(true)
+          break
+        case 'app.saveTab':
+          // Same panel, landing on the scope the menu item promised.
+          setProjectsScope('tab')
           setProjectsOpen(true)
           break
         case 'app.settings':
@@ -1550,12 +1628,16 @@ export function App(): React.JSX.Element {
           projects={projects}
           tabCount={state.tabs.length}
           paneCount={state.tabs.reduce((n, t) => n + Object.keys(t.panes).length, 0)}
+          defaultScope={projectsScope}
+          activeTabName={activeTab?.name ?? ''}
+          activeTabPaneCount={activeTab ? Object.keys(activeTab.panes).length : 0}
           currentProject={currentProject}
-          onSave={(name) => void saveProject(name)}
+          onSave={(name, scope) => void saveProject(name, undefined, scope)}
           onSaveCurrent={() =>
             currentProject && void saveProject(currentProject.name, currentProject.id)
           }
           onOpen={(p) => void openProject(p)}
+          onAdd={(p) => void addProject(p)}
           onDelete={(p) => void deleteProject(p)}
           onClose={() => setProjectsOpen(false)}
         />
