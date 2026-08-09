@@ -143,9 +143,10 @@ cards keep stacking up out of sight.
 
 ## What it does
 
-- **Tiled panes.** Each tab holds an auto-arranged grid of terminals — 1, then 2 side by side,
-  then quadrants. Drag the borders to resize. Double-click a pane's title bar to zoom it to
-  full tab, again to restore.
+- **Tiled panes.** Each tab holds an auto-arranged grid of up to six terminals, in
+  `ceil(sqrt(N))` columns: one, then two side by side, then quadrants, then three columns.
+  Drag the borders to resize. Double-click a pane's title bar to zoom it to full tab, again to
+  restore.
 - **Any command per pane.** A pane is just a PTY. Run `zsh`, a build watcher, an SSH session,
   or a coding agent. Full-screen TUI programs render exactly as they do in a native terminal —
   alternate screen buffer, 24-bit color, correct glyph widths.
@@ -164,6 +165,16 @@ cards keep stacking up out of sight.
 - **Closing a pane means it.** Closing runs an escalating kill ladder across the pane's whole
   process tree — including background jobs and descendants that double-forked away from the
   shell. If anything survives, it says so rather than pretending the pane was clean.
+- **A scratch shell for each pane.** ⌘J opens a shell drawer over the grid, and every pane gets
+  its own, starting in that pane's working directory. Switching panes switches shells, each
+  keeping its own history and scrollback. A quick `git status` costs neither a new pane nor an
+  interruption to the agent running in one.
+- **Tabs group panes; projects save them.** A tab is a named set of panes, renamed by
+  double-clicking its name or from File > Rename Tab. A project saves an arrangement by name
+  and reopens it later with each pane's directory, colour and layout, resuming a pane's Claude
+  Code session by running `claude -r` where you can watch it. Save the whole window, or just
+  the active tab. Opening a project replaces the window; adding one brings its tabs in
+  alongside whatever is already running.
 - **Zoom that stays sharp.** ⌘+ / ⌘− scale the terminal text and the interface together. The
   font steps through only sizes whose advance lands near a device-pixel boundary, because the
   WebGL renderer floors `charWidth * dpr` and anything else drifts into misaligned borders.
@@ -179,7 +190,8 @@ to implement from.
 
 ## Building
 
-Requires macOS, Node 20+, and Xcode command line tools.
+Requires macOS, Node 24 or newer, and Xcode command line tools. CI builds on Node 24; older
+versions are untested.
 
 ```bash
 npm install
@@ -212,8 +224,16 @@ quarantine step in [Install](#first-launch-seashell-cannot-be-opened) exists.
 SeaShell deliberately does not do these things:
 
 - **Edit files.** File previews are read-only. Use your editor.
-- **Manage remote sessions.** No SSH profile management, no session persistence across reboots.
-- **Support Windows or Linux.** macOS only.
+- **Manage remote sessions.** No SSH profile management.
+- **Restore sessions.** A project saves an arrangement, not a session. No scrollback, no
+  running processes, nothing that only means something while the app is up. A restored pane is
+  a fresh login shell at the saved directory.
+- **Treat Windows and Linux as first-class.** Both are built and published, but macOS is the
+  reference platform and the others are experimental. On Windows the kill ladder reports
+  `verifiedKill: false`: the pseudoconsole terminates ordinary children, but a process that
+  detached survives and nothing there can count it, which is the one guarantee this app exists
+  to make. Process metrics and working-directory reporting are absent there too. Treat that
+  build as something to test rather than something to rely on.
 - **Plugins or theming.** No extension API, no theme editor.
 - **Replace your browser.** The web preview exists for adjacency — a page next to the pane
   serving it. It saves no memory: Chromium costs about the same per page wherever it renders.
