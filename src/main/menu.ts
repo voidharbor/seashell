@@ -57,6 +57,18 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
       label: 'File',
       submenu: [
         item('New Tab', 'Cmd+T', 'tab.new'),
+        /**
+         * No accelerator, and here rather than only on a double-click.
+         *
+         * A tab is how panes are grouped — it is the "project" level between a
+         * saved project and a pane — and naming one is what makes that
+         * grouping mean anything. It was reachable only by double-clicking the
+         * tab name, advertised in a hover tooltip, which is not where anyone
+         * looks for it: the feedback that prompted this was a request for a way
+         * to group panes by project, from someone who had the grouping already
+         * and no way to find it.
+         */
+        { label: 'Rename Tab…', click: send('tab.rename') },
         { type: 'separator' },
         item('Projects…', 'Cmd+Shift+P', 'app.projects'),
         item('Save Project…', 'Cmd+S', 'app.saveProject'),

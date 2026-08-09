@@ -772,6 +772,10 @@ export function App(): React.JSX.Element {
         case 'drawer.toggle':
           setDrawerOpen((o) => !o)
           break
+        case 'tab.rename':
+          // Opens the same inline field the tab's double-click opens.
+          if (activeTab) setRenamingTabId(activeTab.id)
+          break
         case 'explorer.toggle':
           dispatch({ type: 'explorer.toggle' })
           break
