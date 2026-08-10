@@ -2,9 +2,8 @@
 #
 # Stop macOS asking for the same permission every time SeaShell launches.
 #
-# Original by Josh's father, who hit this on 0.2.6 and worked out the fix
-# before the cause was understood. Adapted here with one behaviour change,
-# explained below.
+# Contributed after the problem was hit on 0.2.6, and adapted here with one
+# behaviour change, explained below.
 #
 # THE CAUSE, and why you may not need this
 # ----------------------------------------

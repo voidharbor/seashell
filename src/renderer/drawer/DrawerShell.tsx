@@ -37,9 +37,9 @@ export interface DrawerShellProps {
 
 /**
  * A real shell in a drawer over the pane grid — the answer to "I just need to
- * run one command" that doesn't cost a pane. Feature ask from Josh's dad
- * (SEASHELL-2): the agent owns each pane's pty, so a quick `git status` used
- * to mean making (and then closing) a whole new pane.
+ * run one command" that doesn't cost a pane (SEASHELL-2): the agent owns each
+ * pane's pty, so a quick `git status` used to mean making (and then closing) a
+ * whole new pane.
  *
  * **One shell per pane.** The first version shared a single shell across every
  * pane, which was the follow-up report: "it seems to be independent of the
