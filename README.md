@@ -234,7 +234,9 @@ SeaShell deliberately does not do these things:
   detached survives and nothing there can count it, which is the one guarantee this app exists
   to make. Process metrics and working-directory reporting are absent there too. Treat that
   build as something to test rather than something to rely on.
-- **Plugins or theming.** No extension API, no theme editor.
+- **An extension API.** No plugin system, no theme editor. Themes are a fixed
+  built-in set (seven of them, with accent, terminal palette, pane frame and CRT
+  as separate axes) rather than something a third party can add to.
 - **Replace your browser.** The web preview exists for adjacency — a page next to the pane
   serving it. It saves no memory: Chromium costs about the same per page wherever it renders.
 

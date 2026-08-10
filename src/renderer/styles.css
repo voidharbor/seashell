@@ -153,10 +153,14 @@ body {
   min-height: var(--tabbar-h);
   display: flex;
   align-items: stretch;
-  background: var(--chrome);
+  background-color: var(--barBg, var(--chrome));
+  background-image: var(--barImg, none);
+  box-shadow: var(--barShadow, none);
   border-bottom: 1px solid var(--line);
   -webkit-app-region: drag;
-  padding-left: 78px; /* clear the traffic lights */
+  /* Reserved for the native traffic lights. A theme may want a different
+     inset, but it is still the OS drawing them. */
+  padding-left: var(--barPadL, 78px);
 }
 
 .tabbar__tabs {
@@ -185,9 +189,11 @@ body {
 }
 
 .tab--active {
-  background: var(--chromeAlt);
+  background-color: var(--tabOnBg, var(--chromeAlt));
+  background-image: var(--tabOnImg, none);
+  border-radius: var(--tabRadius, 0px) var(--tabRadius, 0px) 0 0;
   color: var(--text);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  box-shadow: var(--tabOnMark, inset 0 -2px 0 var(--accent));
 }
 
 .tab__name {
@@ -305,7 +311,9 @@ body {
 .sidebar {
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
-  background: var(--chrome);
+  background-color: var(--sideBg, var(--chrome));
+  background-image: var(--sideImg, none);
+  box-shadow: var(--sideShadow, none);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -357,6 +365,8 @@ body.dragging .sidebar__grip {
 }
 
 .sidebar__tree {
+  background-color: var(--treeBg, var(--chrome));
+  background-image: var(--treeImg, none);
   flex: 1;
   overflow: auto;
   padding: 6px 8px 14px;
@@ -492,16 +502,25 @@ body.dragging .sidebar__grip {
   position: relative;
   flex: 1;
   min-width: 0;
-  background: var(--chromeAlt);
+  background-color: var(--gridBg, var(--chromeAlt));
+  background-image: var(--gridImg, none);
 }
 
+/* The pane is the FRAME; the title bar and terminal sit inside it.
+   `--paneFramePad` is what makes the bezel treatment read as moulded plastic:
+   the pane paints the frame colour and pads, so the terminal is inset within
+   it rather than flush to the edge. At every other treatment the pad is 0 and
+   this is the same flush pane it always was. */
 .pane {
   position: absolute;
   display: flex;
   flex-direction: column;
-  background: var(--termBg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
+  padding: var(--paneFramePad, 0px);
+  background-color: var(--paneFrameBg, var(--paneBg));
+  background-image: var(--paneFrameImg, none);
+  border: var(--paneBorderW, 1px) solid var(--paneBorder, var(--line));
+  border-radius: var(--paneRadius, 4px);
+  box-shadow: var(--paneShadow, none);
   overflow: hidden;
 }
 
@@ -663,8 +682,10 @@ body.dragging .sidebar__grip {
   align-items: center;
   gap: calc(7px * var(--ui-scale));
   padding: 0 calc(4px * var(--ui-scale)) 0 calc(8px * var(--ui-scale));
-  background: var(--chrome);
+  background-color: var(--paneTitleBg, var(--chrome));
+  background-image: var(--headImg, none);
   border-bottom: 1px solid var(--line);
+  border-radius: var(--titleRadius, 0px) var(--titleRadius, 0px) 0 0;
   font-size: calc(12.5px * var(--ui-scale));
   color: var(--dim);
 }
@@ -678,13 +699,22 @@ body.dragging .sidebar__grip {
   color: var(--faint);
 }
 
+/* The label is the only shrinkable child of the title bar — the badge, zoom
+   readout and memory figure are all nowrap — so with the default
+   `min-width: auto` it absorbs the entire shortfall and collapses to zero
+   width. The pane's name is the thing you identify a pane by, so it gets a
+   floor and the readouts beside it are pinned. Found while prototyping the
+   themes, at the narrow pane widths a six-pane grid produces. */
 .pane__label {
+  flex: 0 1 auto;
+  min-width: calc(62px * var(--ui-scale));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .pane__badge {
+  flex: none;
   font-size: calc(11px * var(--ui-scale));
   padding: calc(1px * var(--ui-scale)) calc(6px * var(--ui-scale));
   border-radius: 3px;
@@ -698,6 +728,7 @@ body.dragging .sidebar__grip {
 }
 
 .pane__mem {
+  flex: none;
   font-variant-numeric: tabular-nums;
   color: var(--dim);
 }
@@ -721,11 +752,23 @@ body.dragging .sidebar__grip {
 /* Load-bearing background, not decoration. The terminal canvas is transparent
    wherever a cell uses the default background — see allowTransparency in
    term/terminal.ts — so the black has to come from the host element. */
+/* Load-bearing background, not decoration. The terminal canvas is transparent
+   wherever a cell uses the default background — see allowTransparency in
+   term/terminal.ts — so the colour has to come from the host element.
+
+   `--glow` and `--crtInset` are set only while CRT glass is on: the first is a
+   phosphor bloom on the text, the second the tube's vignette. Both are inert
+   when unset. */
 .pane__term {
+  position: relative;
   flex: 1;
   min-height: 0;
   padding: 2px 0 0 4px;
-  background: var(--termBg);
+  background-color: var(--termBg);
+  border-radius: 0 0 var(--termRadius, 0px) var(--termRadius, 0px);
+  text-shadow: var(--glow, none);
+  box-shadow: var(--crtInset, none);
+  overflow: hidden;
 }
 
 .pane__exit {
@@ -748,6 +791,8 @@ body.dragging .sidebar__grip {
 }
 
 .btn {
+  background-image: var(--btnImg, none);
+  border-radius: var(--btnRadius, 4px);
   padding: calc(3px * var(--ui-scale)) calc(10px * var(--ui-scale));
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -792,7 +837,8 @@ body.dragging .sidebar__grip {
   align-items: center;
   gap: calc(14px * var(--ui-scale));
   padding: 0 calc(12px * var(--ui-scale));
-  background: var(--chrome);
+  background-color: var(--barBg, var(--chrome));
+  background-image: var(--statusImg, none);
   border-top: 1px solid var(--line);
   color: var(--dim);
   font-size: calc(12px * var(--ui-scale));
@@ -1309,6 +1355,8 @@ body.dragging .web__view {
 }
 
 .btn--primary {
+  background-image: var(--primaryImg, none);
+  border-color: var(--primaryBorder, var(--accent));
   background: #1f6f14;
   border-color: #2c8f1e;
   color: #eafce7;
@@ -1670,9 +1718,14 @@ body.dragging .drawer__grip {
    * an untagged pane's card is the same width as every other one — a card
    * that changed shape when you coloured its pane would read as a bug. */
   border-left-width: 3px;
-  border-radius: 8px;
-  background: var(--cardBg);
-  box-shadow: 0 8px 24px #000a;
+  border-color: var(--cardBorder, var(--line));
+  border-radius: var(--cardRadius, 8px);
+  background-color: var(--cardBg);
+  color: var(--cardText, var(--text));
+  box-shadow: var(--cardShadow, 0 8px 24px #000a);
+  /* Retro's paper cards sit very slightly askew on the desk. Every other
+     theme sets 0deg, so this is inert unless a theme asks for it. */
+  transform: rotate(var(--cardRotate, 0deg));
 }
 
 /* Pane name and age on one line: the age is the second question you have about
@@ -1808,4 +1861,71 @@ body.dragging .drawer__grip {
 
 .set__swatch--on {
   box-shadow: 0 0 0 2px var(--chrome), 0 0 0 4px var(--text);
+}
+
+/* ------------------------------------------------------------- CRT glass */
+
+/*
+  Three of the four CRT layers, as pseudo-elements rather than real children.
+
+  xterm appends its own canvases into .pane__term imperatively, and React only
+  reconciles children it created — putting overlay divs in the same node mixes
+  the two and is exactly the kind of thing that works until a re-render moves
+  something. ::before and ::after cost nothing, cannot be reordered, and are
+  invisible when the tokens are unset, which is every theme with CRT off.
+
+  Not implemented: the rolling refresh band, which needs a third layer and is
+  the one effect nobody will miss.
+*/
+.pane__term::before,
+.pane__term::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Scanlines, crawling one line every 1.8s. */
+.pane__term::before {
+  background-image: var(--scanImg, none);
+  background-size: var(--scanSize, auto);
+  opacity: var(--scanOp, 0);
+  animation: var(--scanAnim, none);
+}
+
+/* Curved glass: a vignette plus a sheen off the top of the tube. */
+.pane__term::after {
+  background-image: var(--glassImg, none);
+  opacity: var(--glassOp, 0);
+}
+
+/* The tube's own irregular flicker. Never a strobe: the dips are a couple of
+   percent and seconds apart. */
+.pane__term {
+  animation: var(--crtAnim, none);
+}
+
+@keyframes crtFlicker {
+  0%, 100% { opacity: 1; }
+  6% { opacity: 0.962; }
+  8% { opacity: 1; }
+  41% { opacity: 0.984; }
+  43% { opacity: 1; }
+  72% { opacity: 0.972; }
+  74% { opacity: 1; }
+}
+
+@keyframes crtCrawl {
+  from { background-position-y: 0; }
+  to { background-position-y: 3px; }
+}
+
+/* Matches the existing rule for the attention pulse: motion is opt-out at the
+   system level, and a scanline crawl is exactly what that setting is for. */
+@media (prefers-reduced-motion: reduce) {
+  .pane__term,
+  .pane__term::before,
+  .pane__term::after {
+    animation: none !important;
+  }
 }
