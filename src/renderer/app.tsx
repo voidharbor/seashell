@@ -1771,7 +1771,10 @@ export function App(): React.JSX.Element {
         tab={activeTab}
         system={state.system}
         lookoutCount={lookoutCount}
-        onLookoutClick={() => setLookoutHidden((h) => !h)}
+        onLookoutClick={() => {
+          lookoutTouched.current = true
+          setLookoutHidden((h) => !h)
+        }}
       />
 
       {settingsOpen && (
