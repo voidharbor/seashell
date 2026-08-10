@@ -431,7 +431,12 @@ export const THEMES: Record<ThemeKey, Theme> = {
       '--accent': '#2b7cd3',
       '--onAccent': '#ffffff',
       '--barBg': 'rgba(206, 230, 250, .34)',
-      '--barPadL': '14px',
+      /* 78px like every other theme, not the prototype's 14px. Aero's mock
+         drew its own window buttons on the right, which the handoff calls
+         illustrative of the era rather than a spec — the real window still has
+         macOS traffic lights on the left, and 14px put the first tab under
+         them. */
+      '--barPadL': '78px',
       '--barImg': 'linear-gradient(rgba(255,255,255,.5) 0%, rgba(210,232,252,.16) 48%, rgba(140,185,228,.24) 52%, rgba(205,228,250,.3) 100%)',
       '--glassBlur': 'blur(22px) saturate(190%) brightness(1.06)',
       '--lightsDisplay': 'none',

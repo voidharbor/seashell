@@ -230,7 +230,13 @@ body {
   box-shadow: var(--tabOnMark, inset 0 -2px 0 var(--accent));
 }
 
+/* The name absorbs the tab's spare width, which is what puts the close button
+   against the right edge instead of trailing the text. `min-width: 0` is the
+   half people forget: without it a flex item refuses to shrink below its
+   content and the ellipsis never engages. */
 .tab__name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -342,13 +348,15 @@ body {
   min-height: 0;
 }
 
+/* One material top to bottom: the header, the drawer pull and the rows are all
+   the tree surface. The "side" surface belongs to the Lookout section above,
+   which is what carries retro's wooden desk. */
 .sidebar {
   backdrop-filter: var(--glassBlur, none);
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
-  background-color: var(--sideBg, var(--chrome));
-  background-image: var(--sideImg, none);
-  box-shadow: var(--sideShadow, none);
+  background-color: var(--treeBg, var(--chrome));
+  background-image: var(--treeImg, none);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -1547,6 +1555,16 @@ body.dragging .web__view {
  * tree off the bottom of the screen. */
 /* Titled section header, so Lookout reads as its own panel above the file tree
  * rather than cards floating over it. Rendered only when the rail is. */
+/* The Lookout section carries the theme's "side" surface — retro's wooden desk
+   sits behind the cards, not behind the file browser. The explorer below takes
+   the tree surface throughout, so its header matches its rows rather than
+   being a different material. */
+.lookout-head,
+.lookout-rail {
+  background-color: var(--sideBg, transparent);
+  background-image: var(--sideImg, none);
+}
+
 .lookout-head {
   display: flex;
   flex: 0 0 auto;
@@ -1625,6 +1643,7 @@ body.dragging .web__view {
  * growing without bound. Its height is user-set (see layout/rail.ts) and
  * applied inline; the grip below it trades height with the file tree. */
 .lookout-rail {
+  box-shadow: var(--sideShadow, none);
   flex: 0 0 auto;
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);

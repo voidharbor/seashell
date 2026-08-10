@@ -290,7 +290,13 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
   return (
     <div className="sidebar">
       <div className="sidebar__head">
-        <span>{displayRoot(root, props.home)}</span>
+        {/* A section title, matching the Lookout header above it, rather than
+            the root folder's name. Which folder the tree is rooted at is
+            already answered by the path readout along the bottom, and by the
+            tree's own first row; the header's job is to say what the panel is.
+            It used to read "Home", which named the folder and looked like a
+            breadcrumb that had lost the rest of itself. */}
+        <span title={displayRoot(root, props.home)}>File Browser</span>
         <span className="sidebar__refresh" title="Refresh (⌘R)" onClick={refresh}>
           ⟳
         </span>
