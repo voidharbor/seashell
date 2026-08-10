@@ -65,7 +65,9 @@ export function App(): React.JSX.Element {
   const [state, dispatch] = useReducer(reducer, null, (): AppState => ({
     tabs: [],
     activeTabId: '',
-    sidebarVisible: true,
+    // Closed on launch: the panes are the product, and both sidebar sections
+    // are one keystroke away (⌘B files, ⌘⇧B Lookout) when wanted.
+    sidebarVisible: false,
     explorerRoot: '',
     revealPath: null,
     system: null,
@@ -75,11 +77,15 @@ export function App(): React.JSX.Element {
   const [zoomIndex, setZoomIndex] = useState(loadZoomIndex)
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
   const [railHeight, setRailHeight] = useState(loadRailHeight)
-  /** Lookout hidden by the user (Cmd+Shift+B). Runtime-only on purpose: cards
-   *  are process-lifetime anyway, and a hidden Lookout that survived a restart
-   *  would look like the feature had broken. The status-bar badge still
-   *  counts while hidden, so nothing waiting goes unannounced. */
-  const [lookoutHidden, setLookoutHidden] = useState(false)
+  /** Lookout starts closed and reveals itself the first time a card actually
+   *  needs the user — an approval nobody can see is a missed approval. Once
+   *  the user touches the toggle themselves (⌘⇧B or the ✕), their choice
+   *  wins for the rest of the session and nothing auto-reveals over it.
+   *  Runtime-only on purpose: cards are process-lifetime anyway, and a hidden
+   *  Lookout that survived a restart would look like the feature had broken.
+   *  The status-bar badge still counts while hidden. */
+  const [lookoutHidden, setLookoutHidden] = useState(true)
+  const lookoutTouched = useRef(false)
   const railRef = useRef<HTMLElement | null>(null)
   /** Shell drawer (⌘J): open state is runtime-only — a scratch shell that
    *  reopened itself on launch would be presuming; height persists. */
@@ -505,6 +511,21 @@ export function App(): React.JSX.Element {
     () => state.tabs.find((t) => t.id === state.activeTabId),
     [state.tabs, state.activeTabId]
   )
+
+  /**
+   * The one exception to "Lookout starts closed": a card the rail would
+   * actually show (active, and not suppressed as the focused pane's own)
+   * reveals the section, because an approval hidden behind a closed panel is
+   * an agent waiting on nobody. Only ever fires while the user has not
+   * touched the toggle themselves — an explicit hide stays hidden.
+   */
+  useEffect(() => {
+    if (!lookoutHidden || lookoutTouched.current || !settings.lookoutCards) return
+    const suppressed = activeTab?.focusedPaneId ?? null
+    if (lookoutCards.some((c) => c.state === 'active' && c.paneId !== suppressed)) {
+      setLookoutHidden(false)
+    }
+  }, [lookoutCards, lookoutHidden, settings.lookoutCards, activeTab])
 
   const newPane = useCallback(
     (command: PaneCommand, commandText?: string) => {
@@ -952,6 +973,7 @@ export function App(): React.JSX.Element {
           dispatch({ type: 'layout.rebalance' })
           break
         case 'lookout.toggle':
+          lookoutTouched.current = true
           setLookoutHidden((h) => !h)
           break
         case 'drawer.toggle':
@@ -1521,7 +1543,10 @@ export function App(): React.JSX.Element {
               <button
                 className="lookout-head__hide"
                 title="Hide Lookout (⇧⌘B)"
-                onClick={() => setLookoutHidden(true)}
+                onClick={() => {
+                  lookoutTouched.current = true
+                  setLookoutHidden(true)
+                }}
               >
                 ✕
               </button>

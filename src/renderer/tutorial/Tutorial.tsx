@@ -75,8 +75,9 @@ const STEPS: Step[] = [
   {
     title: 'Double-click a path to find it',
     body:
-      'Double-click any file path in terminal output and the explorer expands to ' +
-      'it and highlights it. It reveals — it does not open. Inside a pane running ' +
+      'Double-click any file path in terminal output and the file browser opens ' +
+      '(it starts closed — ⌘B brings it back anytime), expands to the path and ' +
+      'highlights it. It reveals — it does not open. Inside a pane running ' +
       'an agent or any full-screen program, hold Option: those programs claim the ' +
       'mouse for themselves, and Option is how you tell SeaShell the click was ' +
       'meant for it. Bare URLs are clickable anywhere.',
@@ -106,11 +107,13 @@ const STEPS: Step[] = [
     title: 'Lookout',
     body:
       'When an agent pane stops to ask you something, a card appears in the ' +
-      "Lookout section above the file tree, edged in that pane's colour — " +
+      "Lookout section at the top of the sidebar, edged in that pane's colour — " +
       "Approve answers the pane without leaving the one you're in. Smart " +
-      'drafted replies come from the c-assistant plugin. ◉ in the Lookout ' +
-      'header turns cards off and clears the ones showing; ⇧⌘B just ' +
-      'hides the section and leaves them piling up behind it.',
+      'drafted replies come from the c-assistant plugin. The section stays out ' +
+      'of the way until then: it opens by itself the first time a card needs ' +
+      'you, and ⇧⌘B shows or hides it whenever you like — hide it yourself and ' +
+      'it stays hidden, with the status-bar badge still counting. ◉ in the ' +
+      'Lookout header turns cards off entirely and clears the ones showing.',
     keys: [
       ['⇧⌘B', 'Hide or show the Lookout section'],
       ['◉', 'Turn cards off entirely, in the Lookout header'],
@@ -197,7 +200,7 @@ const STEPS: Step[] = [
       ['⌘=  ⌘-', 'Zoom everything in / out'],
       ['⌘+  ⌘_', 'Zoom the focused pane only'],
       ['⌘0', 'Every pane back to 100%'],
-      ['⌘B', 'Show or hide the file explorer'],
+      ['⌘B', 'Show or hide the file browser — it starts closed'],
     ],
   },
 ]
