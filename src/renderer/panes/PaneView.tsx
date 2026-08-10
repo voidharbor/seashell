@@ -434,6 +434,13 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
 
       <div className="pane__term" ref={hostRef} />
 
+      {/* The CRT's rolling refresh band. A real element rather than a third
+          pseudo-element because .pane__term already spends both on the
+          scanlines and the curved glass, and because xterm owns the inside of
+          that node — this is a sibling React fully controls. Inert at every
+          theme with CRT off: the band image is unset, so it paints nothing. */}
+      <div className="pane__band" aria-hidden="true" />
+
       {pane.status === 'exited' && pane.exit && (
         <div className={'pane__exit' + (pane.exit.code !== 0 ? ' pane__exit--bad' : '')}>
           <span>

@@ -295,6 +295,14 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
           ⟳
         </span>
       </div>
+      {/* Retro's card-index drawer pull. Every other theme leaves --pullH
+          unset, so the strip is zero-height and invisible rather than
+          conditional on the theme — the explorer does not know what a theme
+          is, which is the whole point of the token set. */}
+      <div className="sidebar__pull" aria-hidden="true">
+        <span className="sidebar__grip2" />
+      </div>
+
       <div className="sidebar__tree" ref={scrollRef}>
         <div
           className={'node' + (selected === root ? ' node--selected' : '')}

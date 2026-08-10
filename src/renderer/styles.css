@@ -141,14 +141,48 @@ body {
 }
 
 .app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
+/* Behind everything, and only ever visible through translucent chrome. Bled
+   past the window edges at the prototype's own -74px, so the window frames the
+   bright middle of the desk gradient rather than compressing the whole thing,
+   dark far corner included, into its own height.
+
+   Known, and left as the design has it: the status bar's right-hand shortcut
+   hints are --faint over a 34%-opaque bar over a saturated desk, and they wash
+   out. Bleeding the desk further down was tried and made it marginally worse,
+   because it puts an even brighter part of the gradient behind them. The fix is
+   a token value (a more opaque --barBg for aero, or a stronger --faint), which
+   is a decision for whoever owns the palette rather than something to paper
+   over here. Aero only. */
+.app__desk {
+  position: absolute;
+  inset: -74px;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--deskImg, none);
+  background-size: cover;
+  opacity: var(--deskOp, 0);
+}
+
+/* The chrome has to sit above the desk layer, or it is painted over by it. */
+.tabbar,
+.body,
+.statusbar,
+.sidebar-col,
+.grid {
+  position: relative;
+  z-index: 1;
+}
+
 /* ---------------------------------------------------------------- tab bar */
 
 .tabbar {
+  backdrop-filter: var(--glassBlur, none);
   height: var(--tabbar-h);
   min-height: var(--tabbar-h);
   display: flex;
@@ -309,6 +343,7 @@ body {
 }
 
 .sidebar {
+  backdrop-filter: var(--glassBlur, none);
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
   background-color: var(--sideBg, var(--chrome));
@@ -831,6 +866,7 @@ body.dragging .sidebar__grip {
 /* ------------------------------------------------------------ status bar */
 
 .statusbar {
+  backdrop-filter: var(--glassBlur, none);
   height: var(--statusbar-h);
   min-height: var(--statusbar-h);
   display: flex;
@@ -1928,4 +1964,56 @@ body.dragging .drawer__grip {
   .pane__term::after {
     animation: none !important;
   }
+}
+
+/* --------------------------------------------------- CRT refresh band */
+
+/* The fourth CRT layer: a soft bar sweeping down the tube every 8s. Sits over
+   the terminal only, so it is offset by the title bar and respects the frame
+   padding a bezel theme adds (an absolutely positioned child is laid out
+   against its ancestor's padding box). */
+.pane__band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--titlebar-h);
+  height: 16%;
+  z-index: 4;
+  pointer-events: none;
+  background-image: var(--bandImg, none);
+  opacity: var(--glassOp, 0);
+  animation: var(--rollAnim, none);
+}
+
+@keyframes crtRoll {
+  0% { transform: translateY(-60%); }
+  100% { transform: translateY(220%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane__band { animation: none !important; }
+}
+
+/* ------------------------------------------------ explorer drawer pull */
+
+/* Zero-height unless a theme asks for it. Retro makes the explorer a card
+   index: a walnut drawer front with a brass grip. */
+.sidebar__pull {
+  flex: none;
+  height: var(--pullH, 0px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--pullBg, transparent);
+  background-image: var(--pullImg, none);
+  border-bottom: var(--pullBorder, 0);
+}
+
+.sidebar__grip2 {
+  width: calc(64px * var(--ui-scale));
+  height: var(--pullGrip, 0px);
+  border-radius: 3px;
+  background-color: var(--pullGripBg, transparent);
+  background-image: var(--pullGripImg, none);
+  box-shadow: var(--pullGripShadow, none);
 }

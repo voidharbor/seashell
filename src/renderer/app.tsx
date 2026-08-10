@@ -1268,6 +1268,13 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="app">
+      {/* The desktop behind the glass. Aero is the only theme that paints it,
+          and it is what the translucent chrome above is translucent *against*
+          — without it, backdrop-filter has nothing to blur and the frosted
+          surfaces read as flat pale blue. Every other theme leaves --deskImg
+          unset, so this is a zero-opacity empty layer. */}
+      <div className="app__desk" aria-hidden="true" />
+
       <div className="tabbar">
         <div className="tabbar__tabs">
           {state.tabs.map((t) => (
