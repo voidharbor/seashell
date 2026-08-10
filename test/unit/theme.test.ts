@@ -134,24 +134,22 @@ describe('switching themes leaves nothing behind', () => {
  * so it accumulates BOTH neighbours' shadows at close range. The heavy
  * floating shadow turned every gutter into a dark channel, and the 1px
  * divider line painted chrome down the middle of it — together they read as
- * black lines running between panes that are supposed to float cleanly.
+ * black lines running between panes that are supposed to sit cleanly on the
+ * desk. The line is gone for every theme now (styles.css paints the divider
+ * transparent at rest, accent on hover), so no theme may reintroduce one as
+ * a token.
  */
-describe('floating panes sit on a clean desk', () => {
-  it('hides the divider line under floating frames', () => {
-    // mac and macDark default to floating; the line goes with the treatment,
-    // not the palette, so any theme switched to floating gets the same desk.
-    expect(themeVars(choice({ theme: 'mac' }))['--dividerLine']).toBe('transparent')
-    expect(themeVars(choice({ theme: 'macDark' }))['--dividerLine']).toBe('transparent')
-    expect(themeVars(choice({ theme: 'retro', paneStyle: 'floating' }))['--dividerLine']).toBe(
-      'transparent'
-    )
-    // Hairline themes keep their 1px lines — that is their design.
-    expect(themeVars(choice({ theme: 'nautical' }))['--dividerLine']).toBeUndefined()
-    expect(themeVars(choice({ theme: 'homebrew' }))['--dividerLine']).toBeUndefined()
-  })
-
-  it('keeps the divider line in the removal set so leaving floating restores it', () => {
-    expect(ALL_TOKEN_KEYS).toContain('--dividerLine')
+describe('panes sit on a clean desk', () => {
+  it('lets no theme or frame paint a resting divider line', () => {
+    for (const key of THEME_ORDER) {
+      expect(
+        themeVars(choice({ theme: key }))['--dividerLine'],
+        `${key} paints a divider line`
+      ).toBeUndefined()
+    }
+    for (const [name, style] of Object.entries(PANE_STYLES)) {
+      expect(style.vars['--dividerLine'], `${name} paints a divider line`).toBeUndefined()
+    }
   })
 
   it('uses a contact shadow tight enough to leave the gutter readable', () => {

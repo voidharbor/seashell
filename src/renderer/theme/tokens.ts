@@ -557,9 +557,6 @@ export const PANE_STYLES: Record<Exclude<PaneStyleKey, 'theme'>, { label: string
          The original 32px/40% pair measured ~150 grey on macOS Light's
          #e8e8ec desk; this contact shadow leaves it above 205. */
       '--paneShadow': '0 2px 8px rgba(0,0,0,.22)',
-      /* Floating panes sit on the desk; nothing draws a line between
-         floating windows. Hover still paints the accent for the drag. */
-      '--dividerLine': 'transparent',
     },
   },
   slab: {

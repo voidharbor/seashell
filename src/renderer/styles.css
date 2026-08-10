@@ -868,9 +868,10 @@ body.dragging .sidebar__grip {
 
 .divider__line {
   position: absolute;
-  /* Floating frames set --dividerLine to transparent: panes that float over
-     the desk have no business with a painted line between them. */
-  background: var(--dividerLine, var(--line));
+  /* Painted only on hover. Every theme used to run a 1px --line stripe down
+     the middle of every gutter; on all of them it read as a stray line
+     between panes that are supposed to sit cleanly on the desk. */
+  background: transparent;
 }
 
 .divider:hover .divider__line {
