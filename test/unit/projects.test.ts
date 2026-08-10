@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   remapTree,
+  paneToSaved,
   savedCommandFor,
   tabToSaved,
   tabsFromSaved,
@@ -346,5 +347,26 @@ describe('a one-tab project', () => {
     const second = tabsFromSaved([tabToSaved(source)], mint)
     expect(first[0]!.id).not.toBe(second[0]!.id)
     expect(Object.keys(first[0]!.panes)[0]).not.toBe(Object.keys(second[0]!.panes)[0])
+  })
+})
+
+/**
+ * A link is a live working relationship between two running sessions, not part
+ * of a saved shape. Reopening a project next week must not point two fresh
+ * agents at notes neither of them wrote — and `paneToSaved` enumerates its
+ * fields rather than spreading the pane, which is what makes that true.
+ */
+describe('links are not saved into projects', () => {
+  it('drops linkId when a pane is serialised', () => {
+    const p = pane('a')
+    ;(p as unknown as Record<string, unknown>).linkId = 'link-1'
+    expect('linkId' in paneToSaved(p)).toBe(false)
+  })
+
+  it('drops it through a whole tab too', () => {
+    const p = pane('a')
+    ;(p as unknown as Record<string, unknown>).linkId = 'link-1'
+    const saved = tabToSaved(tab([p]))
+    expect(JSON.stringify(saved)).not.toContain('link-1')
   })
 })
