@@ -9,9 +9,9 @@ A terminal window manager. Run many shells side by side in one window — plain
 macOS is the reference platform; Windows and Linux builds are experimental.
 
 <p align="center">
-  <img src="docs/hero.png" alt="SeaShell: six panes tiled in one window — two Claude Code sessions, a test run, a system monitor, a file preview — with a Lookout card in the corner catching the session that stopped to ask a question.">
+  <img src="docs/hero.png" alt="SeaShell: six terminal panes tiled in one window running a git log, a test suite, a process table and a diff, with the file explorer and the Lookout rail down the left side, in the Nautical theme.">
 </p>
-<p align="center"><i>Six panes in one window — and a Lookout card catching the session that stopped to ask a question.</i></p>
+<p align="center"><i>Six panes in one window, in the Nautical theme.</i></p>
 
 **[⬇ Download the latest release](https://github.com/voidharbor/seashell/releases/latest)** — macOS · Windows · Linux
 
@@ -151,6 +151,11 @@ section, which is a panel toggle, not an off switch: detection keeps running beh
 cards keep stacking up out of sight.
 
 ## Themes
+
+<p align="center">
+  <img src="docs/themes.png" alt="The same six-pane window shown under all seven themes: Nautical, Current, Retro CRT, macOS Light, macOS Dark, Hacker and Aero Glass.">
+</p>
+<p align="center"><i>One window, seven themes. Same panes, same output, same moment.</i></p>
 
 Settings > Appearance. Seven built-in themes: **Nautical** (the default, oxidised
 teal and brass), **Current** (exactly what the app looked like before themes),
