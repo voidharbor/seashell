@@ -11,6 +11,7 @@ import {
   type OpenPathResponse,
   type LookoutActionResponse,
   type LookoutState,
+  type LinksEnsureResponse,
 } from '../shared/ipc.js'
 import type { PtyManager } from './pty/manager.js'
 import type { CardStore } from './lookout/card-store.js'
@@ -21,6 +22,7 @@ import { statBatch } from './fs/stat-batch.js'
 import { decideRoute, VIEWER_MAX_BYTES } from './fs/route.js'
 import { denyOpenPath, extOf } from './fs/path-guard.js'
 import { statForOpen, type OpenTarget } from './fs/open-target.js'
+import { ensureNotes } from './links/notes.js'
 import { platform } from './platform/index.js'
 import {
   MAX_NAME_LENGTH,
@@ -71,6 +73,7 @@ const WriteTextReq = z.object({
   expectedMtimeMs: z.number(),
 })
 const OpenReq = z.object({ path: AbsPath })
+const LinkReq = z.object({ linkId: z.string().min(1).max(64) })
 
 /**
  * A project arrives from the renderer, so its shape is validated here like any
@@ -323,6 +326,20 @@ export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
       .safeParse(raw)
     if (!parsed.success) return { ids: {} }
     return { ids: await sessionIdsForPanes(parsed.data.panes) }
+  })
+
+  /**
+   * The shared notes file for a link group.
+   *
+   * Idempotent, and never destructive: a second pane joining an existing link
+   * gets the same path and the notes already in it. The renderer supplies only
+   * an id, and `notesPathFor` refuses anything that is not a plain id, so a
+   * path can never be composed from the other side of the boundary.
+   */
+  ipcMain.handle(CH.linksEnsure, async (_e, raw): Promise<LinksEnsureResponse> => {
+    const parsed = LinkReq.safeParse(raw)
+    if (!parsed.success) return { path: null }
+    return { path: await ensureNotes(parsed.data.linkId) }
   })
 
   ipcMain.handle(CH.projectsSave, async (_e, raw) => {

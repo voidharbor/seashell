@@ -31,6 +31,10 @@ export type SerializablePane = Omit<
   | 'attentionAt'
   | 'waitingSince'
   | 'generation'
+  // A link is a live working relationship between two running sessions. A
+  // project restored next week would point two fresh agents at notes neither
+  // of them wrote.
+  | 'linkId'
 >
 
 /**

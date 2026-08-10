@@ -14,6 +14,8 @@ import {
   CH,
   type AppPaths,
   type FsProbeRequest,
+  type LinksEnsureRequest,
+  type LinksEnsureResponse,
   type FsProbeResponse,
   type FsReadDirRequest,
   type FsReadDirResponse,
@@ -74,6 +76,10 @@ const api: SeashellApi = {
     resize: (req: PtyResizeRequest): void => ipcRenderer.send(CH.ptyResize, req),
     onData: (cb: (e: PtyDataEvent) => void) => subscribe<PtyDataEvent>(CH.ptyData, cb),
     onExit: (cb: (e: PtyExitEvent) => void) => subscribe<PtyExitEvent>(CH.ptyExit, cb),
+  },
+  links: {
+    ensure: (req: LinksEnsureRequest): Promise<LinksEnsureResponse> =>
+      ipcRenderer.invoke(CH.linksEnsure, req),
   },
   fs: {
     readDir: (req: FsReadDirRequest): Promise<FsReadDirResponse> =>

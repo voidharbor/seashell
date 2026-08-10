@@ -4,6 +4,7 @@ import { currentXtermTheme } from '../theme/live.js'
 import { pathAtPoint } from './pathclick.js'
 import { WebPreview } from './WebPreview.js'
 import { ColorDot, ColorPicker } from './ColorPicker.js'
+import { LinkPicker, type LinkCandidate } from './LinkPicker.js'
 import { paneColorHex, type PaneColorKey } from './colors.js'
 import { FilePreview } from '../viewer/FilePreview.js'
 import { launchCommandText } from '../projects/serialize.js'
@@ -96,6 +97,10 @@ export interface PaneViewProps {
   onUrlChange: (url: string) => void
   onToggleRaw: (raw: boolean) => void
   onSetColor: (color: PaneColorKey | null) => void
+  /** Panes this one could share notes with, and their current link state. */
+  linkCandidates: LinkCandidate[]
+  onLink: (otherPaneId: string) => void
+  onUnlink: () => void
   onTitle: (title: string) => void
   onCwd: (cwd: string) => void
   /** Whether the attention pulse is enabled in settings. */
@@ -106,6 +111,7 @@ export interface PaneViewProps {
 export function PaneView(props: PaneViewProps): React.JSX.Element {
   const { pane, index, rect, focused, hidden } = props
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [linkOpen, setLinkOpen] = useState(false)
 
   const mem = pane.metrics?.footprintBytes ?? 0
   const showMem = pane.kind === 'term' && mem >= 200 * 1024 * 1024
@@ -155,6 +161,22 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
         <span className="pane__label" title={pane.filePath ?? pane.url ?? pane.cwd}>
           {pane.label}
         </span>
+        {pane.kind === 'term' && (
+          <span
+            className={'pane__link' + (pane.linkId ? ' pane__link--on' : '')}
+            title={
+              pane.linkId
+                ? 'Sharing notes with another pane — click to change'
+                : 'Share notes with another pane'
+            }
+            onClick={(e) => {
+              e.stopPropagation()
+              setLinkOpen((o) => !o)
+            }}
+          >
+            ⇄
+          </span>
+        )}
         <span className="pane__badge">{badgeFor(pane)}</span>
         <span className="pane__spacer" />
         {/* Only when this pane differs from the global level — six panes all
@@ -174,6 +196,23 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
           ×
         </span>
       </div>
+
+      {linkOpen && (
+        <LinkPicker
+          paneId={pane.id}
+          linkId={pane.linkId}
+          candidates={props.linkCandidates}
+          onLink={(other) => {
+            props.onLink(other)
+            setLinkOpen(false)
+          }}
+          onUnlink={() => {
+            props.onUnlink()
+            setLinkOpen(false)
+          }}
+          onClose={() => setLinkOpen(false)}
+        />
+      )}
 
       {pickerOpen && (
         <ColorPicker

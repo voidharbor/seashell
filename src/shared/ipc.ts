@@ -37,6 +37,7 @@ export const CH = {
   appGetPaths: 'app:getPaths',
   appGetTerminalFont: 'app:getTerminalFont',
 
+  linksEnsure: 'links:ensure',
   projectsList: 'projects:list',
   projectsSessionIds: 'projects:sessionIds',
   projectsSave: 'projects:save',
@@ -353,6 +354,15 @@ export interface Project {
   tabs: SavedTab[]
 }
 
+/** Where the shared notes for a link group live, or null if it could not be
+ *  created. The renderer never composes this path itself. */
+export interface LinksEnsureRequest {
+  linkId: string
+}
+export interface LinksEnsureResponse {
+  path: string | null
+}
+
 export interface ProjectsListResponse {
   projects: Project[]
 }
@@ -458,6 +468,10 @@ export interface SeashellApi {
   }
   metrics: {
     onTick(cb: (e: MetricsTickEvent) => void): () => void
+  }
+  links: {
+    /** Create (or find) the shared notes file for a link group. */
+    ensure(req: LinksEnsureRequest): Promise<LinksEnsureResponse>
   }
   projects: {
     list(): Promise<ProjectsListResponse>

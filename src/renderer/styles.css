@@ -2036,3 +2036,112 @@ body.dragging .drawer__grip {
   background-image: var(--pullGripImg, none);
   box-shadow: var(--pullGripShadow, none);
 }
+
+/* ------------------------------------------------------------ pane links */
+
+/* The share-notes control. Dim until the pane is actually linked, like the
+   colour dot beside it: an affordance that is always lit reads as a state. */
+.pane__link {
+  flex: none;
+  cursor: default;
+  color: var(--faint);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1;
+}
+
+.pane__link:hover {
+  color: var(--text);
+}
+
+.pane__link--on {
+  color: var(--accent);
+}
+
+.linkpick {
+  position: absolute;
+  top: var(--titlebar-h);
+  left: calc(8px * var(--ui-scale));
+  z-index: 20;
+  min-width: calc(210px * var(--ui-scale));
+  padding: calc(6px * var(--ui-scale));
+  border: 1px solid var(--line);
+  border-radius: var(--cardRadius, 8px);
+  background-color: var(--cardBg);
+  box-shadow: var(--cardShadow, 0 8px 24px #000a);
+}
+
+.linkpick__head {
+  padding: calc(2px * var(--ui-scale)) calc(6px * var(--ui-scale)) calc(6px * var(--ui-scale));
+  color: var(--dim);
+  font-size: calc(11.5px * var(--ui-scale));
+}
+
+.linkpick__empty {
+  padding: calc(6px * var(--ui-scale));
+  color: var(--faint);
+  font-size: calc(11.5px * var(--ui-scale));
+}
+
+.linkpick__row {
+  display: flex;
+  align-items: center;
+  gap: calc(7px * var(--ui-scale));
+  width: 100%;
+  padding: calc(5px * var(--ui-scale)) calc(6px * var(--ui-scale));
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.linkpick__row:hover:not(:disabled) {
+  background: var(--paneTitleOn);
+}
+
+/* Disabled means "this pane is not running an agent", which the note on the
+   right spells out — the row stays readable rather than greying into nothing. */
+.linkpick__row:disabled {
+  color: var(--faint);
+}
+
+.linkpick__row--on {
+  color: var(--accent);
+}
+
+.linkpick__index {
+  flex: none;
+  min-width: calc(14px * var(--ui-scale));
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.linkpick__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linkpick__note {
+  flex: none;
+  color: var(--faint);
+  font-size: calc(11px * var(--ui-scale));
+}
+
+.linkpick__unlink {
+  width: 100%;
+  margin-top: calc(4px * var(--ui-scale));
+  padding: calc(5px * var(--ui-scale));
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+}
+
+.linkpick__unlink:hover {
+  color: var(--text);
+}

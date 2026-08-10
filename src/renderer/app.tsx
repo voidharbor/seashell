@@ -20,6 +20,8 @@ import { StatusBar } from './status/StatusBar.js'
 import { loadTerminalFont } from './term/terminal.js'
 import { editTargetId, isTextField, terminalOwningFocus } from './term/edit-target.js'
 import { paneColorHex } from './panes/colors.js'
+import { canBrief, linkBriefing, newLinkId } from './panes/link.js'
+import type { LinkCandidate } from './panes/LinkPicker.js'
 import {
   applyUiScale,
   clampIndex,
@@ -732,6 +734,58 @@ export function App(): React.JSX.Element {
     [state.tabs, restoreProjectTabs]
   )
 
+  /**
+   * Put two panes on one shared notes file.
+   *
+   * SeaShell cannot merge two agents' contexts — Claude Code owns its own
+   * conversation and this app only has the pty underneath it. So a link is a
+   * file plus one briefing each: main creates the notes, both panes are told
+   * where it is, and from then on the agents keep each other current by
+   * writing to it. Nothing is relayed between panes afterwards.
+   *
+   * The briefing is typed and submitted, which is a write into a live agent
+   * session — it happens here, on the user's own click inside SeaShell, which
+   * is the same rule Lookout's Approve follows. It is refused for a pane that
+   * is not running an agent, because an English sentence typed at a shell
+   * prompt is a command line, not a comment.
+   */
+  const linkPanes = useCallback(
+    async (paneId: string, otherPaneId: string) => {
+      const a = paneById(state, paneId)
+      const b = paneById(state, otherPaneId)
+      if (!a || !b) return
+
+      if (!canBrief(a.metrics?.foregroundProcess) || !canBrief(b.metrics?.foregroundProcess)) {
+        dispatch({ type: 'toast', message: 'Both panes need to be running an agent to link' })
+        return
+      }
+
+      // Joining an existing group keeps its notes; otherwise mint one.
+      const linkId = a.linkId ?? b.linkId ?? newLinkId(() => uid('link'))
+      const res = await window.seashell.links.ensure({ linkId })
+      if (!res.path) {
+        dispatch({ type: 'toast', message: 'Could not create the shared notes file' })
+        return
+      }
+      const briefing = linkBriefing(res.path)
+      if (!briefing) {
+        dispatch({ type: 'toast', message: 'That notes path cannot be typed safely' })
+        return
+      }
+
+      for (const pane of [a, b]) {
+        if (pane.linkId === linkId) continue // already briefed on this file
+        dispatch({ type: 'pane.link', paneId: pane.id, linkId })
+        // Ctrl-U first, for the same reason the drawer's cd does it: the prompt
+        // may hold half-typed input, and appending to it would send something
+        // neither the user nor the agent meant.
+        window.seashell.pty.write({ paneId: pane.id, data: `\x15${briefing.text}\r` })
+      }
+      dispatch({ type: 'toast', message: 'Panes are sharing notes' })
+    },
+    [state]
+  )
+
   const deleteProject = useCallback(
     async (project: Project) => {
       await window.seashell.projects.remove({ id: project.id })
@@ -1235,6 +1289,21 @@ export function App(): React.JSX.Element {
   if (!ready) return <div className="empty">Starting SeaShell…</div>
 
   const order = activeTab ? dfsPaneOrder(activeTab.tree) : []
+
+  /** Panes in this tab that could share notes, in the order they appear. */
+  const linkCandidates: LinkCandidate[] = activeTab
+    ? order
+        .map((id, i) => ({ pane: activeTab.panes[id], i }))
+        .filter((x): x is { pane: NonNullable<typeof x.pane>; i: number } => !!x.pane)
+        .filter((x) => x.pane.kind === 'term')
+        .map((x) => ({
+          paneId: x.pane.id,
+          label: x.pane.label,
+          index: x.i + 1,
+          briefable: canBrief(x.pane.metrics?.foregroundProcess),
+          ...(x.pane.linkId ? { linkId: x.pane.linkId } : {}),
+        }))
+    : []
   const full = activeTab ? Object.keys(activeTab.panes).length >= MAX_PANES_PER_TAB : false
   const fontSize = levelAt(zoomIndex).font
   // Any pane anywhere overriding the global level — drives the "*" and keeps the
@@ -1574,6 +1643,9 @@ export function App(): React.JSX.Element {
                   onSetColor={(color) =>
                     dispatch({ type: 'pane.setColor', paneId: r.paneId, color })
                   }
+                  linkCandidates={linkCandidates}
+                  onLink={(other) => void linkPanes(r.paneId, other)}
+                  onUnlink={() => dispatch({ type: 'pane.unlink', paneId: r.paneId })}
                   onCwd={(cwd) =>
                     dispatch({ type: 'pane.cwd', paneId: r.paneId, cwd, home })
                   }
