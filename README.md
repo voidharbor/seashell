@@ -96,6 +96,15 @@ These exist because of that:
   editing the prompt you are halfway through and selecting an entire transcript.
 - **Shift+Enter sends ESC CR**, the multi-line-input binding agents expect, with no setup and
   without SeaShell touching your Terminal.app preferences.
+- **Link two agents to share notes.** The ⇄ button in a pane's title bar links it
+  to another agent pane. SeaShell cannot merge two conversations — each session
+  owns its own context — so a link is one shared notes file plus a single
+  briefing to each agent telling it where that file is. From then on they keep
+  each other current by reading it before a task and appending after one, which
+  is what lets two sessions work the same project without you relaying between
+  them. Only panes actually running an agent can be linked, nothing is relayed
+  between panes afterwards, and the file lives in SeaShell's own data directory
+  rather than in your working tree.
 - **A pane is a real login shell.** Your dotfiles, your PATH, your history. Nothing is wrapped or
   intercepted, and the environment a pane inherits is scrubbed of SeaShell's own identity so a
   nested launch cannot confuse the agent running inside it.
@@ -140,6 +149,27 @@ watching and clears whatever is already in the rail. The same toggle lives in Se
 *Approval cards*. Note the difference from **⇧⌘B** and the **✕** beside it — those hide the
 section, which is a panel toggle, not an off switch: detection keeps running behind it and
 cards keep stacking up out of sight.
+
+## Themes
+
+Settings > Appearance. Seven built-in themes: **Nautical** (the default, oxidised
+teal and brass), **Current** (exactly what the app looked like before themes),
+**Retro CRT**, **macOS Light**, **macOS Dark**, **Hacker**, and **Aero Glass**.
+
+Three dials sit beside the theme and compose freely with it:
+
+- **Accent** — a fixed palette rather than a colour picker. What is stored is the
+  key, so a future palette revision re-resolves instead of stranding a hex.
+- **Terminal palette** — recolours the terminals themselves, not just the chrome.
+  Theme native, Solar, Amber mono or Ice. Existing scrollback repaints in place.
+- **Pane frame** — hairline, bezel, floating or slab, or whatever the theme picks.
+
+**CRT glass is independent of the theme.** Scanlines, an irregular flicker, curved
+glass and a rolling refresh band, on for Retro CRT by default but available over
+any theme. All of it respects `prefers-reduced-motion`.
+
+Themes change colour and shape only. Every dimension belongs to the zoom system,
+so no theme can resize your interface.
 
 ## What it does
 
@@ -234,7 +264,9 @@ SeaShell deliberately does not do these things:
   detached survives and nothing there can count it, which is the one guarantee this app exists
   to make. Process metrics and working-directory reporting are absent there too. Treat that
   build as something to test rather than something to rely on.
-- **Plugins or theming.** No extension API, no theme editor.
+- **An extension API.** No plugin system, no theme editor. Themes are a fixed
+  built-in set (seven of them, with accent, terminal palette, pane frame and CRT
+  as separate axes) rather than something a third party can add to.
 - **Replace your browser.** The web preview exists for adjacency — a page next to the pane
   serving it. It saves no memory: Chromium costs about the same per page wherever it renders.
 

@@ -130,18 +130,57 @@ const STEPS: Step[] = [
     ],
   },
   {
-    title: 'Save a layout as a project',
+    title: 'Tabs group panes; projects save them',
     body:
-      'A project reopens a shape, not a session. Save what is open and you get ' +
-      'back the tabs, how they were split, each pane’s directory and what it was ' +
-      'launched as. What does not come back: the processes, which died with the ' +
-      'app, and the scrollback, which is left out deliberately — a terminal ' +
-      'buffer routinely holds keys and customer data, and that is not worth ' +
-      'writing to a file to save you a scroll.',
+      'A tab is a named set of panes — double-click its name, or File > Rename ' +
+      'Tab. Save the whole window as a project, or just the active tab, which is ' +
+      'the level most people mean by "a project": one tab you can bring into any ' +
+      'window later. A saved project can replace the window (Open) or come in ' +
+      'alongside what is already running (Add). ' +
+      'A project reopens a shape, not a session. You get back the tabs, how they ' +
+      'were split, each pane’s directory and what it was launched as, and a ' +
+      'claude pane resumes with a visible `claude -r`. What does not come back: ' +
+      'the processes, which died with the app, and the scrollback, which is left ' +
+      'out deliberately — a terminal buffer routinely holds keys and customer ' +
+      'data, and that is not worth writing to a file to save you a scroll.',
     keys: [
       ['⌘⇧P', 'Open projects'],
       ['⌘S', 'Save what is open'],
     ],
+  },
+  {
+    title: 'A scratch shell for each pane',
+    body:
+      '⌘J opens a shell drawer over the grid, and every pane gets its own — ' +
+      'starting in that pane’s working directory, with its own history and ' +
+      'scrollback. Switching panes switches shells, so a quick `git status` next ' +
+      'to a running agent costs neither a new pane nor an interruption. The ' +
+      'drawer names the pane it belongs to, and its shell is created the first ' +
+      'time you open it there and dies with the pane.',
+    keys: [['⌘J', 'Show or hide the shell drawer']],
+  },
+  {
+    title: 'Link two agents to share notes',
+    body:
+      'The ⇄ button in a pane’s title bar links it to another agent pane. ' +
+      'SeaShell cannot merge two conversations — each session owns its own ' +
+      'context — so linking gives both panes one shared notes file and tells ' +
+      'each agent about it once. From then on they keep each other current by ' +
+      'reading it before a task and appending after one, which is what lets two ' +
+      'sessions work the same project without you relaying between them. ' +
+      'Only panes actually running an agent can be linked, and nothing is ever ' +
+      'sent from one pane to another afterwards.',
+  },
+  {
+    title: 'Seven themes',
+    body:
+      'Settings > Appearance. Nautical is the default; Current is exactly what ' +
+      'the app looked like before. Three more dials sit beside it and compose ' +
+      'freely: an accent colour, a terminal palette that recolours the terminals ' +
+      'themselves and not just the chrome, and the pane frame — hairline, bezel, ' +
+      'floating or slab. CRT glass is separate from the theme, so you can run ' +
+      'scanlines and a curved tube over macOS Dark if you want to.',
+    keys: [['⌘,', 'Settings']],
   },
   {
     title: 'Make it comfortable',

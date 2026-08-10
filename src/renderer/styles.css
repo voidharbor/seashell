@@ -1,24 +1,74 @@
 :root {
-  /* Matches the Homebrew Terminal profile: green on black. */
-  --term-bg: #000000;
-  --term-green: #28fe14;
-  --chrome-bg: #0a0f0a;
-  --chrome-bg-alt: #060a06;
-  --chrome-line: #1c2c1c;
+  /*
+    The stylesheet default, and it is the Current theme verbatim.
+
+    Themes are applied as inline custom properties on the root element before
+    React renders (see main.tsx), so these values are what paints if that ever
+    does not run, and what an unset token falls back to. They are generated
+    from the same token data the themes are, so the two cannot drift.
+
+    Colour and shape only. Everything dimensional lives in the block below and
+    belongs to the zoom system; a theme never changes a size.
+  */
+  --fu: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --fm: 'SF Mono', Menlo, monospace;
+  --chrome: #0a0f0a;
+  --chromeAlt: #060a06;
+  --line: #1c2c1c;
   --text: #b9f5ae;
-  --text-dim: #6ea865;
-  /* Was #48703f, which measured 3.38:1 on --chrome-bg and 2.89:1 on a popover —
-     under AA for body text and under even the 3:1 UI minimum on the lighter
-     surfaces. This is the smallest step that clears 4.5:1 on the chrome
-     background while staying visibly dimmer than --text-dim, so the three-step
-     hierarchy survives. A dim token is fine; an unreadable one is a bug wearing
-     a style, and this one had already forced the close buttons to be rebuilt. */
-  --text-faint: #5c8551;
+  --dim: #6ea865;
+  --faint: #5c8551;
   --accent: #28fe14;
+  --onAccent: #000;
+  --barBg: #0a0f0a;
+  --barPadL: 78px;
+  --headBg: #0a0f0a;
+  --sideBg: #0a0f0a;
+  --treeBg: #0a0f0a;
+  --gridBg: #060a06;
+  --termBg: #000000;
+  --termFg: #28fe14;
+  --paneBg: #000000;
+  --paneRadius: 4px;
+  --paneBorder: #1c2c1c;
+  --paneTitleBg: #0a0f0a;
+  --paneTitleOn: #1a1f26;
+  --cardBg: #161c22;
+  --cardText: #b9f5ae;
+  --cardDim: #5c8551;
+  --cardRadius: 8px;
+  --cardBorder: #1c2c1c;
+  --cardShadow: 0 8px 24px #000a;
+  --cardRotate: 0deg;
+  --btnBg: #262d35;
+  --btnText: #b9f5ae;
+  --btnRadius: 4px;
+  --btnBorder: #1c2c1c;
+  --primaryBg: #1f6f14;
+  --primaryText: #eafce7;
+  --primaryBorder: #2c8f1e;
+  --body: #0e1116;
+  --sunken: #0a0d11;
+  --select: #2c68d0;
+  --winRadius: 10px;
+  --winBorder: 1px solid #1c2c1c;
+  --winShadow: 0 30px 80px #000c;
+  --tabRadius: 0px;
+  --tabOnBg: #060a06;
+  --tabOnMark: inset 0 -2px 0 #28fe14;
+  --g: #35d06b;
+  --c: #33bbc8;
+  --y: #e5a83c;
+  --r: #ff5f56;
+  --b: #5a8dee;
+  --m: #b57bff;
+  --gr: #5c8551;
+
+  /* Not themed, on purpose. Danger and warning mean the same thing on every
+     surface, the same way the pane tag colours in panes/colors.ts identify a
+     pane rather than decorate one. */
   --danger: #ff5f56;
   --warn: #e5a83c;
-  /* Finder's selection blue reads correctly even on a green-tinted sidebar. */
-  --select: #2c68d0;
 
   /* Set from JS by the zoom commands (Cmd+ / Cmd- / Cmd0) and persisted.
      Every chrome dimension below is expressed against it, so one variable
@@ -37,39 +87,7 @@
   /* Close buttons need a real hit target, not a glyph's ink area. */
   --hit: calc(20px * var(--ui-scale));
   --divider: 9px;
-  --ui-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
-
-  /*
-    Chrome surfaces, darkest to lightest.
-
-    These are not new colours. Every value below is one that was already in the
-    file — there were 31 hard-coded hexes under this block against 23 tokens,
-    and five of them were near-identical dark surfaces (#0a0d11 #0e1116 #10161b
-    #161c22 #1a1f26) that had drifted apart as each panel, well and popover was
-    added separately. Naming them by role rather than by depth is the point: it
-    says what a surface is *for*, so the next thing that needs a background
-    picks one instead of inventing a sixth grey.
-
-    Four further one-off greys were folded into the steps above, each measured
-    first and each below the threshold at which the eye can tell two large flat
-    fields apart: #1b2229 and #1d232a into --surface-inset (2.6 and 3.8 parts in
-    255), #232a32 into --surface-chip (3.0), #2b3540 into --surface-chip-hi
-    (0.7). Those were the same colour written four ways, not four decisions.
-
-    What is NOT done here, because it is a visual judgement and this session
-    could not launch the app to make it (see the report): the remaining steps
-    are still closer together than a scale needs, and they are blue-greys while
-    --chrome-bg is green-tinted — the panels and the window frame are not the
-    same family. Both are now one edit in this block rather than a hunt through
-    1,200 lines.
-  */
-  --surface-sunken: #0a0d11;  /* input wells — the find field, the name field */
-  --surface-body: #0e1116;    /* large reading surfaces — viewer, preview panes */
-  --surface-card: #10161b;    /* modal cards — settings, projects, tutorial */
-  --surface-raised: #161c22;  /* floating bars — find bar, swatch popover */
-  --surface-inset: #1a1f26;   /* recessed rows — code lines, focused title bar */
-  --surface-chip: #262d35;    /* small controls — buttons, badges, the toast */
-  --surface-chip-hi: #2c343d; /* the same, hovered */
+  --ui-font: var(--fu);
 }
 
 * {
@@ -85,7 +103,7 @@ body,
 }
 
 body {
-  background: var(--chrome-bg);
+  background: var(--chrome);
   color: var(--text);
   font-family: var(--ui-font);
   font-size: var(--ui-font-size);
@@ -123,22 +141,60 @@ body {
 }
 
 .app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
+/* Behind everything, and only ever visible through translucent chrome. Bled
+   past the window edges at the prototype's own -74px, so the window frames the
+   bright middle of the desk gradient rather than compressing the whole thing,
+   dark far corner included, into its own height.
+
+   Known, and left as the design has it: the status bar's right-hand shortcut
+   hints are --faint over a 34%-opaque bar over a saturated desk, and they wash
+   out. Bleeding the desk further down was tried and made it marginally worse,
+   because it puts an even brighter part of the gradient behind them. The fix is
+   a token value (a more opaque --barBg for aero, or a stronger --faint), which
+   is a decision for whoever owns the palette rather than something to paper
+   over here. Aero only. */
+.app__desk {
+  position: absolute;
+  inset: -74px;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--deskImg, none);
+  background-size: cover;
+  opacity: var(--deskOp, 0);
+}
+
+/* The chrome has to sit above the desk layer, or it is painted over by it. */
+.tabbar,
+.body,
+.statusbar,
+.sidebar-col,
+.grid {
+  position: relative;
+  z-index: 1;
+}
+
 /* ---------------------------------------------------------------- tab bar */
 
 .tabbar {
+  backdrop-filter: var(--glassBlur, none);
   height: var(--tabbar-h);
   min-height: var(--tabbar-h);
   display: flex;
   align-items: stretch;
-  background: var(--chrome-bg);
-  border-bottom: 1px solid var(--chrome-line);
+  background-color: var(--barBg, var(--chrome));
+  background-image: var(--barImg, none);
+  box-shadow: var(--barShadow, none);
+  border-bottom: 1px solid var(--line);
   -webkit-app-region: drag;
-  padding-left: 78px; /* clear the traffic lights */
+  /* Reserved for the native traffic lights. A theme may want a different
+     inset, but it is still the OS drawing them. */
+  padding-left: var(--barPadL, 78px);
 }
 
 .tabbar__tabs {
@@ -160,19 +216,27 @@ body {
   min-width: calc(100px * var(--ui-scale));
   max-width: calc(220px * var(--ui-scale));
   padding: 0 calc(6px * var(--ui-scale)) 0 calc(12px * var(--ui-scale));
-  border-right: 1px solid var(--chrome-line);
-  color: var(--text-dim);
+  border-right: 1px solid var(--line);
+  color: var(--dim);
   white-space: nowrap;
   cursor: default;
 }
 
 .tab--active {
-  background: var(--chrome-bg-alt);
+  background-color: var(--tabOnBg, var(--chromeAlt));
+  background-image: var(--tabOnImg, none);
+  border-radius: var(--tabRadius, 0px) var(--tabRadius, 0px) 0 0;
   color: var(--text);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  box-shadow: var(--tabOnMark, inset 0 -2px 0 var(--accent));
 }
 
+/* The name absorbs the tab's spare width, which is what puts the close button
+   against the right edge instead of trailing the text. `min-width: 0` is the
+   half people forget: without it a flex item refuses to shrink below its
+   content and the ellipsis never engages. */
 .tab__name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -183,7 +247,7 @@ body {
   padding: calc(1px * var(--ui-scale)) calc(5px * var(--ui-scale));
   border: 1px solid var(--accent);
   border-radius: 4px;
-  background: var(--surface-sunken);
+  background: var(--sunken);
   color: var(--text);
   font: inherit;
   outline: none;
@@ -192,7 +256,7 @@ body {
 }
 
 /* Always visible.
-   These used to be opacity:0 until hover, in --text-faint, with 2px of padding.
+   These used to be opacity:0 until hover, in --faint, with 2px of padding.
    That combined three problems at once: you could not see the control, you
    could not tell where to aim, and the glyph was near-invisible against black
    even once revealed. A close button is a primary action on every pane — it
@@ -206,7 +270,7 @@ body {
   width: var(--hit);
   height: var(--hit);
   border-radius: 4px;
-  color: var(--text-dim);
+  color: var(--dim);
   font-size: calc(15px * var(--ui-scale));
   line-height: 1;
   opacity: 0.75;
@@ -233,7 +297,7 @@ body {
   display: flex;
   align-items: center;
   font-size: calc(15px * var(--ui-scale));
-  color: var(--text-dim);
+  color: var(--dim);
 }
 
 .tabbar__new:hover {
@@ -251,7 +315,7 @@ body {
   -webkit-app-region: no-drag;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
+  color: var(--dim);
   padding: 0 calc(6px * var(--ui-scale));
 }
 
@@ -261,7 +325,7 @@ body {
 
 /* Marks "the overall level is not the whole story — some pane differs". */
 .tabbar__zoom-mixed {
-  color: var(--text-faint);
+  color: var(--faint);
 }
 
 /* Asleep is the state worth showing, so it is the one that gets colour. The
@@ -284,11 +348,16 @@ body {
   min-height: 0;
 }
 
+/* One material top to bottom: the header, the drawer pull and the rows are all
+   the tree surface. The "side" surface belongs to the Lookout section above,
+   which is what carries retro's wooden desk. */
 .sidebar {
+  backdrop-filter: var(--glassBlur, none);
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
-  background: var(--chrome-bg);
-  border-right: 1px solid var(--chrome-line);
+  background-color: var(--treeBg, var(--chrome));
+  background-image: var(--treeImg, none);
+  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -324,8 +393,8 @@ body.dragging .sidebar__grip {
   font-size: calc(12px * var(--ui-scale));
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--text-dim);
-  border-bottom: 1px solid var(--chrome-line);
+  color: var(--dim);
+  border-bottom: 1px solid var(--line);
 }
 
 .sidebar__refresh {
@@ -339,6 +408,8 @@ body.dragging .sidebar__grip {
 }
 
 .sidebar__tree {
+  background-color: var(--treeBg, var(--chrome));
+  background-image: var(--treeImg, none);
   flex: 1;
   overflow: auto;
   padding: 6px 8px 14px;
@@ -360,9 +431,9 @@ body.dragging .sidebar__grip {
   height: calc(22px * var(--ui-scale));
   line-height: calc(22px * var(--ui-scale));
   padding: 0 calc(8px * var(--ui-scale));
-  border-top: 1px solid var(--chrome-line);
-  background: var(--chrome-bg-alt);
-  color: var(--text-dim);
+  border-top: 1px solid var(--line);
+  background: var(--chromeAlt);
+  color: var(--dim);
   font-size: calc(11px * var(--ui-scale));
   white-space: nowrap;
   overflow: hidden;
@@ -375,7 +446,7 @@ body.dragging .sidebar__grip {
 
 .sidebar__path:hover {
   color: var(--text);
-  background: var(--chrome-line);
+  background: var(--line);
 }
 
 /* Finder-style rows: 24px tall, 13px system text, a rounded selection pill
@@ -393,10 +464,10 @@ body.dragging .sidebar__grip {
 }
 
 /* Opaque and token-derived, because the old value was invisible. #16241660 is
-   37.6% alpha; composited over --chrome-bg it resolves to #0e170e — a step of
+   37.6% alpha; composited over --chrome it resolves to #0e170e — a step of
    4, 8 and 4 parts in 255, or 1.06:1 against an unhovered row. That is inside
    the same dead band this file's own token comment uses to argue that five
-   greys were one colour written five ways. --chrome-line measures 1.31:1,
+   greys were one colour written five ways. --line measures 1.31:1,
    which is exactly the step .sidebar__path:hover above already uses, and the
    tree is the surface where you most need to see which row is under the
    pointer before committing a double-click that opens something.
@@ -407,7 +478,7 @@ body.dragging .sidebar__grip {
    pill of the row you just clicked. The state rules below are written doubled
    for the same reason, so either guard holds on its own. */
 .node:not(.node--selected):not(.node--revealed):hover {
-  background: var(--chrome-line);
+  background: var(--line);
 }
 
 .node.node--selected {
@@ -448,7 +519,7 @@ body.dragging .sidebar__grip {
   flex: none;
   text-align: center;
   font-size: calc(10px * var(--ui-scale));
-  color: var(--text-dim);
+  color: var(--dim);
   transition: transform 0.12s ease;
 }
 
@@ -474,16 +545,25 @@ body.dragging .sidebar__grip {
   position: relative;
   flex: 1;
   min-width: 0;
-  background: var(--chrome-bg-alt);
+  background-color: var(--gridBg, var(--chromeAlt));
+  background-image: var(--gridImg, none);
 }
 
+/* The pane is the FRAME; the title bar and terminal sit inside it.
+   `--paneFramePad` is what makes the bezel treatment read as moulded plastic:
+   the pane paints the frame colour and pads, so the terminal is inset within
+   it rather than flush to the edge. At every other treatment the pad is 0 and
+   this is the same flush pane it always was. */
 .pane {
   position: absolute;
   display: flex;
   flex-direction: column;
-  background: var(--term-bg);
-  border: 1px solid var(--chrome-line);
-  border-radius: 4px;
+  padding: var(--paneFramePad, 0px);
+  background-color: var(--paneFrameBg, var(--paneBg));
+  background-image: var(--paneFrameImg, none);
+  border: var(--paneBorderW, 1px) solid var(--paneBorder, var(--line));
+  border-radius: var(--paneRadius, 4px);
+  box-shadow: var(--paneShadow, none);
   overflow: hidden;
 }
 
@@ -500,7 +580,7 @@ body.dragging .sidebar__grip {
 }
 
 .pane--tagged:not(.pane--focused) {
-  border-color: color-mix(in srgb, var(--pane-accent) 45%, var(--chrome-line));
+  border-color: color-mix(in srgb, var(--pane-accent) 45%, var(--line));
 }
 
 .pane--tagged .pane__title {
@@ -519,7 +599,7 @@ body.dragging .sidebar__grip {
   height: calc(9px * var(--ui-scale));
   flex: none;
   border-radius: 50%;
-  border: 1px solid var(--text-faint);
+  border: 1px solid var(--faint);
   background: transparent;
   cursor: default;
   transition: transform 0.1s ease, border-color 0.1s ease;
@@ -545,10 +625,10 @@ body.dragging .sidebar__grip {
   align-items: center;
   gap: calc(5px * var(--ui-scale));
   padding: calc(6px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-top: 0;
   border-radius: 0 0 6px 6px;
-  background: var(--surface-raised);
+  background: var(--cardBg);
   box-shadow: 0 6px 18px #0009;
 }
 
@@ -572,7 +652,7 @@ body.dragging .sidebar__grip {
 
 .swatch--none {
   background: transparent;
-  border: 1px dashed var(--text-faint);
+  border: 1px dashed var(--faint);
   position: relative;
 }
 
@@ -596,7 +676,7 @@ body.dragging .sidebar__grip {
   0%,
   100% {
     box-shadow: 0 0 0 0 transparent;
-    border-color: var(--chrome-line);
+    border-color: var(--line);
   }
   50% {
     box-shadow: 0 0 14px 1px var(--attn-glow, var(--attn-wait));
@@ -645,33 +725,44 @@ body.dragging .sidebar__grip {
   align-items: center;
   gap: calc(7px * var(--ui-scale));
   padding: 0 calc(4px * var(--ui-scale)) 0 calc(8px * var(--ui-scale));
-  background: var(--chrome-bg);
-  border-bottom: 1px solid var(--chrome-line);
+  background-color: var(--paneTitleBg, var(--chrome));
+  background-image: var(--headImg, none);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--titleRadius, 0px) var(--titleRadius, 0px) 0 0;
   font-size: calc(12.5px * var(--ui-scale));
-  color: var(--text-dim);
+  color: var(--dim);
 }
 
 .pane--focused .pane__title {
-  background: var(--surface-inset);
+  background: var(--paneTitleOn);
   color: var(--text);
 }
 
 .pane__index {
-  color: var(--text-faint);
+  color: var(--faint);
 }
 
+/* The label is the only shrinkable child of the title bar — the badge, zoom
+   readout and memory figure are all nowrap — so with the default
+   `min-width: auto` it absorbs the entire shortfall and collapses to zero
+   width. The pane's name is the thing you identify a pane by, so it gets a
+   floor and the readouts beside it are pinned. Found while prototyping the
+   themes, at the narrow pane widths a six-pane grid produces. */
 .pane__label {
+  flex: 0 1 auto;
+  min-width: calc(62px * var(--ui-scale));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .pane__badge {
+  flex: none;
   font-size: calc(11px * var(--ui-scale));
   padding: calc(1px * var(--ui-scale)) calc(6px * var(--ui-scale));
   border-radius: 3px;
-  background: var(--surface-chip);
-  color: var(--text-dim);
+  background: var(--btnBg);
+  color: var(--dim);
   white-space: nowrap;
 }
 
@@ -680,8 +771,9 @@ body.dragging .sidebar__grip {
 }
 
 .pane__mem {
+  flex: none;
   font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
+  color: var(--dim);
 }
 
 .pane__mem--high {
@@ -692,22 +784,34 @@ body.dragging .sidebar__grip {
    marker rather than a permanent readout. */
 .pane__zoom {
   font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
+  color: var(--dim);
   padding: 0 calc(4px * var(--ui-scale));
 }
 
 .pane__idle {
-  color: var(--text-faint);
+  color: var(--faint);
 }
 
 /* Load-bearing background, not decoration. The terminal canvas is transparent
    wherever a cell uses the default background — see allowTransparency in
    term/terminal.ts — so the black has to come from the host element. */
+/* Load-bearing background, not decoration. The terminal canvas is transparent
+   wherever a cell uses the default background — see allowTransparency in
+   term/terminal.ts — so the colour has to come from the host element.
+
+   `--glow` and `--crtInset` are set only while CRT glass is on: the first is a
+   phosphor bloom on the text, the second the tube's vignette. Both are inert
+   when unset. */
 .pane__term {
+  position: relative;
   flex: 1;
   min-height: 0;
   padding: 2px 0 0 4px;
-  background: var(--term-bg);
+  background-color: var(--termBg);
+  border-radius: 0 0 var(--termRadius, 0px) var(--termRadius, 0px);
+  text-shadow: var(--glow, none);
+  box-shadow: var(--crtInset, none);
+  overflow: hidden;
 }
 
 .pane__exit {
@@ -720,7 +824,7 @@ body.dragging .sidebar__grip {
   gap: calc(10px * var(--ui-scale));
   padding: calc(7px * var(--ui-scale)) calc(10px * var(--ui-scale));
   background: #1b1f24ee;
-  border-top: 1px solid var(--chrome-line);
+  border-top: 1px solid var(--line);
   font-size: calc(12px * var(--ui-scale));
 }
 
@@ -730,17 +834,19 @@ body.dragging .sidebar__grip {
 }
 
 .btn {
+  background-image: var(--btnImg, none);
+  border-radius: var(--btnRadius, 4px);
   padding: calc(3px * var(--ui-scale)) calc(10px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-radius: 4px;
-  background: var(--surface-chip);
+  background: var(--btnBg);
   color: var(--text);
   font: inherit;
   white-space: nowrap;
 }
 
 .btn:hover {
-  background: var(--surface-chip-hi);
+  background: color-mix(in srgb, var(--btnBg) 88%, var(--text) 12%);
 }
 
 .divider {
@@ -758,7 +864,7 @@ body.dragging .sidebar__grip {
 
 .divider__line {
   position: absolute;
-  background: var(--chrome-line);
+  background: var(--line);
 }
 
 .divider:hover .divider__line {
@@ -768,21 +874,23 @@ body.dragging .sidebar__grip {
 /* ------------------------------------------------------------ status bar */
 
 .statusbar {
+  backdrop-filter: var(--glassBlur, none);
   height: var(--statusbar-h);
   min-height: var(--statusbar-h);
   display: flex;
   align-items: center;
   gap: calc(14px * var(--ui-scale));
   padding: 0 calc(12px * var(--ui-scale));
-  background: var(--chrome-bg);
-  border-top: 1px solid var(--chrome-line);
-  color: var(--text-dim);
+  background-color: var(--barBg, var(--chrome));
+  background-image: var(--statusImg, none);
+  border-top: 1px solid var(--line);
+  color: var(--dim);
   font-size: calc(12px * var(--ui-scale));
   font-variant-numeric: tabular-nums;
 }
 
 .statusbar__sep {
-  color: var(--text-faint);
+  color: var(--faint);
 }
 
 .statusbar__warn {
@@ -795,11 +903,11 @@ body.dragging .sidebar__grip {
 
 .statusbar__hint {
   margin-left: auto;
-  color: var(--text-faint);
+  color: var(--faint);
 }
 
 .statusbar__lookout {
-  color: var(--text-dim);
+  color: var(--dim);
 }
 
 .statusbar__lookout:hover {
@@ -814,7 +922,7 @@ body.dragging .sidebar__grip {
   z-index: 20;
   display: flex;
   flex-direction: column;
-  background: var(--surface-body);
+  background: var(--body);
 }
 
 .viewer__head {
@@ -822,14 +930,14 @@ body.dragging .sidebar__grip {
   align-items: center;
   gap: 10px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--chrome-line);
+  border-bottom: 1px solid var(--line);
 }
 
 .viewer__path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-dim);
+  color: var(--dim);
 }
 
 .viewer__body {
@@ -851,7 +959,7 @@ body.dragging .sidebar__grip {
 /* Preview panes get a slightly lifted background so a wall of six panes still
    reads as "these two are not terminals" at a glance. */
 .pane--preview {
-  background: var(--surface-body);
+  background: var(--body);
 }
 
 .preview__toolbar,
@@ -860,8 +968,8 @@ body.dragging .sidebar__grip {
   align-items: center;
   gap: calc(6px * var(--ui-scale));
   padding: calc(5px * var(--ui-scale)) calc(7px * var(--ui-scale));
-  border-bottom: 1px solid var(--chrome-line);
-  background: var(--chrome-bg);
+  border-bottom: 1px solid var(--line);
+  background: var(--chrome);
   flex: none;
 }
 
@@ -885,8 +993,8 @@ body.dragging .sidebar__grip {
   align-items: center;
   gap: calc(8px * var(--ui-scale));
   padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
-  border-bottom: 1px solid var(--chrome-line);
-  background: color-mix(in srgb, var(--warn) 12%, var(--chrome-bg));
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--warn) 12%, var(--chrome));
   color: var(--warn);
   flex: none;
 }
@@ -950,10 +1058,10 @@ body.dragging .sidebar__grip {
   min-height: 100%;
   padding: calc(12px * var(--ui-scale));
   /* Checkerboard, so a transparent PNG is legible rather than invisible. */
-  background-image: linear-gradient(45deg, var(--surface-inset) 25%, transparent 25%),
-    linear-gradient(-45deg, var(--surface-inset) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, var(--surface-inset) 75%),
-    linear-gradient(-45deg, transparent 75%, var(--surface-inset) 75%);
+  background-image: linear-gradient(45deg, var(--paneTitleOn) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--paneTitleOn) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--paneTitleOn) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--paneTitleOn) 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
@@ -971,9 +1079,9 @@ body.dragging .sidebar__grip {
   flex: 1;
   min-width: 0;
   padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-radius: 4px;
-  background: var(--surface-sunken);
+  background: var(--sunken);
   color: var(--text);
   font: inherit;
   outline: none;
@@ -1023,7 +1131,7 @@ body.dragging .web__view {
 }
 
 .web__hint {
-  color: var(--text-faint);
+  color: var(--faint);
 }
 
 /* ------------------------------------------------------------- find bar */
@@ -1037,19 +1145,19 @@ body.dragging .web__view {
   align-items: center;
   gap: calc(4px * var(--ui-scale));
   padding: calc(5px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-top: 0;
   border-radius: 0 0 6px 6px;
-  background: var(--surface-raised);
+  background: var(--cardBg);
   box-shadow: 0 6px 18px #0009;
 }
 
 .findbar__input {
   width: calc(180px * var(--ui-scale));
   padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-radius: 4px;
-  background: var(--surface-sunken);
+  background: var(--sunken);
   color: var(--text);
   font: inherit;
   outline: none;
@@ -1093,9 +1201,9 @@ body.dragging .web__view {
      one more project is saved. */
   scrollbar-gutter: stable;
   padding: calc(20px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--surface-card);
+  background: var(--cardBg);
   box-shadow: 0 20px 60px #000c;
 }
 
@@ -1119,8 +1227,8 @@ body.dragging .web__view {
 .set__heading {
   margin-bottom: calc(8px * var(--ui-scale));
   padding-bottom: calc(4px * var(--ui-scale));
-  border-bottom: 1px solid var(--chrome-line);
-  color: var(--text-faint);
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
   font-size: calc(11.5px * var(--ui-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -1159,7 +1267,7 @@ body.dragging .web__view {
 }
 
 .set__detail {
-  color: var(--text-dim);
+  color: var(--dim);
   font-size: calc(12px * var(--ui-scale));
   line-height: 1.45;
 }
@@ -1180,9 +1288,9 @@ body.dragging .web__view {
 .tut__card {
   width: min(560px, 86%);
   padding: calc(22px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--surface-card);
+  background: var(--cardBg);
   box-shadow: 0 20px 60px #000c;
 }
 
@@ -1193,12 +1301,12 @@ body.dragging .web__view {
 }
 
 .tut__step {
-  color: var(--text-faint);
+  color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 
 .tut__skip {
-  color: var(--text-dim);
+  color: var(--dim);
   text-decoration: underline;
 }
 
@@ -1231,17 +1339,17 @@ body.dragging .web__view {
   display: flex;
   align-items: center;
   gap: calc(12px * var(--ui-scale));
-  color: var(--text-dim);
+  color: var(--dim);
 }
 
 .tut__key kbd {
   flex: none;
   min-width: calc(74px * var(--ui-scale));
   padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-bottom-width: 2px;
   border-radius: 5px;
-  background: var(--surface-inset);
+  background: var(--paneTitleOn);
   color: var(--text);
   font-family: var(--ui-font);
   font-size: calc(12px * var(--ui-scale));
@@ -1259,7 +1367,7 @@ body.dragging .web__view {
   width: calc(7px * var(--ui-scale));
   height: calc(7px * var(--ui-scale));
   border-radius: 50%;
-  background: var(--surface-chip-hi);
+  background: color-mix(in srgb, var(--btnBg) 88%, var(--text) 12%);
 }
 
 .tut__dot--on {
@@ -1276,7 +1384,7 @@ body.dragging .web__view {
   display: flex;
   align-items: center;
   gap: calc(6px * var(--ui-scale));
-  color: var(--text-dim);
+  color: var(--dim);
   font-size: calc(12.5px * var(--ui-scale));
 }
 
@@ -1291,6 +1399,8 @@ body.dragging .web__view {
 }
 
 .btn--primary {
+  background-image: var(--primaryImg, none);
+  border-color: var(--primaryBorder, var(--accent));
   background: #1f6f14;
   border-color: #2c8f1e;
   color: #eafce7;
@@ -1309,7 +1419,7 @@ body.dragging .web__view {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--text-faint);
+  color: var(--faint);
   flex-direction: column;
   gap: 10px;
 }
@@ -1322,8 +1432,8 @@ body.dragging .web__view {
   z-index: 40;
   padding: 6px 12px;
   border-radius: 6px;
-  background: var(--surface-chip);
-  border: 1px solid var(--chrome-line);
+  background: var(--btnBg);
+  border: 1px solid var(--line);
   color: var(--text);
   box-shadow: 0 6px 20px #0008;
 }
@@ -1341,9 +1451,9 @@ body.dragging .web__view {
   flex: 1;
   min-width: 0;
   padding: calc(4px * var(--ui-scale)) calc(9px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-radius: 4px;
-  background: var(--surface-sunken);
+  background: var(--sunken);
   color: var(--text);
   font: inherit;
   outline: none;
@@ -1359,7 +1469,7 @@ body.dragging .web__view {
   align-items: center;
   gap: calc(8px * var(--ui-scale));
   padding: calc(7px * var(--ui-scale)) 0;
-  border-top: 1px solid var(--chrome-line);
+  border-top: 1px solid var(--line);
 }
 
 .proj__text {
@@ -1383,9 +1493,9 @@ body.dragging .web__view {
   z-index: 50;
   min-width: calc(180px * var(--ui-scale));
   padding: calc(4px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-radius: 6px;
-  background: var(--surface-raised);
+  background: var(--cardBg);
   box-shadow: 0 8px 24px #000a;
 }
 
@@ -1445,6 +1555,16 @@ body.dragging .web__view {
  * tree off the bottom of the screen. */
 /* Titled section header, so Lookout reads as its own panel above the file tree
  * rather than cards floating over it. Rendered only when the rail is. */
+/* The Lookout section carries the theme's "side" surface — retro's wooden desk
+   sits behind the cards, not behind the file browser. The explorer below takes
+   the tree surface throughout, so its header matches its rows rather than
+   being a different material. */
+.lookout-head,
+.lookout-rail {
+  background-color: var(--sideBg, transparent);
+  background-image: var(--sideImg, none);
+}
+
 .lookout-head {
   display: flex;
   flex: 0 0 auto;
@@ -1453,12 +1573,12 @@ body.dragging .web__view {
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
   padding: calc(5px * var(--ui-scale)) calc(10px * var(--ui-scale));
-  border-bottom: 1px solid var(--chrome-line);
-  background: var(--chrome-bg);
+  border-bottom: 1px solid var(--line);
+  background: var(--chrome);
 }
 
 .lookout-head__title {
-  color: var(--text-faint);
+  color: var(--faint);
   font-size: calc(11px * var(--ui-scale));
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1494,7 +1614,7 @@ body.dragging .web__view {
  * colour, and the section title dims with it. A switch whose two positions look
  * alike is how you end up wondering why no cards ever appear again. */
 .lookout-head__power--off {
-  color: var(--text-faint);
+  color: var(--faint);
 }
 
 .lookout-head__power:hover {
@@ -1509,7 +1629,7 @@ body.dragging .web__view {
   padding: 0 calc(4px * var(--ui-scale));
   border: 0;
   background: none;
-  color: var(--text-faint);
+  color: var(--faint);
   cursor: pointer;
   font: inherit;
   font-size: calc(11px * var(--ui-scale));
@@ -1523,6 +1643,7 @@ body.dragging .web__view {
  * growing without bound. Its height is user-set (see layout/rail.ts) and
  * applied inline; the grip below it trades height with the file tree. */
 .lookout-rail {
+  box-shadow: var(--sideShadow, none);
   flex: 0 0 auto;
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
@@ -1560,8 +1681,8 @@ body.dragging .rail__grip {
   z-index: 12;
   display: flex;
   flex-direction: column;
-  background: var(--chrome-bg);
-  border-top: 1px solid var(--chrome-line);
+  background: var(--chrome);
+  border-top: 1px solid var(--line);
   box-shadow: 0 -10px 28px #000a;
 }
 
@@ -1588,11 +1709,11 @@ body.dragging .drawer__grip {
   align-items: center;
   gap: calc(8px * var(--ui-scale));
   padding: calc(4px * var(--ui-scale)) calc(10px * var(--ui-scale));
-  border-bottom: 1px solid var(--chrome-line);
+  border-bottom: 1px solid var(--line);
 }
 
 .drawer__label {
-  color: var(--text-faint);
+  color: var(--faint);
   font-size: calc(11px * var(--ui-scale));
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1602,7 +1723,7 @@ body.dragging .drawer__grip {
 .drawer__cwd {
   min-width: 0;
   overflow: hidden;
-  color: var(--text-faint);
+  color: var(--faint);
   font-size: calc(11px * var(--ui-scale));
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1620,13 +1741,13 @@ body.dragging .drawer__grip {
 }
 
 /* Same load-bearing background as .pane__term, and the reason the rule cannot
-   be dropped: .drawer is --chrome-bg, so without this the drawer's terminal
+   be dropped: .drawer is --chrome, so without this the drawer's terminal
    would composite over a green-tinted surface instead of black. */
 .drawer__term {
   flex: 1;
   min-height: 0;
   padding: 2px 0 0 4px;
-  background: var(--term-bg);
+  background: var(--termBg);
 }
 
 .lookout-rail:empty {
@@ -1646,15 +1767,20 @@ body.dragging .drawer__grip {
   flex-direction: column;
   gap: calc(6px * var(--ui-scale));
   padding: calc(10px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   /* The pane's colour tag, painted as the card's left edge (the hex arrives
    * inline from CardStack). Always 3px whether or not the pane is tagged, so
    * an untagged pane's card is the same width as every other one — a card
    * that changed shape when you coloured its pane would read as a bug. */
   border-left-width: 3px;
-  border-radius: 8px;
-  background: var(--surface-raised);
-  box-shadow: 0 8px 24px #000a;
+  border-color: var(--cardBorder, var(--line));
+  border-radius: var(--cardRadius, 8px);
+  background-color: var(--cardBg);
+  color: var(--cardText, var(--text));
+  box-shadow: var(--cardShadow, 0 8px 24px #000a);
+  /* Retro's paper cards sit very slightly askew on the desk. Every other
+     theme sets 0deg, so this is inert unless a theme asks for it. */
+  transform: rotate(var(--cardRotate, 0deg));
 }
 
 /* Pane name and age on one line: the age is the second question you have about
@@ -1668,7 +1794,7 @@ body.dragging .drawer__grip {
 .card__age {
   margin-left: auto;
   flex: none;
-  color: var(--text-faint);
+  color: var(--faint);
   font-size: calc(10.5px * var(--ui-scale));
   font-variant-numeric: tabular-nums;
 }
@@ -1683,11 +1809,11 @@ body.dragging .drawer__grip {
   border-style: dashed;
   background: none;
   box-shadow: none;
-  color: var(--text-faint);
+  color: var(--faint);
 }
 
 .card__pane {
-  color: var(--text-faint);
+  color: var(--faint);
   font-size: calc(11px * var(--ui-scale));
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1709,9 +1835,9 @@ body.dragging .drawer__grip {
   width: 100%;
   min-height: calc(72px * var(--ui-scale));
   padding: calc(5px * var(--ui-scale)) calc(8px * var(--ui-scale));
-  border: 1px solid var(--chrome-line);
+  border: 1px solid var(--line);
   border-radius: 4px;
-  background: var(--surface-sunken);
+  background: var(--sunken);
   color: var(--text);
   font: inherit;
   line-height: 1.45;
@@ -1724,13 +1850,13 @@ body.dragging .drawer__grip {
 }
 
 .card__draft--ref {
-  color: var(--text-faint);
+  color: var(--faint);
   font-style: italic;
   user-select: text;
 }
 
 .card__hint {
-  color: var(--text-faint);
+  color: var(--faint);
   font-size: calc(11.5px * var(--ui-scale));
 }
 
@@ -1738,7 +1864,7 @@ body.dragging .drawer__grip {
   display: block;
   padding: calc(4px * var(--ui-scale)) calc(7px * var(--ui-scale));
   border-radius: 4px;
-  background: var(--surface-sunken);
+  background: var(--sunken);
   color: var(--text);
   font-size: calc(11.5px * var(--ui-scale));
   overflow-x: auto;
@@ -1750,4 +1876,272 @@ body.dragging .drawer__grip {
   display: flex;
   flex-wrap: wrap;
   gap: calc(6px * var(--ui-scale));
+}
+
+/* ------------------------------------------------- appearance (settings) */
+
+/* A labelled row of exclusive choices. Wraps rather than scrolls: seven theme
+   names do not fit one line at every zoom level, and a row that scrolls hides
+   the option you are looking for. */
+.set__seg {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: calc(8px * var(--ui-scale));
+  padding: calc(6px * var(--ui-scale)) 0;
+}
+
+.set__seglabel {
+  flex: none;
+  min-width: calc(84px * var(--ui-scale));
+  color: var(--dim);
+}
+
+.set__segbtns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(6px * var(--ui-scale));
+}
+
+/* Accent swatches are the colour itself, so they carry no label. The ring is
+   what marks the chosen one: a border would change the swatch's own size and
+   make the row jump as you click along it. */
+.set__swatch {
+  width: var(--hit);
+  height: var(--hit);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0;
+}
+
+.set__swatch--on {
+  box-shadow: 0 0 0 2px var(--chrome), 0 0 0 4px var(--text);
+}
+
+/* ------------------------------------------------------------- CRT glass */
+
+/*
+  Three of the four CRT layers, as pseudo-elements rather than real children.
+
+  xterm appends its own canvases into .pane__term imperatively, and React only
+  reconciles children it created — putting overlay divs in the same node mixes
+  the two and is exactly the kind of thing that works until a re-render moves
+  something. ::before and ::after cost nothing, cannot be reordered, and are
+  invisible when the tokens are unset, which is every theme with CRT off.
+
+  Not implemented: the rolling refresh band, which needs a third layer and is
+  the one effect nobody will miss.
+*/
+.pane__term::before,
+.pane__term::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Scanlines, crawling one line every 1.8s. */
+.pane__term::before {
+  background-image: var(--scanImg, none);
+  background-size: var(--scanSize, auto);
+  opacity: var(--scanOp, 0);
+  animation: var(--scanAnim, none);
+}
+
+/* Curved glass: a vignette plus a sheen off the top of the tube. */
+.pane__term::after {
+  background-image: var(--glassImg, none);
+  opacity: var(--glassOp, 0);
+}
+
+/* The tube's own irregular flicker. Never a strobe: the dips are a couple of
+   percent and seconds apart. */
+.pane__term {
+  animation: var(--crtAnim, none);
+}
+
+@keyframes crtFlicker {
+  0%, 100% { opacity: 1; }
+  6% { opacity: 0.962; }
+  8% { opacity: 1; }
+  41% { opacity: 0.984; }
+  43% { opacity: 1; }
+  72% { opacity: 0.972; }
+  74% { opacity: 1; }
+}
+
+@keyframes crtCrawl {
+  from { background-position-y: 0; }
+  to { background-position-y: 3px; }
+}
+
+/* Matches the existing rule for the attention pulse: motion is opt-out at the
+   system level, and a scanline crawl is exactly what that setting is for. */
+@media (prefers-reduced-motion: reduce) {
+  .pane__term,
+  .pane__term::before,
+  .pane__term::after {
+    animation: none !important;
+  }
+}
+
+/* --------------------------------------------------- CRT refresh band */
+
+/* The fourth CRT layer: a soft bar sweeping down the tube every 8s. Sits over
+   the terminal only, so it is offset by the title bar and respects the frame
+   padding a bezel theme adds (an absolutely positioned child is laid out
+   against its ancestor's padding box). */
+.pane__band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--titlebar-h);
+  height: 16%;
+  z-index: 4;
+  pointer-events: none;
+  background-image: var(--bandImg, none);
+  opacity: var(--glassOp, 0);
+  animation: var(--rollAnim, none);
+}
+
+@keyframes crtRoll {
+  0% { transform: translateY(-60%); }
+  100% { transform: translateY(220%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane__band { animation: none !important; }
+}
+
+/* ------------------------------------------------ explorer drawer pull */
+
+/* Zero-height unless a theme asks for it. Retro makes the explorer a card
+   index: a walnut drawer front with a brass grip. */
+.sidebar__pull {
+  flex: none;
+  height: var(--pullH, 0px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--pullBg, transparent);
+  background-image: var(--pullImg, none);
+  border-bottom: var(--pullBorder, 0);
+}
+
+.sidebar__grip2 {
+  width: calc(64px * var(--ui-scale));
+  height: var(--pullGrip, 0px);
+  border-radius: 3px;
+  background-color: var(--pullGripBg, transparent);
+  background-image: var(--pullGripImg, none);
+  box-shadow: var(--pullGripShadow, none);
+}
+
+/* ------------------------------------------------------------ pane links */
+
+/* The share-notes control. Dim until the pane is actually linked, like the
+   colour dot beside it: an affordance that is always lit reads as a state. */
+.pane__link {
+  flex: none;
+  cursor: default;
+  color: var(--faint);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1;
+}
+
+.pane__link:hover {
+  color: var(--text);
+}
+
+.pane__link--on {
+  color: var(--accent);
+}
+
+.linkpick {
+  position: absolute;
+  top: var(--titlebar-h);
+  left: calc(8px * var(--ui-scale));
+  z-index: 20;
+  min-width: calc(210px * var(--ui-scale));
+  padding: calc(6px * var(--ui-scale));
+  border: 1px solid var(--line);
+  border-radius: var(--cardRadius, 8px);
+  background-color: var(--cardBg);
+  box-shadow: var(--cardShadow, 0 8px 24px #000a);
+}
+
+.linkpick__head {
+  padding: calc(2px * var(--ui-scale)) calc(6px * var(--ui-scale)) calc(6px * var(--ui-scale));
+  color: var(--dim);
+  font-size: calc(11.5px * var(--ui-scale));
+}
+
+.linkpick__empty {
+  padding: calc(6px * var(--ui-scale));
+  color: var(--faint);
+  font-size: calc(11.5px * var(--ui-scale));
+}
+
+.linkpick__row {
+  display: flex;
+  align-items: center;
+  gap: calc(7px * var(--ui-scale));
+  width: 100%;
+  padding: calc(5px * var(--ui-scale)) calc(6px * var(--ui-scale));
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.linkpick__row:hover:not(:disabled) {
+  background: var(--paneTitleOn);
+}
+
+/* Disabled means "this pane is not running an agent", which the note on the
+   right spells out — the row stays readable rather than greying into nothing. */
+.linkpick__row:disabled {
+  color: var(--faint);
+}
+
+.linkpick__row--on {
+  color: var(--accent);
+}
+
+.linkpick__index {
+  flex: none;
+  min-width: calc(14px * var(--ui-scale));
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.linkpick__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linkpick__note {
+  flex: none;
+  color: var(--faint);
+  font-size: calc(11px * var(--ui-scale));
+}
+
+.linkpick__unlink {
+  width: 100%;
+  margin-top: calc(4px * var(--ui-scale));
+  padding: calc(5px * var(--ui-scale));
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+}
+
+.linkpick__unlink:hover {
+  color: var(--text);
 }

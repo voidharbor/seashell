@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { PaneTerminal } from '../term/terminal.js'
+import { currentXtermTheme } from '../theme/live.js'
 import { pathAtPoint } from '../panes/pathclick.js'
 import { currentHostname, terminals } from '../panes/PaneView.js'
 import { cdCommandFor } from './cd.js'
@@ -85,6 +86,7 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
 
     const t = new PaneTerminal({
       paneId: ptyId,
+      theme: currentXtermTheme(),
       container: host,
       onInput: (data) => window.seashell.pty.write({ paneId: ptyId, data }),
       onResize: (cols, rows) => window.seashell.pty.resize({ paneId: ptyId, cols, rows }),

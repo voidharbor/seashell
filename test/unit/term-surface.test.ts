@@ -48,7 +48,7 @@ describe('terminal host surfaces', () => {
       const body = ruleBody(host)
       expect(body, `no .${host} rule in styles.css`).not.toBeNull()
       expect(body, `.${host} must set a background or the transparent atlas shows the surface behind it`)
-        .toMatch(/background:\s*var\(--term-bg\)/)
+        .toMatch(/background(-color)?:\s*var\(--termBg\)/)
     }
   })
 

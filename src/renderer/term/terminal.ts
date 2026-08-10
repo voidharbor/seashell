@@ -1,4 +1,4 @@
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
@@ -31,6 +31,8 @@ export interface PaneTerminalOptions {
   onHttpLink: (url: string) => void
   /** Terminal font size in px, from the current zoom level. */
   fontSize?: number
+  /** The active theme's xterm colours. Defaults to Terminal.app's Homebrew. */
+  theme?: ITheme
   /** OSC 0/2 title, as set by the running program. */
   onTitle?: (title: string) => void
   /** OSC 7 working directory, as reported by the shell on every prompt. */
@@ -134,7 +136,7 @@ export class PaneTerminal {
        */
       allowTransparency: true,
       allowProposedApi: true,
-      theme: TERMINAL_APP_PALETTE,
+      theme: opts.theme ?? TERMINAL_APP_PALETTE,
 
       linkHandler: {
         activate: (_e, uri) => {
@@ -526,6 +528,15 @@ export class PaneTerminal {
    * a width that no longer matches the pane. refit() ultimately drives the PTY
    * resize through the normal debounced path, so the child gets one SIGWINCH.
    */
+  /**
+   * Repaint in a new palette. Existing scrollback re-renders in the new
+   * colours and nothing reflows, because only the colour table changed.
+   */
+  setTheme(theme: ITheme): void {
+    if (this.disposed) return
+    this.term.options.theme = theme
+  }
+
   setFontSize(px: number): void {
     if (this.disposed) return
     const next = effectiveFontSize(px)

@@ -51,6 +51,15 @@ export interface PaneState {
   /** Colour tag key from the pane palette. Undefined means untagged. */
   color?: PaneColorKey
   /**
+   * The link group this pane shares notes with, or undefined when unlinked.
+   *
+   * Runtime only, and deliberately not serialised into a project: the notes
+   * file is a live working document between two sessions, and restoring a
+   * project a week later into a stale conversation neither agent remembers
+   * would be worse than starting clean.
+   */
+  linkId?: string
+  /**
    * Zoom rung for this pane's text alone, absolute rather than an offset.
    * Undefined means "follow the global level"; a global zoom clears it back to
    * undefined on every pane, which is what makes Reset mean all-panes-to-100%.
@@ -250,6 +259,8 @@ export type Action =
   | { type: 'tab.rename'; tabId: string; name: string; home: string }
   | { type: 'tabs.replace'; tabs: TabState[] }
   | { type: 'tabs.append'; tabs: TabState[] }
+  | { type: 'pane.link'; paneId: string; linkId: string }
+  | { type: 'pane.unlink'; paneId: string }
   | { type: 'pane.new'; home: string; command: PaneCommand; commandText?: string; autoColor?: boolean }
   | { type: 'pane.newFile'; path: string; autoColor?: boolean }
   | { type: 'pane.newWeb'; url: string; autoColor?: boolean }
@@ -483,6 +494,23 @@ export function reducer(state: AppState, action: Action): AppState {
           return rest
         }
         return { ...p, color: action.color }
+      })
+
+    /**
+     * Linking is per pane rather than a list of pairs: a pane holds the id of
+     * the group it shares notes with, so a third pane joining is one more pane
+     * carrying the same id, and unlinking one never has to repair anyone
+     * else's state.
+     */
+    case 'pane.link':
+      return mapPane(state, action.paneId, (p) => ({ ...p, linkId: action.linkId }))
+
+    case 'pane.unlink':
+      return mapPane(state, action.paneId, (p) => {
+        // Removed rather than blanked, so "unlinked" has one representation —
+        // the same rule the colour tag above follows.
+        const { linkId: _cleared, ...rest } = p
+        return rest
       })
 
     case 'pane.close': {
