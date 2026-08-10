@@ -12,6 +12,9 @@ import {
   terminals,
 } from './panes/PaneView.js'
 import { watchDevicePixelRatio } from './term/dpr.js'
+import { applyTheme, themeVars } from './theme/apply.js'
+import { setCurrentXtermTheme } from './theme/live.js'
+import { xtermThemeFrom } from './term/palette.js'
 import { Explorer } from './explorer/Explorer.js'
 import { StatusBar } from './status/StatusBar.js'
 import { loadTerminalFont } from './term/terminal.js'
@@ -105,6 +108,39 @@ export function App(): React.JSX.Element {
     setSettings(next)
     saveSettings(next)
   }, [])
+
+  /**
+   * Appearance, applied whenever it changes.
+   *
+   * Two halves, because CSS custom properties only ever reach the chrome. The
+   * tokens go on the root element; the terminal palette has to be handed to
+   * xterm separately, which paints from its own colour table. Setting
+   * `options.theme` re-renders existing scrollback in the new colours without
+   * reflowing, so nothing is lost and no terminal is rebuilt.
+   *
+   * main.tsx applies the same thing once before React renders, so the first
+   * paint is already in the right theme; this is only for changes after that.
+   */
+  useEffect(() => {
+    const choice = {
+      theme: settings.theme,
+      paneStyle: settings.paneStyle,
+      palette: settings.palette,
+      crt: settings.crt,
+      accent: settings.accent,
+    }
+    applyTheme(document.documentElement, choice)
+
+    const xterm = xtermThemeFrom(themeVars(choice))
+    setCurrentXtermTheme(xterm)
+    for (const t of terminals.values()) t.setTheme(xterm)
+  }, [
+    settings.theme,
+    settings.paneStyle,
+    settings.palette,
+    settings.crt,
+    settings.accent,
+  ])
 
   useEffect(() => unlockAudio(), [])
 

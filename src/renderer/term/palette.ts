@@ -60,6 +60,40 @@ export const TERMINAL_APP_PALETTE: ITheme = {
   brightWhite: '#E9EBEB',
 }
 
+/**
+ * The same palette, re-pointed at whatever theme is active.
+ *
+ * CSS custom properties only ever colour the chrome. xterm paints the terminal
+ * from its own `ITheme`, so a theme that changed `--termBg` without this would
+ * leave the panes reading Homebrew green on a Nautical window.
+ *
+ * Only the nine slots a theme actually speaks for are overridden: background,
+ * foreground, and the seven ANSI values it defines. Everything else keeps
+ * Terminal.app's value, so a theme cannot accidentally invent a colour for a
+ * slot it never thought about.
+ *
+ * `background` must stay in step with the `--termBg` that `.pane__term` paints:
+ * `allowTransparency` is on, so a default-background cell shows the element
+ * underneath rather than anything xterm drew.
+ */
+export function xtermThemeFrom(vars: Record<string, string>): ITheme {
+  const pick = (token: string, fallback: string): string => vars[token] ?? fallback
+  return {
+    ...TERMINAL_APP_PALETTE,
+    background: pick('--termBg', TERMINAL_APP_PALETTE.background!),
+    foreground: pick('--termFg', TERMINAL_APP_PALETTE.foreground!),
+    cursor: pick('--termFg', TERMINAL_APP_PALETTE.cursor!),
+    cursorAccent: pick('--termBg', TERMINAL_APP_PALETTE.cursorAccent!),
+    green: pick('--g', TERMINAL_APP_PALETTE.green!),
+    cyan: pick('--c', TERMINAL_APP_PALETTE.cyan!),
+    yellow: pick('--y', TERMINAL_APP_PALETTE.yellow!),
+    red: pick('--r', TERMINAL_APP_PALETTE.red!),
+    blue: pick('--b', TERMINAL_APP_PALETTE.blue!),
+    magenta: pick('--m', TERMINAL_APP_PALETTE.magenta!),
+    brightBlack: pick('--gr', TERMINAL_APP_PALETTE.brightBlack!),
+  }
+}
+
 /** Terminal.app's own private face. See loadTerminalFont(). */
 export const FONT_FAMILY = '"SF Mono Terminal", Menlo, "Apple Symbols", monospace'
 

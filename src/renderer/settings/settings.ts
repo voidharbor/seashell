@@ -1,3 +1,14 @@
+import {
+  ACCENTS,
+  PALETTE_ORDER,
+  PANE_STYLE_ORDER,
+  THEME_ORDER,
+  type CrtKey,
+  type PaletteKey,
+  type PaneStyleKey,
+  type ThemeKey,
+} from '../theme/tokens.js'
+
 /**
  * User preferences.
  *
@@ -30,6 +41,19 @@ export interface Settings {
   autoColorPanes: boolean
   /** Raise approval cards when an agent pane stops on a question. */
   lookoutCards: boolean
+
+  // --- Appearance. All keys, never literal colours, so a future palette
+  // revision re-resolves instead of stranding a stored hex. ---
+
+  theme: ThemeKey
+  /** `theme` defers to each theme's own frame treatment. */
+  paneStyle: PaneStyleKey
+  /** `native` is the theme's own terminal colours. Also reaches xterm. */
+  palette: PaletteKey
+  /** `theme` means on for Retro CRT only. */
+  crt: CrtKey
+  /** A key from ACCENTS, or null for the theme's own accent. */
+  accent: string | null
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -38,7 +62,22 @@ export const DEFAULT_SETTINGS: Settings = {
   autoTitlePanes: true,
   autoColorPanes: true,
   lookoutCards: true,
+  theme: 'nautical',
+  paneStyle: 'theme',
+  palette: 'native',
+  crt: 'theme',
+  accent: null,
 }
+
+/** Allowed values per enum setting, so nothing out of localStorage can paint. */
+const ENUMS = {
+  theme: THEME_ORDER,
+  paneStyle: PANE_STYLE_ORDER,
+  palette: PALETTE_ORDER,
+  crt: ['theme', 'on', 'off'] as const,
+} satisfies Record<string, readonly string[]>
+
+const ACCENT_KEYS: readonly string[] = ACCENTS.map((a) => a.key)
 
 const STORAGE_KEY = 'seashell.settings'
 
@@ -60,10 +99,39 @@ export function loadSettings(): Settings {
 export function coerceSettings(value: unknown): Settings {
   const out = { ...DEFAULT_SETTINGS }
   if (typeof value !== 'object' || value === null) return out
+  const raw = value as Record<string, unknown>
+
   for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof Settings>) {
-    const v = (value as Record<string, unknown>)[key]
-    if (typeof v === 'boolean') out[key] = v
+    const v = raw[key]
+    if (typeof v === 'boolean' && typeof DEFAULT_SETTINGS[key] === 'boolean') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(out as any)[key] = v
+    }
   }
+
+  /**
+   * The appearance settings are enums, and this function used to copy booleans
+   * and nothing else — so adding them without widening it here would have made
+   * every theme silently reset to the default on the next launch, which reads
+   * as "the theme picker does not save".
+   *
+   * Each value is checked against the list it must come from rather than
+   * trusted: this is parsed out of localStorage, which anything on the machine
+   * can write, and an unknown key would resolve to no theme at all.
+   */
+  for (const [key, allowed] of Object.entries(ENUMS)) {
+    const v = raw[key]
+    if (typeof v === 'string' && (allowed as readonly string[]).includes(v)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(out as any)[key] = v
+    }
+  }
+
+  // Accent is nullable, and only ever one of the fixed keys.
+  const accent = raw['accent']
+  if (accent === null) out.accent = null
+  else if (typeof accent === 'string' && ACCENT_KEYS.includes(accent)) out.accent = accent
+
   return out
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { PaneTerminal } from '../term/terminal.js'
+import { currentXtermTheme } from '../theme/live.js'
 import { pathAtPoint } from './pathclick.js'
 import { WebPreview } from './WebPreview.js'
 import { ColorDot, ColorPicker } from './ColorPicker.js'
@@ -253,6 +254,7 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
       paneId: pane.id,
       container: host,
       fontSize: props.fontSize,
+      theme: currentXtermTheme(),
       onInput: (data) => window.seashell.pty.write({ paneId: pane.id, data }),
       onResize: (cols, rows) => window.seashell.pty.resize({ paneId: pane.id, cols, rows }),
       onHttpLink: (url) => void window.seashell.open.externalHttp({ url }),
