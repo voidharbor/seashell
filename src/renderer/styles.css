@@ -310,9 +310,13 @@ body {
   -webkit-app-region: drag;
 }
 
-/* Sits in the drag region, so it must opt back out or the click never lands. */
+/* Sits in the drag region, so it must opt back out or the click never lands.
+   The tab bar stretches its children, so like every icon beside it this has
+   to centre its own content or the text rides the top of the bar. */
 .tabbar__zoom {
   -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
   color: var(--dim);
@@ -864,7 +868,9 @@ body.dragging .sidebar__grip {
 
 .divider__line {
   position: absolute;
-  background: var(--line);
+  /* Floating frames set --dividerLine to transparent: panes that float over
+     the desk have no business with a painted line between them. */
+  background: var(--dividerLine, var(--line));
 }
 
 .divider:hover .divider__line {

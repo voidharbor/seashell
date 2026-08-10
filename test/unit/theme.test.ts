@@ -130,6 +130,42 @@ describe('switching themes leaves nothing behind', () => {
 })
 
 /**
+ * The 9px gutter between panes is narrower than any believable pane shadow,
+ * so it accumulates BOTH neighbours' shadows at close range. The heavy
+ * floating shadow turned every gutter into a dark channel, and the 1px
+ * divider line painted chrome down the middle of it — together they read as
+ * black lines running between panes that are supposed to float cleanly.
+ */
+describe('floating panes sit on a clean desk', () => {
+  it('hides the divider line under floating frames', () => {
+    // mac and macDark default to floating; the line goes with the treatment,
+    // not the palette, so any theme switched to floating gets the same desk.
+    expect(themeVars(choice({ theme: 'mac' }))['--dividerLine']).toBe('transparent')
+    expect(themeVars(choice({ theme: 'macDark' }))['--dividerLine']).toBe('transparent')
+    expect(themeVars(choice({ theme: 'retro', paneStyle: 'floating' }))['--dividerLine']).toBe(
+      'transparent'
+    )
+    // Hairline themes keep their 1px lines — that is their design.
+    expect(themeVars(choice({ theme: 'nautical' }))['--dividerLine']).toBeUndefined()
+    expect(themeVars(choice({ theme: 'homebrew' }))['--dividerLine']).toBeUndefined()
+  })
+
+  it('keeps the divider line in the removal set so leaving floating restores it', () => {
+    expect(ALL_TOKEN_KEYS).toContain('--dividerLine')
+  })
+
+  it('uses a contact shadow tight enough to leave the gutter readable', () => {
+    // Measured on macOS Light at 1x: the old 32px/40% shadow pair dropped the
+    // #e8e8ec gutter to ~150 grey. A blur under half the gutter width keeps
+    // the desk visible between panes while the panes still read as lifted.
+    const shadow = PANE_STYLES.floating.vars['--paneShadow']!
+    const blurs = [...shadow.matchAll(/\d+px (\d+)px/g)].map((m) => Number(m[1]))
+    expect(blurs.length).toBeGreaterThan(0)
+    for (const blur of blurs) expect(blur).toBeLessThanOrEqual(8)
+  })
+})
+
+/**
  * Appearance settings are enums, and coerceSettings used to copy booleans and
  * nothing else. Without widening it, every theme would silently reset to the
  * default on the next launch.

@@ -551,7 +551,15 @@ export const PANE_STYLES: Record<Exclude<PaneStyleKey, 'theme'>, { label: string
       '--paneBorderW': '0px',
       '--paneRadius': '13px',
       '--termRadius': '0px',
-      '--paneShadow': '0 12px 32px rgba(0,0,0,.4), 0 2px 6px rgba(0,0,0,.24)',
+      /* The gutter between panes is 9px and collects BOTH neighbours'
+         shadows at close range, so the blur has to stay under half the
+         gutter width or the desk between panes turns into a dark channel.
+         The original 32px/40% pair measured ~150 grey on macOS Light's
+         #e8e8ec desk; this contact shadow leaves it above 205. */
+      '--paneShadow': '0 2px 8px rgba(0,0,0,.22)',
+      /* Floating panes sit on the desk; nothing draws a line between
+         floating windows. Hover still paints the accent for the drag. */
+      '--dividerLine': 'transparent',
     },
   },
   slab: {
