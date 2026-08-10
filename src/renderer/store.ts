@@ -42,6 +42,11 @@ export interface PaneState {
   /** For a restored 'claude' pane: the session to resume (`claude -r <id>`).
    *  UUID-validated at every boundary; see projects/serialize.ts. */
   claudeSessionId?: string
+  /** For a restored 'claude' pane: the permission mode the session was last
+   *  running in, recovered from its transcript at open. Runtime only — never
+   *  serialised, so a project file has no mode field to lie in. The launch
+   *  command maps it through a fixed flag table; see projects/serialize.ts. */
+  claudeResumeMode?: string
   /** kind 'file' — absolute path being previewed. */
   filePath?: string
   /** kind 'file' — render the source rather than the rich form (markdown/image). */

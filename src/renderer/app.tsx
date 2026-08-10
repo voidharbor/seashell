@@ -679,6 +679,29 @@ export function App(): React.JSX.Element {
         /* unresolved panes just open as a fresh claude, the old behaviour */
       }
     }
+
+    // Every pane about to resume relaunches in the permission mode its session
+    // was last running in, read from the session's own transcript. Without
+    // this a bare `claude -r` falls back to the settings defaultMode, which is
+    // not necessarily how the pane was running when the project was saved.
+    const resuming = restored.flatMap((t) =>
+      Object.values(t.panes)
+        .filter((p) => p.kind === 'term' && p.command === 'claude' && p.claudeSessionId)
+        .map((p) => ({ paneId: p.id, cwd: p.cwd, sid: p.claudeSessionId! }))
+    )
+    if (resuming.length > 0) {
+      try {
+        const res = await window.seashell.projects.resumeModes({ panes: resuming.slice(0, 64) })
+        for (const tab of restored) {
+          for (const pane of Object.values(tab.panes)) {
+            const mode = res.modes[pane.id]
+            if (mode) pane.claudeResumeMode = mode
+          }
+        }
+      } catch {
+        /* a bare resume still works; it just follows the default mode */
+      }
+    }
     return restored
   }, [])
 

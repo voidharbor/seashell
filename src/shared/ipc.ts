@@ -40,6 +40,7 @@ export const CH = {
   linksEnsure: 'links:ensure',
   projectsList: 'projects:list',
   projectsSessionIds: 'projects:sessionIds',
+  projectsResumeModes: 'projects:resumeModes',
   projectsSave: 'projects:save',
   projectsDelete: 'projects:delete',
   uiCommand: 'ui:command',
@@ -391,6 +392,18 @@ export interface ProjectsSessionIdsResponse {
   ids: Record<string, string>
 }
 
+export interface ProjectsResumeModesRequest {
+  /** Panes about to resume a session: the transcript for (cwd, sid) is what
+   *  records the mode the session was last running in. */
+  panes: { paneId: string; cwd: string; sid: string }[]
+}
+
+export interface ProjectsResumeModesResponse {
+  /** paneId -> the session's last recorded permission mode. A pane with no
+   *  recoverable mode is simply absent, and restore types a bare resume. */
+  modes: Record<string, string>
+}
+
 export type ProjectsDeleteResponse = { ok: boolean }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +489,8 @@ export interface SeashellApi {
   projects: {
     list(): Promise<ProjectsListResponse>
     sessionIds(req: ProjectsSessionIdsRequest): Promise<ProjectsSessionIdsResponse>
+    /** Last recorded permission mode per session about to be resumed. */
+    resumeModes(req: ProjectsResumeModesRequest): Promise<ProjectsResumeModesResponse>
     save(req: ProjectsSaveRequest): Promise<ProjectsSaveResponse>
     remove(req: ProjectsDeleteRequest): Promise<ProjectsDeleteResponse>
   }

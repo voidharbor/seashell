@@ -35,6 +35,10 @@ export type SerializablePane = Omit<
   // project restored next week would point two fresh agents at notes neither
   // of them wrote.
   | 'linkId'
+  // Recovered from the session's own transcript at open, never stored: a
+  // saved mode would go stale the moment the user cycled it, and a project
+  // file is user data no flag should be composed from.
+  | 'claudeResumeMode'
 >
 
 /**
@@ -133,22 +137,45 @@ export function stateToTabs(state: AppState, sessionIds?: ReadonlyMap<string, st
 }
 
 /**
+ * The flag a resumed session's recovered permission mode maps to. A fixed
+ * table, not string interpolation: the mode came out of a transcript file on
+ * disk and the result is typed into a shell, so an unknown value maps to
+ * nothing at all. bypassPermissions travels as its own flag because that is
+ * the only spelling `claude` accepts for it without extra ceremony.
+ */
+const RESUME_MODE_FLAGS: Readonly<Record<string, string>> = {
+  bypassPermissions: '--dangerously-skip-permissions',
+  acceptEdits: '--permission-mode acceptEdits',
+  auto: '--permission-mode auto',
+  manual: '--permission-mode manual',
+  dontAsk: '--permission-mode dontAsk',
+  plan: '--permission-mode plan',
+}
+
+/**
  * The text a freshly spawned pane types into its shell, or null for a plain
  * shell. Restore is deliberately visible — the user watches `claude -r <id>`
  * run, and when the session no longer resumes the failed command sits in a
  * normal shell at the saved cwd instead of a spooky blank pane. The resume
- * form is composed only from the literal program name and a UUID-validated
- * id, never from free text in a project file.
+ * form is composed only from the literal program name, a fixed flag table
+ * and a UUID-validated id, never from free text in a project file.
+ *
+ * The mode flag rides along because a bare resume falls back to the settings
+ * defaultMode — a session that ran in bypassPermissions all week would come
+ * back with Bash denied and no prompt ever shown.
  */
 export function launchCommandText(pane: {
   command: PaneCommand
   commandText?: string
   claudeSessionId?: string
+  claudeResumeMode?: string
 }): string | null {
   if (pane.command === 'claude') {
-    return pane.claudeSessionId && SESSION_ID_RE.test(pane.claudeSessionId)
-      ? `claude -r ${pane.claudeSessionId}`
-      : 'claude'
+    if (!pane.claudeSessionId || !SESSION_ID_RE.test(pane.claudeSessionId)) return 'claude'
+    const flag = pane.claudeResumeMode ? RESUME_MODE_FLAGS[pane.claudeResumeMode] : undefined
+    return flag
+      ? `claude ${flag} -r ${pane.claudeSessionId}`
+      : `claude -r ${pane.claudeSessionId}`
   }
   if (pane.command === 'cmd') return pane.commandText ?? null
   return null

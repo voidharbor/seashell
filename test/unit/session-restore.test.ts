@@ -122,3 +122,56 @@ describe('restore', () => {
     )
   })
 })
+
+/**
+ * The bug this guards: Josh runs his agents in bypassPermissions, but restore
+ * typed a bare `claude -r <id>` — so every resumed session fell back to the
+ * settings defaultMode (dontAsk on his machine) and had Bash denied without a
+ * prompt. The session's own last mode is recovered from its transcript and
+ * relaunched with it, composed from a fixed flag table — never free text.
+ */
+describe('resumed sessions keep their permission mode', () => {
+  it('relaunches a bypassPermissions session the way it was running', () => {
+    expect(
+      launchCommandText(
+        pane({ command: 'claude', claudeSessionId: SID, claudeResumeMode: 'bypassPermissions' })
+      )
+    ).toBe(`claude --dangerously-skip-permissions -r ${SID}`)
+  })
+
+  it('carries the other modes through --permission-mode', () => {
+    for (const mode of ['acceptEdits', 'plan', 'auto', 'manual', 'dontAsk'] as const) {
+      expect(
+        launchCommandText(
+          pane({ command: 'claude', claudeSessionId: SID, claudeResumeMode: mode })
+        )
+      ).toBe(`claude --permission-mode ${mode} -r ${SID}`)
+    }
+  })
+
+  it('ignores a mode outside the flag table — it composes into a shell', () => {
+    expect(
+      launchCommandText(
+        pane({
+          command: 'claude',
+          claudeSessionId: SID,
+          claudeResumeMode: '; rm -rf ~' as never,
+        })
+      )
+    ).toBe(`claude -r ${SID}`)
+  })
+
+  it('never applies a mode without a session to resume', () => {
+    expect(
+      launchCommandText(pane({ command: 'claude', claudeResumeMode: 'bypassPermissions' }))
+    ).toBe('claude')
+  })
+
+  it('never saves the mode into a project — it is re-read at open', () => {
+    const saved = paneToSaved(
+      pane({ command: 'claude', claudeSessionId: SID, claudeResumeMode: 'bypassPermissions' }),
+      SID
+    )
+    expect('claudeResumeMode' in saved).toBe(false)
+  })
+})

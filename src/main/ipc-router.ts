@@ -32,6 +32,7 @@ import {
   upsertProject,
 } from './state/store.js'
 import { sessionIdsForPanes } from './state/session-lookup.js'
+import { resumeModesForPanes } from './state/resume-mode.js'
 
 /**
  * Every inbound payload is validated here, at the single registration point.
@@ -326,6 +327,26 @@ export function registerIpc(ptyManager: PtyManager, lookout: LookoutIpc): void {
       .safeParse(raw)
     if (!parsed.success) return { ids: {} }
     return { ids: await sessionIdsForPanes(parsed.data.panes) }
+  })
+
+  ipcMain.handle(CH.projectsResumeModes, async (_e, raw) => {
+    const parsed = z
+      .object({
+        panes: z
+          .array(
+            z.object({
+              paneId: PaneId,
+              cwd: z.string().max(4096),
+              sid: z
+                .string()
+                .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+            })
+          )
+          .max(64),
+      })
+      .safeParse(raw)
+    if (!parsed.success) return { modes: {} }
+    return { modes: await resumeModesForPanes(parsed.data.panes) }
   })
 
   /**

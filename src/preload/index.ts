@@ -48,6 +48,8 @@ import {
   type ProjectsListResponse,
   type ProjectsSessionIdsRequest,
   type ProjectsSessionIdsResponse,
+  type ProjectsResumeModesRequest,
+  type ProjectsResumeModesResponse,
   type ProjectsSaveRequest,
   type ProjectsSaveResponse,
   type PtyWriteRequest,
@@ -109,6 +111,8 @@ const api: SeashellApi = {
     list: (): Promise<ProjectsListResponse> => ipcRenderer.invoke(CH.projectsList),
     sessionIds: (req: ProjectsSessionIdsRequest): Promise<ProjectsSessionIdsResponse> =>
       ipcRenderer.invoke(CH.projectsSessionIds, req),
+    resumeModes: (req: ProjectsResumeModesRequest): Promise<ProjectsResumeModesResponse> =>
+      ipcRenderer.invoke(CH.projectsResumeModes, req),
     save: (req: ProjectsSaveRequest): Promise<ProjectsSaveResponse> =>
       ipcRenderer.invoke(CH.projectsSave, req),
     remove: (req: ProjectsDeleteRequest): Promise<ProjectsDeleteResponse> =>
