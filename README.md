@@ -60,6 +60,26 @@ right-click → Open shortcut.
 If you copy the app across by USB stick, `scp`, or a shared folder instead of downloading it,
 macOS never sets the flag and none of the above applies. It just opens.
 
+### macOS keeps asking for the same permission
+
+If a permission prompt comes back on every launch rather than once, you are on a build older
+than 0.2.8. macOS remembers a permission against an app's code signature, and those builds
+shipped unsigned, so there was nothing to remember them by. 0.2.8 and later are ad-hoc signed
+with a stable identity: you approve once and it sticks until the next version, which is a
+different build and so a different signature.
+
+Updating is the fix. If a prompt still repeats after updating, an older unsigned install of the
+same app has usually left a stale record behind, and
+[`scripts/reset-permissions.sh`](scripts/reset-permissions.sh) clears it:
+
+```bash
+./scripts/reset-permissions.sh
+```
+
+It uses no `sudo`, does not touch Gatekeeper, and resets exactly one permission for exactly one
+app. Pass a different service name to clear a different one, for example
+`./scripts/reset-permissions.sh SystemPolicyDesktopFolder`.
+
 ## Why
 
 Terminal multiplexers make you choose. `tmux` and `zellij` are excellent but live inside a
