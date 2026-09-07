@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { FALLBACK_FONT_SIZE, FONT_FAMILY, FONT_SIZE, TERMINAL_APP_PALETTE } from './palette.js'
 import { KILL_LINE, inputLineSelection, shouldKillLine } from './inputline.js'
 import { isLocalHost, parseOsc7 } from './osc7.js'
+import { targetScrollLine } from './find-scroll.js'
 
 /**
  * One xterm.js terminal bound to one PTY.
@@ -40,6 +41,13 @@ export interface PaneTerminalOptions {
   /** This machine's hostname, so a remote shell's OSC 7 can be told apart from
    *  a local one. The app:// origin's hostname is "seashell", not the machine. */
   hostname?: string
+}
+
+/** How the find bar wants the next search run. */
+export interface FindOptions {
+  incremental: boolean
+  caseSensitive: boolean
+  regex: boolean
 }
 
 const RESIZE_DEBOUNCE_MS = 80
@@ -470,20 +478,35 @@ export class PaneTerminal {
     activeMatchColorOverviewRuler: '#8AB4F8',
   }
 
-  findNext(query: string): boolean {
+  find(query: string, direction: 'next' | 'prev', opts: FindOptions): boolean {
     if (this.disposed || !query) return false
-    return this.search.findNext(query, {
+    const o = {
       decorations: PaneTerminal.SEARCH_DECORATIONS,
-      caseSensitive: false,
-    })
+      caseSensitive: opts.caseSensitive,
+      regex: opts.regex,
+      incremental: opts.incremental,
+    }
+    let ok: boolean
+    try {
+      ok = direction === 'next' ? this.search.findNext(query, o) : this.search.findPrevious(query, o)
+    } catch {
+      // An unfinished regex ("[" while typing) throws inside the addon.
+      return false
+    }
+    if (ok) this.scrollSelectionIntoView()
+    return ok
   }
 
-  findPrevious(query: string): boolean {
-    if (this.disposed || !query) return false
-    return this.search.findPrevious(query, {
-      decorations: PaneTerminal.SEARCH_DECORATIONS,
-      caseSensitive: false,
-    })
+  private scrollSelectionIntoView(): void {
+    const pos = this.term.getSelectionPosition()
+    if (!pos) return
+    const target = targetScrollLine(pos.start.y, this.term.buffer.active.viewportY, this.term.rows)
+    if (target !== null) this.term.scrollToLine(target)
+  }
+
+  onSearchResults(cb: (r: { resultIndex: number; resultCount: number }) => void): () => void {
+    const d = this.search.onDidChangeResults(cb)
+    return () => d.dispose()
   }
 
   /**

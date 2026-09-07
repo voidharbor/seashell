@@ -28,8 +28,7 @@ class FakeTerminal {
   setFontSize = vi.fn()
   markExited = vi.fn()
   selectInputLine = vi.fn()
-  findNext = vi.fn(() => true)
-  findPrevious = vi.fn(() => true)
+  find = vi.fn(() => true)
   clearSearch = vi.fn()
   term = { cols: 80, rows: 24, focus: vi.fn() }
 

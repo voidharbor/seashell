@@ -472,11 +472,11 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
           targetKey={pane.id}
           nonce={props.findNonce}
           nonceDirection={props.findDirection}
-          onSearch={(q, dir) => {
-            const t = terminals.get(pane.id)
-            if (!t) return false
-            return dir === 'next' ? t.findNext(q) : t.findPrevious(q)
-          }}
+          onSearch={(q, dir) =>
+            terminals
+              .get(pane.id)
+              ?.find(q, dir, { incremental: false, caseSensitive: false, regex: false }) ?? false
+          }
           onClose={() => {
             terminals.get(pane.id)?.clearSearch()
             props.onCloseFind()
