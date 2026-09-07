@@ -13,6 +13,16 @@ import { lookoutPluginInstalled } from './lookout/plugin-detect.js'
 import { screenKindOf } from './lookout/screen-kind.js'
 import { CH } from '../shared/ipc.js'
 
+/**
+ * A second instance for development and smoke tests. The single-instance lock
+ * is keyed on userData, so pointing it elsewhere is what lets a test build run
+ * beside the installed app instead of exiting on the lock. Never set in
+ * production launches.
+ */
+if (process.env.SEASHELL_USER_DATA) {
+  app.setPath('userData', path.resolve(process.env.SEASHELL_USER_DATA))
+}
+
 const isDev = !app.isPackaged
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 

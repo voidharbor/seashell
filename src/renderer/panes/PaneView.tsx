@@ -16,6 +16,19 @@ import { zoomPercent } from '../term/zoom.js'
  *  every pane holding its own IPC subscription. */
 export const terminals = new Map<string, PaneTerminal>()
 
+/**
+ * Read-only handle for smoke tests driven over CDP. The renderer is trusted app
+ * code already; this exposes nothing a devtools console could not reach.
+ */
+declare global {
+  interface Window {
+    __seashellTerminals?: Map<string, PaneTerminal>
+  }
+}
+if (typeof window !== 'undefined') {
+  window.__seashellTerminals = terminals
+}
+
 /** This machine's hostname, set once at boot. Used to tell a local shell's OSC 7
  *  working directory from one reported by an SSH session inside a pane. */
 let hostname = ''

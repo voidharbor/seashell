@@ -256,6 +256,12 @@ npm run pack:mac       # SeaShell.app for this machine's architecture
 npm run dist:mac       # universal .dmg for distribution
 ```
 
+### Developing
+
+`SEASHELL_USER_DATA=<dir> npx electron . --remote-debugging-port=9333` runs a second instance
+beside the installed one, with its own userData so the single-instance lock does not exit it.
+`node scripts/cdp.mjs 9333 "<expr>"` evaluates `<expr>` in that instance's renderer over CDP.
+
 A universal build works from an Intel host with no cross-compiling. `node-pty` 1.1.0 is
 Node-API and already ships prebuilds for both `darwin-x64` and `darwin-arm64`, so nothing needs
 recompiling — the loader picks the right one at runtime.
