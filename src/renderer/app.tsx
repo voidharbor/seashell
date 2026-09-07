@@ -1436,6 +1436,7 @@ export function App(): React.JSX.Element {
                 focusCwd={p?.metrics?.cwd || p?.cwd || home}
                 gridWidth={gridSize.width}
                 onReveal={(path, isDir) => revealPath(path, isDir)}
+                onToast={(m) => dispatch({ type: 'toast', message: m })}
                 onClose={() => setDrawerOpen(false)}
                 onDragStart={startDrawerDrag}
               />

@@ -166,6 +166,32 @@ function processRun(text: string, charStart: number[], charEnd: number[]): PathC
   let lo = 0
   let hi = text.length
 
+  /**
+   * Step 3's strip, factored out because it has to run twice.
+   *
+   * Prose puts the punctuation AFTER the closing bracket: `(src/x.tsx).` and
+   * `[docs/a.md],` are how a sentence names a file. Run only at the end, step 3
+   * never got the chance, because step 1 had already looked at the last
+   * character, found `.` rather than `)`, and concluded the run was not
+   * wrapped. The brackets stayed on, and a candidate like `(src/x.tsx)` cannot
+   * exist on any filesystem, so the double-click resolved to nothing.
+   *
+   * Running it first as well costs nothing: these characters are stripped at
+   * the end regardless. And it cannot swallow a bracket that belongs to the
+   * name, because step 1 only strips a pair that WRAPS the whole run, and
+   * `src/helper(a).ts` does not start with one.
+   */
+  const stripTrailingPunctuation = (): void => {
+    while (hi > lo) {
+      const c = text[hi - 1]
+      if (c === undefined || !TRAILING_PUNCT_RE.test(c)) break
+      hi--
+    }
+  }
+
+  // Step 0: the trailing punctuation, so step 1 can see the pair underneath it.
+  stripTrailingPunctuation()
+
   // Step 1: strip balanced wrapping (), [], {} — possibly nested.
   for (;;) {
     if (hi - lo < 2) break
@@ -238,12 +264,9 @@ function processRun(text: string, charStart: number[], charEnd: number[]): PathC
     }
   }
 
-  // Step 3: strip trailing prose punctuation repeatedly.
-  while (hi > lo) {
-    const c = text[hi - 1]
-    if (c === undefined || !TRAILING_PUNCT_RE.test(c)) break
-    hi--
-  }
+  // Step 3: strip trailing prose punctuation repeatedly. Still needed after
+  // the brackets come off. `(src/x.ts.)` and `see src/x.ts.` both end here.
+  stripTrailingPunctuation()
   if (hi <= lo) return null
 
   const core = text.slice(lo, hi)

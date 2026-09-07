@@ -223,3 +223,18 @@ describe('tokenizeLine — multiple candidates on one line', () => {
     }
   })
 })
+
+describe('bracket then punctuation', () => {
+  it('strips a trailing period after a wrapping parenthesis', () => {
+    const [c] = tokenizeLine('- Find searches on Enter only (src/renderer/find/FindBar.tsx).')
+    expect(c?.path).toBe('src/renderer/find/FindBar.tsx')
+  })
+  it('strips a comma after a wrapping bracket', () => {
+    const [c] = tokenizeLine('see [docs/a.md], then')
+    expect(c?.path).toBe('docs/a.md')
+  })
+  it('keeps a parenthesis that belongs to the name', () => {
+    const [c] = tokenizeLine('open src/helper(a).ts.')
+    expect(c?.path).toBe('src/helper(a).ts')
+  })
+})

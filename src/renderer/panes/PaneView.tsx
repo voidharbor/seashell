@@ -278,6 +278,8 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const revealRef = useRef(props.onReveal)
   revealRef.current = props.onReveal
+  const toastRef = useRef(props.onToast)
+  toastRef.current = props.onToast
   const spawnedRef = useRef(props.onSpawned)
   spawnedRef.current = props.onSpawned
   const titleRef = useRef(props.onTitle)
@@ -344,7 +346,28 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
             // `kind` is forwarded, not dropped. Without it the explorer cannot
             // tell a folder from a file, so a revealed directory was selected
             // and scrolled to but never actually opened.
-            if (hit) revealRef.current(hit.resolved, hit.kind === 'dir')
+            if (hit) {
+              revealRef.current(hit.resolved, hit.kind === 'dir')
+              return
+            }
+            /**
+             * A miss used to end here, in silence.
+             *
+             * `statBatch` omits anything that does not exist, so every kind of
+             * near-miss, a path relative to a directory the pane is no longer
+             * in, a name the tokenizer over-extracted, a Claude-truncated
+             * `…/x.ts`, produced exactly the same nothing as double-clicking
+             * ordinary prose. There was no way to tell a feature that had
+             * decided not to fire from a feature that was broken, and it read
+             * as the latter every time.
+             *
+             * Naming the candidate AND the directory it was resolved against is
+             * the whole diagnosis in one line: it says what SeaShell thought it
+             * was looking for, and where it looked.
+             */
+            toastRef.current(
+              `No file at ${candidate} from ${cwdRef.current || 'an unknown directory'}`
+            )
           })
       },
     })

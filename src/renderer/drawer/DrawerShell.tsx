@@ -31,6 +31,9 @@ export interface DrawerShellProps {
   /** Grid width in px; only watched so the terminal refits when it changes. */
   gridWidth: number
   onReveal(path: string, isDir: boolean): void
+  /** Told when a double-clicked path resolves nowhere, so the drawer is as
+   *  talkative about a miss as a pane is. */
+  onToast(message: string): void
   onClose(): void
   onDragStart(e: React.MouseEvent): void
 }
@@ -77,6 +80,8 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
   const cwdRef = useRef('')
   const revealRef = useRef(props.onReveal)
   revealRef.current = props.onReveal
+  const toastRef = useRef(props.onToast)
+  toastRef.current = props.onToast
 
   // Terminal lifecycle. Registered in the shared `terminals` map, which is
   // what routes the global pty.onData dispatch (app.tsx) here for free.
@@ -102,11 +107,18 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
       onDoubleClick: (x, y) => {
         const candidate = pathAtPoint(t.term, x, y)
         if (!candidate) return
+        const cwd = cwdRef.current || props.focusCwd
         void window.seashell.fs
-          .statBatch({ cwd: cwdRef.current || props.focusCwd, candidates: [candidate] })
+          .statBatch({ cwd, candidates: [candidate] })
           .then((res) => {
             const hit = res.results[0]
-            if (hit) revealRef.current(hit.resolved, hit.kind === 'dir')
+            if (hit) {
+              revealRef.current(hit.resolved, hit.kind === 'dir')
+              return
+            }
+            // Same reason as the pane: a silent miss is indistinguishable from
+            // a broken feature, and the drawer misses for the same reasons.
+            toastRef.current(`No file at ${candidate} from ${cwd || 'an unknown directory'}`)
           })
       },
     })
