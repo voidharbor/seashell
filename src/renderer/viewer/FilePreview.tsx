@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { highlightToHast, languageFor, type HastNode } from './highlight.js'
 import { renderHast } from './hast.js'
 import { FindBar } from '../find/FindBar.js'
+import type { FindOptions } from '../term/terminal.js'
 
 const MAX_BYTES = 8 * 1024 * 1024
 
@@ -165,7 +166,7 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
   }, [loaded, props.path, props.rawSource])
 
   /** Browser-native find over the rendered text, used by the pane's find bar. */
-  const runFind = (query: string, direction: 'next' | 'prev'): boolean => {
+  const runFind = (query: string, direction: 'next' | 'prev', opts: FindOptions): boolean => {
     const sel = window.getSelection()
     if (!sel) return false
     bodyRef.current?.focus()
@@ -176,7 +177,7 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
       find?: (q: string, caseSensitive: boolean, backwards: boolean) => boolean
     }
     if (typeof w.find !== 'function') return false
-    return w.find(query, false, direction === 'prev')
+    return w.find(query, opts.caseSensitive, direction === 'prev')
   }
 
   const body = useMemo((): React.JSX.Element => {
@@ -264,6 +265,7 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
           nonce={props.findNonce}
           nonceDirection={props.findDirection}
           onSearch={runFind}
+          capabilities={{ regex: false, count: false }}
           onClose={props.onCloseFind}
         />
       )}

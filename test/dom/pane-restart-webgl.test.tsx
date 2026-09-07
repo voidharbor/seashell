@@ -29,6 +29,7 @@ class FakeTerminal {
   markExited = vi.fn()
   selectInputLine = vi.fn()
   find = vi.fn(() => true)
+  onSearchResults = vi.fn(() => () => {})
   clearSearch = vi.fn()
   term = { cols: 80, rows: 24, focus: vi.fn() }
 
