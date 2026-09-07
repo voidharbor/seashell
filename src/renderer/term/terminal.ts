@@ -1,6 +1,6 @@
-import { Terminal, type ITheme } from '@xterm/xterm'
+import { Terminal, type IMarker, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { SearchAddon } from '@xterm/addon-search'
+import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -8,6 +8,7 @@ import { FALLBACK_FONT_SIZE, FONT_FAMILY, FONT_SIZE, TERMINAL_APP_PALETTE } from
 import { KILL_LINE, inputLineSelection, shouldKillLine } from './inputline.js'
 import { isLocalHost, parseOsc7 } from './osc7.js'
 import { targetScrollLine } from './find-scroll.js'
+import { anchorAction } from './find-anchor.js'
 
 /**
  * One xterm.js terminal bound to one PTY.
@@ -50,6 +51,27 @@ export interface FindOptions {
   regex: boolean
 }
 
+/**
+ * The shipped addon reads a third positional argument, `{ noScroll }`, that its
+ * published typings do not declare. It is not an `ISearchOptions` field, so it
+ * cannot be passed in the options object. We own the scroll (see find-scroll.ts),
+ * so anywhere we re-run a search on the user's behalf we suppress the addon's.
+ */
+type SearchWithNoScroll = (
+  term: string,
+  options: ISearchOptions,
+  extra: { noScroll: boolean }
+) => boolean
+
+/** A search match pinned to the row it sits on. */
+interface FindAnchor {
+  /** Follows the row through scrollback trimming, and disposes itself when the
+   *  row is trimmed away. */
+  marker: IMarker
+  col: number
+  length: number
+}
+
 const RESIZE_DEBOUNCE_MS = 80
 
 export class PaneTerminal {
@@ -63,6 +85,18 @@ export class PaneTerminal {
   private resizeTimer: ReturnType<typeof setTimeout> | null = null
   private lastSent: { cols: number; rows: number } | null = null
   private disposed = false
+
+  /** The match the user last landed on. See keepAnchor(). */
+  private anchor: FindAnchor | null = null
+  /** The query and options behind that anchor, for re-running the search. */
+  private lastFind: { query: string; opts: FindOptions } | null = null
+  /** viewportY as of the last find, so a user scrolling away can be told apart
+   *  from the addon's own scrolling. */
+  private findViewportY = 0
+  /** True while one of our own searches runs, so its results event is not
+   *  mistaken for the addon's background refresh. */
+  private searching = false
+  private anchorSub: { dispose(): void } | null = null
 
   constructor(private readonly opts: PaneTerminalOptions) {
     this.term = new Terminal({
@@ -163,6 +197,10 @@ export class PaneTerminal {
     this.search = new SearchAddon()
     this.term.loadAddon(this.search)
 
+    // Registered here, before any find bar subscribes, so the match is put back
+    // before anything downstream reads the result. See keepAnchor().
+    this.anchorSub = this.search.onDidChangeResults(() => this.keepAnchor())
+
     /**
      * Makes bare URLs in output clickable.
      *
@@ -211,7 +249,14 @@ export class PaneTerminal {
 
     this.term.onData((d) => this.opts.onInput(d))
     this.term.onTitleChange((t) => this.opts.onTitle?.(t))
-    this.term.onResize(({ cols, rows }) => this.scheduleResize(cols, rows))
+    this.term.onResize(({ cols, rows }) => {
+      // A resize moves the viewport without the user having scrolled, and it is
+      // one of the two things that makes the search addon re-run itself. Without
+      // this, a pinned match pushed off screen by a resize reads as one the user
+      // deliberately scrolled away from and never comes back.
+      this.findViewportY = this.term.buffer.active.viewportY
+      this.scheduleResize(cols, rows)
+    })
 
     // Both on the host in capture phase: the host is a strict ancestor of
     // term.element, so these are guaranteed to run before xterm's own handlers.
@@ -479,22 +524,43 @@ export class PaneTerminal {
   }
 
   find(query: string, direction: 'next' | 'prev', opts: FindOptions): boolean {
-    if (this.disposed || !query) return false
-    const o = {
+    if (this.disposed) return false
+    if (!query) {
+      // The query went empty. Nothing is highlighted, so nothing is pinned.
+      this.clearAnchor()
+      return false
+    }
+    const o = this.searchOptions(opts)
+    let ok: boolean
+    this.searching = true
+    try {
+      ok = direction === 'next' ? this.search.findNext(query, o) : this.search.findPrevious(query, o)
+    } catch (err) {
+      // An unfinished regex ("[" while typing) throws inside the addon. Any
+      // other throw is a wiring bug here and must stay visible.
+      if (!opts.regex) throw err
+      this.clearAnchor()
+      return false
+    } finally {
+      this.searching = false
+    }
+    if (!ok) {
+      this.clearAnchor()
+      return false
+    }
+    this.lastFind = { query, opts }
+    this.scrollSelectionIntoView()
+    this.setAnchor()
+    return true
+  }
+
+  private searchOptions(opts: FindOptions): ISearchOptions {
+    return {
       decorations: PaneTerminal.SEARCH_DECORATIONS,
       caseSensitive: opts.caseSensitive,
       regex: opts.regex,
       incremental: opts.incremental,
     }
-    let ok: boolean
-    try {
-      ok = direction === 'next' ? this.search.findNext(query, o) : this.search.findPrevious(query, o)
-    } catch {
-      // An unfinished regex ("[" while typing) throws inside the addon.
-      return false
-    }
-    if (ok) this.scrollSelectionIntoView()
-    return ok
   }
 
   private scrollSelectionIntoView(): void {
@@ -504,6 +570,109 @@ export class PaneTerminal {
     if (target !== null) this.term.scrollToLine(target)
   }
 
+  /**
+   * Pin the match the user just landed on.
+   *
+   * A marker is the only handle that survives the buffer moving underneath it:
+   * its `line` follows the row as scrollback is trimmed, and it disposes itself
+   * once the row falls off the top.
+   */
+  private setAnchor(): void {
+    this.clearAnchor()
+    const pos = this.term.getSelectionPosition()
+    if (!pos) return
+    const buf = this.term.buffer.active
+    const marker = this.term.registerMarker(pos.start.y - (buf.baseY + buf.cursorY))
+    if (!marker) return
+    this.anchor = {
+      marker,
+      col: pos.start.x,
+      length: (pos.end.y - pos.start.y) * this.term.cols + (pos.end.x - pos.start.x),
+    }
+    this.findViewportY = buf.viewportY
+  }
+
+  private clearAnchor(): void {
+    this.anchor?.marker.dispose()
+    this.anchor = null
+  }
+
+  /**
+   * Put the user's match back after the addon's background refresh moved it.
+   *
+   * The addon re-runs its own search 200ms after any pty write. That refresh
+   * drops its cached term first, so it normally re-finds the match sitting under
+   * the current selection. But if anything cleared the selection in between, a
+   * keystroke into the pane or a program repainting, it has nothing to work from
+   * and searches backwards from the bottom of the buffer instead, landing on the
+   * last match in the scrollback with scrolling suppressed. The user's match is
+   * then gone with nothing to bring it back.
+   */
+  private keepAnchor(): void {
+    if (this.disposed || this.searching) return
+    const a = this.anchor
+    const pos = this.term.getSelectionPosition()
+    const buf = this.term.buffer.active
+    const action = anchorAction({
+      anchor: a ? { line: a.marker.line, col: a.col, disposed: a.marker.isDisposed } : null,
+      selection: pos ? { line: pos.start.y, col: pos.start.x } : null,
+      viewportY: buf.viewportY,
+      findViewportY: this.findViewportY,
+      rows: this.term.rows,
+    })
+    if (!action.restore || !a) return
+    this.restoreAnchor(a, action.scroll)
+  }
+
+  private restoreAnchor(a: FindAnchor, scroll: boolean): void {
+    const row = a.marker.line
+    const last = this.lastFind
+    this.searching = true
+    try {
+      this.term.select(a.col, row, a.length)
+      // Re-running the search now re-attaches the active-match decoration and
+      // the result index to this row. It lands back here rather than stepping
+      // on: the addon fires its results event from inside the refresh, before it
+      // restores its cached term, so a search issued from this handler starts at
+      // the selection we just made instead of at its end. find-anchor.test.ts
+      // pins both halves of that against the shipped addon.
+      if (last) {
+        const findNext = this.search.findNext.bind(this.search) as unknown as SearchWithNoScroll
+        try {
+          findNext(last.query, this.searchOptions({ ...last.opts, incremental: true }), {
+            noScroll: true,
+          })
+        } catch (err) {
+          // Same rule as find(): only an unfinished regex is swallowed.
+          if (!last.opts.regex) throw err
+        }
+      }
+    } finally {
+      this.searching = false
+    }
+
+    const now = this.term.getSelectionPosition()
+    if (!now || now.start.y !== row || now.start.x !== a.col) {
+      // The row no longer holds the match, so the program has repainted over it.
+      // Stop pinning rather than dragging the selection back forever.
+      this.clearAnchor()
+      return
+    }
+    if (scroll) {
+      this.scrollSelectionIntoView()
+      this.findViewportY = this.term.buffer.active.viewportY
+    }
+  }
+
+  /**
+   * The addon's result counts, as the find bar's counter.
+   *
+   * A restore fires a second event from inside the first, and the emitter
+   * behind this drains the event already in flight before delivering the new
+   * one, so a subscriber sees the wandering match's index and then the corrected
+   * one. Last write wins, which is the right way round. Measured live on a pane
+   * printing continuously: `165 of 165` immediately followed by `1 of 165`.
+   */
   onSearchResults(cb: (r: { resultIndex: number; resultCount: number }) => void): () => void {
     const d = this.search.onDidChangeResults(cb)
     return () => d.dispose()
@@ -538,6 +707,8 @@ export class PaneTerminal {
 
   clearSearch(): void {
     if (this.disposed) return
+    this.clearAnchor()
+    this.lastFind = null
     this.search.clearDecorations()
     this.term.clearSelection()
   }
@@ -585,6 +756,9 @@ export class PaneTerminal {
 
   dispose(): void {
     this.disposed = true
+    this.anchorSub?.dispose()
+    this.anchorSub = null
+    this.clearAnchor()
     this.search.dispose()
     if (this.resizeTimer) clearTimeout(this.resizeTimer)
     this.opts.container.removeEventListener('mousedown', this.handleMouseDown, true)
