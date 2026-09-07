@@ -9,12 +9,14 @@
  * `decayMs` resets everything, so the next scroll starts precise again.
  *
  * The constants were validated with synthetic wheel events dispatched over
- * CDP (deltaY 4 every 16 ms for "slow", deltaY 120 every 8 ms for "flick"),
- * not a live trackpad: slow stayed at multiplier 1 moving a few lines per
- * event, flick reached the ceiling of 8 moving hundreds of lines per burst,
- * and the alternate buffer forced 1x throughout. See the 0.5 spec, section 3,
- * and task-6-report.md for the recorded numbers. Open to a live trackpad
- * adjustment; change onset and gain together, not one at a time.
+ * CDP, not a live trackpad: deltaY 4 every 16 ms for "slow", and deltaY -300
+ * over CDP, requested 8 ms gaps that Chromium coalesces to about 30 ms for
+ * synthetic wheel events, for "flick" (the unit tests below use deltaY 120 as
+ * an in-memory fixture only, it never crosses a real browser wheel event).
+ * Slow stayed at multiplier 1, a few lines per event. Flick reached the
+ * ceiling of 8, about a thousand lines per burst. The alternate buffer forced
+ * 1x throughout. See task-6-report.md for the recorded numbers. Open to a
+ * live trackpad adjustment; change onset and gain together, not one at a time.
  */
 export interface WheelRampOptions {
   /** Largest multiplier ever returned. */
