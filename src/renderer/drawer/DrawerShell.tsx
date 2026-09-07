@@ -10,9 +10,9 @@ import { drawerPtyId } from './id.js'
  * These ptys live in the same PtyManager map as the panes, so the quit drain
  * kills them like any other shell and nothing they started can outlive the
  * window — the promise the app is named for. They are NOT panes: never in a
- * tab's state, never saved into a project, never scanned by the Lookout
- * detector. Main has no idea the drawer exists, which is what made re-keying
- * these ids from one shared shell to one per pane safe.
+ * tab's state, never saved into a project. Main has no idea the drawer
+ * exists, which is what made re-keying these ids from one shared shell to
+ * one per pane safe.
  */
 
 export interface DrawerShellProps {

@@ -54,11 +54,10 @@ describe('editTargetId', () => {
   })
 
   /**
-   * Focus outside every terminal must keep the old behaviour. The file tree,
-   * a Lookout card's draft box and the find input are all real places focus
-   * sits while someone hits ⌘V expecting it to reach the pane they are working
-   * in; returning null there would make paste dead in the common case while
-   * fixing the rare one.
+   * Focus outside every terminal must keep the old behaviour. The file tree
+   * and the find input are both real places focus sits while someone hits
+   * ⌘V expecting it to reach the pane they are working in; returning null
+   * there would make paste dead in the common case while fixing the rare one.
    */
   it('falls back to the focused pane when focus is not in any terminal', () => {
     const terminals = new Map<string, EditTargetTerminal>([['p1', host()], [DRAWER, host()]])

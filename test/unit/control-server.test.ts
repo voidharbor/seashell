@@ -23,13 +23,11 @@ interface Fakes {
   deps: ControlServerDeps
   writes: Array<[string, string]>
   foregroundCalls: string[]
-  postCardCalls: Array<{ paneId: string; question: string; draft: string | null }>
 }
 
 function makeFakes(over: Partial<ControlServerDeps> = {}): Fakes {
   const writes: Array<[string, string]> = []
   const foregroundCalls: string[] = []
-  const postCardCalls: Array<{ paneId: string; question: string; draft: string | null }> = []
   const deps: ControlServerDeps = {
     socketPath: sockPath(),
     writeToPane: (paneId, text) => {
@@ -42,13 +40,9 @@ function makeFakes(over: Partial<ControlServerDeps> = {}): Fakes {
       return Promise.resolve(true)
     },
     screenKind: () => 'input',
-    postCard: (req) => {
-      postCardCalls.push(req)
-      return null
-    },
     ...over,
   }
-  return { deps, writes, foregroundCalls, postCardCalls }
+  return { deps, writes, foregroundCalls }
 }
 
 async function start(deps: ControlServerDeps): Promise<void> {
@@ -77,9 +71,6 @@ function request(socketPath: string, payload: string): Promise<string> {
 
 const typeReq = (over: Record<string, unknown> = {}): string =>
   JSON.stringify({ cmd: 'type', paneId: 'pane-1', text: 'yes go ahead', ...over }) + '\n'
-
-const cardReq = (over: Record<string, unknown> = {}): string =>
-  JSON.stringify({ cmd: 'card', paneId: 'pane-1', question: 'ship it?', ...over }) + '\n'
 
 /**
  * The whole suite binds real Unix domain sockets, which Node cannot reliably
@@ -112,7 +103,7 @@ describe.skipIf(process.platform === 'win32')('control server', () => {
   it('type is refused while the pane shows a selector, and writes nothing', async () => {
     // A digit typed into a claude picker can select an option on its own — no
     // Enter needed — so "typed, never submitted" is not a safe property on a
-    // selector screen. The guard must live here, not only in the card UI.
+    // selector screen.
     const { deps, writes } = makeFakes({ screenKind: () => 'selector' })
     await start(deps)
     const res = JSON.parse(await request(deps.socketPath, typeReq({ text: '1' })))
@@ -121,31 +112,23 @@ describe.skipIf(process.platform === 'win32')('control server', () => {
     expect(writes).toEqual([])
   })
 
-  it('refuses both commands when the request names a tty the pane no longer has', async () => {
+  it('refuses when the request names a tty the pane no longer has', async () => {
     // A session-registry entry can outlive the SeaShell run that minted its
-    // pane id; a reused pane id must not receive a card meant for the old
-    // one. The registered tty is the cross-run identity check.
-    const { deps, writes, postCardCalls } = makeFakes()
+    // pane id. The registered tty is the cross-run identity check.
+    const { deps, writes } = makeFakes()
     await start(deps)
     const t = JSON.parse(await request(deps.socketPath, typeReq({ tty: 'ttys099' })))
     expect(t.ok).toBe(false)
     expect(t.error).toMatch(/tty/i)
-    const c = JSON.parse(await request(deps.socketPath, cardReq({ tty: 'ttys099' })))
-    expect(c.ok).toBe(false)
-    expect(c.error).toMatch(/tty/i)
     expect(writes).toEqual([])
-    expect(postCardCalls).toEqual([])
   })
 
-  it('accepts both commands when the request tty matches the pane', async () => {
-    const { deps, writes, postCardCalls } = makeFakes()
+  it('accepts the request when the tty matches the pane', async () => {
+    const { deps, writes } = makeFakes()
     await start(deps)
     const t = JSON.parse(await request(deps.socketPath, typeReq({ tty: 'ttys004' })))
     expect(t.ok).toBe(true)
-    const c = JSON.parse(await request(deps.socketPath, cardReq({ tty: 'ttys004' })))
-    expect(c.ok).toBe(true)
     expect(writes.length).toBe(1)
-    expect(postCardCalls.length).toBe(1)
   })
 
   it('refuses an unknown pane without ever checking the foreground', async () => {
@@ -156,50 +139,6 @@ describe.skipIf(process.platform === 'win32')('control server', () => {
     expect(res.error).toMatch(/pane/i)
     expect(foregroundCalls).toEqual([])
     expect(writes).toEqual([])
-  })
-
-  it('routes a card to postCard after the foreground check', async () => {
-    const { deps, foregroundCalls, postCardCalls } = makeFakes()
-    await start(deps)
-    const res = JSON.parse(await request(deps.socketPath, cardReq({ draft: 'yes go' })))
-    expect(res).toEqual({ ok: true })
-    expect(foregroundCalls).toEqual(['ttys004'])
-    expect(postCardCalls).toEqual([{ paneId: 'pane-1', question: 'ship it?', draft: 'yes go' }])
-  })
-
-  it('validateOnly runs every check but creates nothing', async () => {
-    const { deps, foregroundCalls, postCardCalls } = makeFakes()
-    await start(deps)
-    const res = JSON.parse(await request(deps.socketPath, cardReq({ validateOnly: true })))
-    expect(res).toEqual({ ok: true })
-    expect(foregroundCalls).toEqual(['ttys004'])
-    expect(postCardCalls).toEqual([])
-  })
-
-  it('card for an unknown pane is refused before postCard', async () => {
-    const { deps, foregroundCalls, postCardCalls } = makeFakes()
-    await start(deps)
-    const res = JSON.parse(await request(deps.socketPath, cardReq({ paneId: 'pane-404' })))
-    expect(res.ok).toBe(false)
-    expect(res.error).toMatch(/unknown or exited pane/i)
-    expect(foregroundCalls).toEqual([])
-    expect(postCardCalls).toEqual([])
-  })
-
-  it('card is refused when foreground is not claude', async () => {
-    const { deps, postCardCalls } = makeFakes({ checkForeground: () => Promise.resolve(false) })
-    await start(deps)
-    const res = JSON.parse(await request(deps.socketPath, cardReq()))
-    expect(res.ok).toBe(false)
-    expect(res.error).toMatch(/foreground/i)
-    expect(postCardCalls).toEqual([])
-  })
-
-  it('postCard refusal surfaces as the error', async () => {
-    const { deps } = makeFakes({ postCard: () => 'lookout disabled' })
-    await start(deps)
-    const res = JSON.parse(await request(deps.socketPath, cardReq()))
-    expect(res).toEqual({ ok: false, error: 'lookout disabled' })
   })
 
   it('rejects malformed JSON at the boundary', async () => {

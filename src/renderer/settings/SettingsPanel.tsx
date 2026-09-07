@@ -93,12 +93,6 @@ const GROUPS: Array<{ heading: string; rows: Row[] }> = [
         detail:
           'Use the title a program sets — an agent session summary, npm run dev — instead of the folder name. Renaming a pane yourself always wins.',
       },
-      {
-        key: 'lookoutCards',
-        title: 'Approval cards',
-        detail:
-          'Raise a card when an agent pane stops on a question. The ◉ button in the Lookout header is the same switch, for turning cards off without coming in here — and turning them off clears whatever is already showing.',
-      },
     ],
   },
 ]

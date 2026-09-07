@@ -16,12 +16,12 @@
  *      the drawer's whole isolation rule is that nothing in it reaches an
  *      agent's pty.
  *
- *   2. The app is full of ordinary text fields — a Lookout card's draft box,
- *      the find bar, the project name box, a pane rename. Because these items
- *      are deliberately NOT `role: 'paste'` (a role would swallow the chord
- *      before a focused terminal ever saw it), the browser's own paste never
- *      runs. So ⌘V while editing a card's drafted reply did not paste into the
- *      draft: it typed the clipboard into the pane behind the card.
+ *   2. The app is full of ordinary text fields such as the find bar, the
+ *      project name box, a pane rename. Because these items are deliberately
+ *      NOT `role: 'paste'` (a role would swallow the chord before a focused
+ *      terminal ever saw it), the browser's own paste never runs. So ⌘V while
+ *      editing one of them did not paste into the field: it typed the
+ *      clipboard into the pane behind it.
  *
  * Hence two questions, asked in this order, and the order is the whole design:
  *

@@ -118,8 +118,6 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
         // is a renderer concept, and the chords are listed in the tutorial.
         { type: 'separator' },
         item('Toggle File Explorer', 'Cmd+B', 'explorer.toggle'),
-        // Sibling of the explorer toggle — they share the sidebar column.
-        item('Toggle Lookout', 'Cmd+Shift+B', 'lookout.toggle'),
         // ⌘J after the editor convention for "toggle the panel". The drawer is
         // the human's shell alongside the agents' panes (SEASHELL-2).
         item('Toggle Shell Drawer', 'Cmd+J', 'drawer.toggle'),

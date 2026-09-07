@@ -7,12 +7,10 @@
  * the boundary rather than good behavior by callers, and it shuts out escape
  * sequences along the way.
  *
- * The socket now has two commands, neither of which can submit: `type` for
- * typed text, and `card` for question and optional draft with validation.
+ * The socket has one command, `type`, which cannot submit.
  */
 
 export const MAX_TEXT_LENGTH = 4000
-export const MAX_QUESTION_LENGTH = 2000
 
 export interface TypeRequest {
   cmd: 'type'
@@ -24,17 +22,7 @@ export interface TypeRequest {
   tty: string | null
 }
 
-export interface CardRequest {
-  cmd: 'card'
-  paneId: string
-  question: string
-  draft: string | null
-  validateOnly: boolean
-  /** Same cross-run identity check as TypeRequest.tty. */
-  tty: string | null
-}
-
-export type ControlRequest = TypeRequest | CardRequest
+export type ControlRequest = TypeRequest
 
 export type ParseResult = { ok: true; req: ControlRequest } | { ok: false; error: string }
 
@@ -77,28 +65,6 @@ export function parseControlRequest(line: string): ParseResult {
     const tty = parseTty(o['tty'])
     if (!tty.ok) return { ok: false, error: 'malformed tty' }
     return { ok: true, req: { cmd: 'type', paneId, text, tty: tty.tty } }
-  }
-  if (o['cmd'] === 'card') {
-    const paneId = o['paneId']
-    if (typeof paneId !== 'string' || paneId === '') return { ok: false, error: 'missing paneId' }
-    const question = o['question']
-    if (typeof question !== 'string' || question === '') return { ok: false, error: 'missing or empty question' }
-    if (question.length > MAX_QUESTION_LENGTH) {
-      return { ok: false, error: `question too long (max ${MAX_QUESTION_LENGTH} chars)` }
-    }
-    if (CONTROL_CHARS.test(question)) return { ok: false, error: 'control characters rejected' }
-    const draftRaw = o['draft']
-    let draft: string | null = null
-    if (draftRaw !== undefined && draftRaw !== null) {
-      if (typeof draftRaw !== 'string' || draftRaw === '') return { ok: false, error: 'draft must be a non-empty string when present' }
-      if (draftRaw.length > MAX_TEXT_LENGTH) return { ok: false, error: `draft too long (max ${MAX_TEXT_LENGTH} chars)` }
-      if (CONTROL_CHARS.test(draftRaw)) return { ok: false, error: 'control characters rejected' }
-      draft = draftRaw
-    }
-    const validateOnly = o['validateOnly'] === true
-    const tty = parseTty(o['tty'])
-    if (!tty.ok) return { ok: false, error: 'malformed tty' }
-    return { ok: true, req: { cmd: 'card', paneId, question, draft, validateOnly, tty: tty.tty } }
   }
   return { ok: false, error: 'unknown cmd' }
 }

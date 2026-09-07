@@ -44,12 +44,6 @@ export const CH = {
   projectsSave: 'projects:save',
   projectsDelete: 'projects:delete',
   uiCommand: 'ui:command',
-
-  lookoutCards: 'lookout:cards',
-  lookoutDetected: 'lookout:detected',
-  lookoutAction: 'lookout:action',
-  lookoutGetState: 'lookout:getState',
-  lookoutSetEnabled: 'lookout:setEnabled',
 } as const
 
 export type ChannelName = (typeof CH)[keyof typeof CH]
@@ -407,53 +401,6 @@ export interface ProjectsResumeModesResponse {
 export type ProjectsDeleteResponse = { ok: boolean }
 
 // ---------------------------------------------------------------------------
-// Lookout — card-based decision system
-// ---------------------------------------------------------------------------
-
-export interface LookoutCard {
-  id: string
-  paneId: string
-  source: 'detector' | 'push'
-  /** The screen shape the card was born from. A 'selector' card is look-only
-   *  for its whole life: typed text + Enter on a picker blind-confirms the
-   *  highlighted option, so approve refuses it in main regardless of what the
-   *  renderer currently reads. */
-  kind: 'input' | 'selector'
-  question: string
-  draft: string | null
-  state: 'active' | 'stale'
-  createdAt: number
-}
-
-export interface LookoutCardsEvent {
-  cards: LookoutCard[]
-}
-
-export interface LookoutDetectedRequest {
-  paneId: string
-  question: string
-  /** What extractQuestion read the screen as at detection time. */
-  kind: 'input' | 'selector'
-}
-
-export interface LookoutActionRequest {
-  cardId: string
-  action: 'approve' | 'dismiss'
-  /** approve only: the exact text to send — canned word, draft, or edited draft. */
-  text?: string
-}
-
-export type LookoutActionResponse = Result<
-  { delivered: boolean },
-  'ENOTFOUND' | 'ESTALE' | 'EGONE' | 'EFOREGROUND' | 'EINVALID' | 'ESELECTOR'
->
-
-export interface LookoutState {
-  pluginInstalled: boolean
-  enabled: boolean
-}
-
-// ---------------------------------------------------------------------------
 // The preload surface, as seen by the renderer on `window.seashell`
 // ---------------------------------------------------------------------------
 
@@ -499,13 +446,6 @@ export interface SeashellApi {
     /** Terminal.app's private SF Mono Terminal face, or null if unreadable. */
     getTerminalFont(): Promise<ArrayBuffer | null>
     onCommand(cb: (e: UiCommandEvent) => void): () => void
-  }
-  lookout: {
-    onCards(cb: (e: LookoutCardsEvent) => void): () => void
-    detected(req: LookoutDetectedRequest): void
-    action(req: LookoutActionRequest): Promise<LookoutActionResponse>
-    getState(): Promise<LookoutState>
-    setEnabled(enabled: boolean): void
   }
 }
 

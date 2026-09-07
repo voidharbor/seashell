@@ -7,11 +7,7 @@ import { PtyManager } from './pty/manager.js'
 import { MetricsMonitor } from './monitor/monitor.js'
 import { startControlServer, type ControlServer } from './control/server.js'
 import { checkTtyForeground } from './control/foreground-check.js'
-import { CardStore } from './lookout/card-store.js'
-import { approveCard } from './lookout/approve.js'
-import { lookoutPluginInstalled } from './lookout/plugin-detect.js'
-import { screenKindOf } from './lookout/screen-kind.js'
-import { CH } from '../shared/ipc.js'
+import { screenKindOf } from './control/screen-kind.js'
 
 /**
  * A second instance for development and smoke tests. The single-instance lock
@@ -202,75 +198,13 @@ app.whenReady().then(() => {
    */
   const pm = ptyManager
 
-  /**
-   * The sweep timer exists only while a card does — same reasoning and shape
-   * as the pty flush loop's ensureFlushLoop/stopFlushLoop in pty/manager.ts:
-   * a wakeup every 2s for the app's whole life would cost far more than the
-   * staleness check it buys while the card stack is empty, which is most of
-   * the time.
-   *
-   * Declared as functions (hoisted), not const arrows, so the CardStore emit
-   * dep just below can call ensureSweepLoop regardless of declaration order.
-   */
-  const LOOKOUT_SWEEP_INTERVAL_MS = 2000
-  let sweepTimer: ReturnType<typeof setInterval> | null = null
-  function ensureSweepLoop(): void {
-    if (sweepTimer) return
-    sweepTimer = setInterval(() => {
-      cardStore.sweep()
-      if (cardStore.cards().length === 0) stopSweepLoop()
-    }, LOOKOUT_SWEEP_INTERVAL_MS)
-  }
-  function stopSweepLoop(): void {
-    if (sweepTimer) clearInterval(sweepTimer)
-    sweepTimer = null
-  }
-
-  /**
-   * Lookout card store — see
-   * docs/superpowers/specs/2026-08-01-lookout-approval-cards-design.md. Fed
-   * by both pushed cards from the control socket and the renderer's
-   * detector lane.
-   *
-   * emit is the one choke point every store mutation that can leave active
-   * cards behind runs through (createFromPush, createFromDetector, sweep,
-   * dismiss, ...), so arming the sweep loop here — rather than at each
-   * call site — is what actually covers the detector lane. Arming it only
-   * from postCard (the push path) missed the detector lane entirely: cards
-   * never greyed on new output and exited panes left immortal cards. See
-   * the whole-branch review.
-   */
-  const cardStore = new CardStore({
-    bytesOut: (paneId) => pm.bytesOutOf(paneId),
-    emit: (cards) => {
-      mainWindow?.webContents.send(CH.lookoutCards, { cards })
-      if (cards.length > 0) ensureSweepLoop()
-    },
-    now: Date.now,
-  })
-
   /** Main's own screen read for a pane, from its raw output tail. */
   const paneScreenKind = (paneId: string): 'input' | 'selector' | null => {
     const tail = pm.tailOf(paneId)
     return tail === null ? null : screenKindOf(tail)
   }
 
-  // Registered once pm and cardStore both exist: the approve closure needs both.
-  registerIpc(ptyManager, {
-    store: cardStore,
-    approve: (r) =>
-      approveCard(
-        {
-          store: cardStore,
-          paneTty: (id) => pm.paneTty(id),
-          checkForeground: checkTtyForeground,
-          writeIfLive: (id, d) => pm.writeIfLive(id, d),
-          screenKind: paneScreenKind,
-        },
-        r
-      ),
-    pluginInstalled: lookoutPluginInstalled,
-  })
+  registerIpc(ptyManager)
 
   void startControlServer({
     socketPath: path.join(app.getPath('userData'), 'control.sock'),
@@ -278,12 +212,6 @@ app.whenReady().then(() => {
     paneTty: (paneId) => pm.paneTty(paneId),
     checkForeground: checkTtyForeground,
     screenKind: paneScreenKind,
-    postCard: (req) => {
-      const created = cardStore.createFromPush(req.paneId, req.question, req.draft)
-      // No ensureSweepLoop call here: createFromPush always emits on
-      // success, so the CardStore emit dep above already arms the loop.
-      return created ? null : 'lookout disabled or pane not eligible'
-    },
   }).then(
     (server) => {
       controlServer = server

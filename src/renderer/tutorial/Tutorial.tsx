@@ -104,22 +104,6 @@ const STEPS: Step[] = [
     ],
   },
   {
-    title: 'Lookout',
-    body:
-      'When an agent pane stops to ask you something, a card appears in the ' +
-      "Lookout section at the top of the sidebar, edged in that pane's colour — " +
-      "Approve answers the pane without leaving the one you're in. Smart " +
-      'drafted replies come from the c-assistant plugin. The section stays out ' +
-      'of the way until then: it opens by itself the first time a card needs ' +
-      'you, and ⇧⌘B shows or hides it whenever you like — hide it yourself and ' +
-      'it stays hidden, with the status-bar badge still counting. ◉ in the ' +
-      'Lookout header turns cards off entirely and clears the ones showing.',
-    keys: [
-      ['⇧⌘B', 'Hide or show the Lookout section'],
-      ['◉', 'Turn cards off entirely, in the Lookout header'],
-    ],
-  },
-  {
     title: 'Previews are panes, not windows',
     body:
       'Open a file from the explorer and it becomes a preview pane, tiled next to ' +

@@ -353,8 +353,7 @@ body {
 }
 
 /* One material top to bottom: the header, the drawer pull and the rows are all
-   the tree surface. The "side" surface belongs to the Lookout section above,
-   which is what carries retro's wooden desk. */
+   the tree surface. */
 .sidebar {
   backdrop-filter: var(--glassBlur, none);
   width: var(--sidebar-w);
@@ -911,14 +910,6 @@ body.dragging .sidebar__grip {
 .statusbar__hint {
   margin-left: auto;
   color: var(--faint);
-}
-
-.statusbar__lookout {
-  color: var(--dim);
-}
-
-.statusbar__lookout:hover {
-  color: var(--text);
 }
 
 /* --------------------------------------------------------------- viewer */
@@ -1533,19 +1524,8 @@ body.dragging .web__view {
   border: 0;
 }
 
-/* -------------------------------------------------------------- lookout */
-
-/* The Lookout rail: reserved layout space at the body's right edge, so cards
- * never float over pane content (they used to overlay the corner of whichever
- * pane was under them). The rail is the LAST child of .body and simply
- * disappears when CardStack renders nothing — CardStack returns an empty
- * fragment when there is nothing to show, which leaves this element with no
- * children at all, and :empty does the rest. No visibility logic is
- * duplicated out here; CardStack stays the single owner of "is there
- * anything to show". Panes reflow once when the rail appears and once when
- * the stack empties, which is the price of never covering a terminal. */
-/* The sidebar column: cards on top, file explorer underneath. The column is
- * only as wide as the explorer, and collapses to nothing when both are gone. */
+/* The sidebar column: the file explorer sits inside it. The column collapses
+ * to nothing when the explorer is gone. */
 .sidebar-col {
   display: flex;
   flex: 0 0 auto;
@@ -1555,125 +1535,6 @@ body.dragging .web__view {
 
 .sidebar-col:empty {
   display: none;
-}
-
-/* Cards stack here and stay until answered, so the rail is capped at half the
- * window and scrolls past that — five waiting panes must not push the file
- * tree off the bottom of the screen. */
-/* Titled section header, so Lookout reads as its own panel above the file tree
- * rather than cards floating over it. Rendered only when the rail is. */
-/* The Lookout section carries the theme's "side" surface — retro's wooden desk
-   sits behind the cards, not behind the file browser. The explorer below takes
-   the tree surface throughout, so its header matches its rows rather than
-   being a different material. */
-.lookout-head,
-.lookout-rail {
-  background-color: var(--sideBg, transparent);
-  background-image: var(--sideImg, none);
-}
-
-.lookout-head {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: calc(6px * var(--ui-scale));
-  width: var(--sidebar-w);
-  min-width: var(--sidebar-w);
-  padding: calc(5px * var(--ui-scale)) calc(10px * var(--ui-scale));
-  border-bottom: 1px solid var(--line);
-  background: var(--chrome);
-}
-
-.lookout-head__title {
-  color: var(--faint);
-  font-size: calc(11px * var(--ui-scale));
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.lookout-head__count {
-  padding: 0 calc(5px * var(--ui-scale));
-  border-radius: 999px;
-  background: var(--accent);
-  color: #000;
-  font-size: calc(10px * var(--ui-scale));
-  font-weight: 600;
-}
-
-/* The one-click off switch, and the only control that actually stops Lookout
- * watching. ⇧⌘B and the ✕ beside this one HIDE the section — detection keeps
- * running and cards keep piling up behind it — which is the right behaviour
- * for a panel toggle and the wrong one for "make these stop". Sits to the LEFT
- * of the hide button, first of the two, because turning cards off is the thing
- * someone reaches for in a hurry. */
-.lookout-head__power {
-  margin-left: auto;
-  padding: 0 calc(4px * var(--ui-scale));
-  border: 0;
-  background: none;
-  color: var(--accent);
-  cursor: pointer;
-  font: inherit;
-  font-size: calc(11px * var(--ui-scale));
-}
-
-/* Off is a state you must be able to see without hovering: hollow glyph, faint
- * colour, and the section title dims with it. A switch whose two positions look
- * alike is how you end up wondering why no cards ever appear again. */
-.lookout-head__power--off {
-  color: var(--faint);
-}
-
-.lookout-head__power:hover {
-  color: var(--text);
-}
-
-.lookout-head--off .lookout-head__title {
-  opacity: 0.55;
-}
-
-.lookout-head__hide {
-  padding: 0 calc(4px * var(--ui-scale));
-  border: 0;
-  background: none;
-  color: var(--faint);
-  cursor: pointer;
-  font: inherit;
-  font-size: calc(11px * var(--ui-scale));
-}
-
-.lookout-head__hide:hover {
-  color: var(--text);
-}
-
-/* Cards stack here and stay until answered, so the rail scrolls rather than
- * growing without bound. Its height is user-set (see layout/rail.ts) and
- * applied inline; the grip below it trades height with the file tree. */
-.lookout-rail {
-  box-shadow: var(--sideShadow, none);
-  flex: 0 0 auto;
-  width: var(--sidebar-w);
-  min-width: var(--sidebar-w);
-  overflow-y: auto;
-  padding: calc(12px * var(--ui-scale));
-}
-
-/* The horizontal twin of .sidebar__grip. Same 1px line, same invisible
- * grab margin around it, same drag affordance — one axis over. */
-.rail__grip {
-  height: 6px;
-  margin-top: -3px;
-  margin-bottom: -2px;
-  flex: none;
-  z-index: 6;
-  cursor: row-resize;
-  background: transparent;
-  transition: background 0.12s ease;
-}
-
-.rail__grip:hover,
-body.dragging .rail__grip {
-  background: var(--accent);
 }
 
 /* ── Shell drawer (⌘J) ────────────────────────────────────────────────────
@@ -1755,134 +1616,6 @@ body.dragging .drawer__grip {
   min-height: 0;
   padding: 2px 0 0 4px;
   background: var(--termBg);
-}
-
-.lookout-rail:empty {
-  display: none;
-}
-
-.lookout-stack {
-  display: flex;
-  flex-direction: column;
-  gap: calc(8px * var(--ui-scale));
-  width: 100%;
-}
-
-.card {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: calc(6px * var(--ui-scale));
-  padding: calc(10px * var(--ui-scale));
-  border: 1px solid var(--line);
-  /* The pane's colour tag, painted as the card's left edge (the hex arrives
-   * inline from CardStack). Always 3px whether or not the pane is tagged, so
-   * an untagged pane's card is the same width as every other one — a card
-   * that changed shape when you coloured its pane would read as a bug. */
-  border-left-width: 3px;
-  border-color: var(--cardBorder, var(--line));
-  border-radius: var(--cardRadius, 8px);
-  background-color: var(--cardBg);
-  color: var(--cardText, var(--text));
-  box-shadow: var(--cardShadow, 0 8px 24px #000a);
-  /* Retro's paper cards sit very slightly askew on the desk. Every other
-     theme sets 0deg, so this is inert unless a theme asks for it. */
-  transform: rotate(var(--cardRotate, 0deg));
-}
-
-/* Pane name and age on one line: the age is the second question you have about
- * a waiting card and does not deserve a row of its own. */
-.card__head {
-  display: flex;
-  align-items: baseline;
-  gap: calc(6px * var(--ui-scale));
-}
-
-.card__age {
-  margin-left: auto;
-  flex: none;
-  color: var(--faint);
-  font-size: calc(10.5px * var(--ui-scale));
-  font-variant-numeric: tabular-nums;
-}
-
-.card--stale {
-  opacity: 0.55;
-}
-
-/* The idle placeholder is not a card you act on — no shadow, no raised
- * surface, so a quiet Lookout does not read as something waiting. */
-.card--idle {
-  border-style: dashed;
-  background: none;
-  box-shadow: none;
-  color: var(--faint);
-}
-
-.card__pane {
-  color: var(--faint);
-  font-size: calc(11px * var(--ui-scale));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.card__question {
-  color: var(--text);
-  font-size: calc(13px * var(--ui-scale));
-  line-height: 1.4;
-  user-select: text;
-}
-
-/* The draft is meant to be READ before it is sent, and edited in place. It was
- * one row tall, which turned any real reply into a two-line peephole with a
- * scrollbar. Several rows by default, and draggable taller from the corner —
- * `resize: vertical` only, so it can never push out past the rail's width. */
-.card__draft {
-  width: 100%;
-  min-height: calc(72px * var(--ui-scale));
-  padding: calc(5px * var(--ui-scale)) calc(8px * var(--ui-scale));
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--sunken);
-  color: var(--text);
-  font: inherit;
-  line-height: 1.45;
-  resize: vertical;
-}
-
-.card__draft:focus {
-  border-color: var(--accent);
-  outline: none;
-}
-
-.card__draft--ref {
-  color: var(--faint);
-  font-style: italic;
-  user-select: text;
-}
-
-.card__hint {
-  color: var(--faint);
-  font-size: calc(11.5px * var(--ui-scale));
-}
-
-.card__cmd {
-  display: block;
-  padding: calc(4px * var(--ui-scale)) calc(7px * var(--ui-scale));
-  border-radius: 4px;
-  background: var(--sunken);
-  color: var(--text);
-  font-size: calc(11.5px * var(--ui-scale));
-  overflow-x: auto;
-  white-space: nowrap;
-  user-select: text;
-}
-
-.card__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: calc(6px * var(--ui-scale));
 }
 
 /* ------------------------------------------------- appearance (settings) */

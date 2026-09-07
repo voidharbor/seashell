@@ -33,9 +33,9 @@ interface PaneProc {
    */
   bytesOut: number
   /**
-   * The last TAIL_MAX_CHARS of raw output, kept so lookout/screen-kind.ts can
-   * read the pane's current screen from main's own stream at approve time —
-   * the renderer's xterm buffer lags this by an IPC hop plus a parse.
+   * The last TAIL_MAX_CHARS of raw output, kept so control/screen-kind.ts can
+   * read the pane's current screen from main's own stream at type time. The
+   * renderer's xterm buffer lags this by an IPC hop plus a parse.
    */
   tail: string
 }
@@ -218,15 +218,8 @@ export class PtyManager {
     return rec && !rec.exited ? rec.ttyName : null
   }
 
-  /** A live pane's monotonic output-byte counter, or null. Lets CardStore
-   * tell "gone" from "quiet" the same way the monitor does — see bytesOut. */
-  bytesOutOf(paneId: string): number | null {
-    const rec = this.panes.get(paneId)
-    return rec && !rec.exited ? rec.bytesOut : null
-  }
-
   /** A live pane's raw output tail, or null — same liveness semantics as
-   * bytesOutOf. Input to lookout/screen-kind.ts. */
+   * paneTty. Input to control/screen-kind.ts. */
   tailOf(paneId: string): string | null {
     const rec = this.panes.get(paneId)
     return rec && !rec.exited ? rec.tail : null

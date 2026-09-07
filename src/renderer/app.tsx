@@ -19,7 +19,6 @@ import { Explorer } from './explorer/Explorer.js'
 import { StatusBar } from './status/StatusBar.js'
 import { loadTerminalFont } from './term/terminal.js'
 import { editTargetId, isTextField, terminalOwningFocus } from './term/edit-target.js'
-import { paneColorHex } from './panes/colors.js'
 import { canBrief, linkBriefing, newLinkId } from './panes/link.js'
 import type { LinkCandidate } from './panes/LinkPicker.js'
 import {
@@ -37,7 +36,6 @@ import {
   saveSidebarWidth,
   widthFromDrag,
 } from './layout/sidebar.js'
-import { RAIL_DEFAULT, heightFromDrag, loadRailHeight, saveRailHeight } from './layout/rail.js'
 import { drawerHeightFromDrag, loadDrawerHeight, saveDrawerHeight } from './layout/drawer.js'
 import { DrawerShell } from './drawer/DrawerShell.js'
 import { drawerPtyId } from './drawer/id.js'
@@ -46,16 +44,9 @@ import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
 import { ProjectsPanel, type SaveScope } from './projects/ProjectsPanel.js'
 import { stateToTabs, tabToSaved, tabsFromSaved } from './projects/serialize.js'
-import type { LookoutActionRequest, LookoutCard, Project } from '../shared/ipc.js'
+import type { Project } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 import { dirtyPreviewPanes } from './viewer/FilePreview.js'
-import { extractQuestion } from './lookout/extract.js'
-import { changedQuestions, planDetections } from './lookout/detect.js'
-import { readPaneTail } from './lookout/tail.js'
-import { lookoutBadgeCount } from './lookout/badge.js'
-import { CardStack } from './lookout/CardStack.js'
-import { refusalMessage } from './lookout/refusal.js'
-import type { DraftStore } from './lookout/drafts.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
 
@@ -65,8 +56,8 @@ export function App(): React.JSX.Element {
   const [state, dispatch] = useReducer(reducer, null, (): AppState => ({
     tabs: [],
     activeTabId: '',
-    // Closed on launch: the panes are the product, and both sidebar sections
-    // are one keystroke away (⌘B files, ⌘⇧B Lookout) when wanted.
+    // Closed on launch: the panes are the product, and the sidebar is one
+    // keystroke away (⌘B) when wanted.
     sidebarVisible: false,
     explorerRoot: '',
     revealPath: null,
@@ -76,17 +67,6 @@ export function App(): React.JSX.Element {
 
   const [zoomIndex, setZoomIndex] = useState(loadZoomIndex)
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
-  const [railHeight, setRailHeight] = useState(loadRailHeight)
-  /** Lookout starts closed and reveals itself the first time a card actually
-   *  needs the user — an approval nobody can see is a missed approval. Once
-   *  the user touches the toggle themselves (⌘⇧B or the ✕), their choice
-   *  wins for the rest of the session and nothing auto-reveals over it.
-   *  Runtime-only on purpose: cards are process-lifetime anyway, and a hidden
-   *  Lookout that survived a restart would look like the feature had broken.
-   *  The status-bar badge still counts while hidden. */
-  const [lookoutHidden, setLookoutHidden] = useState(true)
-  const lookoutTouched = useRef(false)
-  const railRef = useRef<HTMLElement | null>(null)
   /** Shell drawer (⌘J): open state is runtime-only — a scratch shell that
    *  reopened itself on launch would be presuming; height persists. */
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -109,8 +89,6 @@ export function App(): React.JSX.Element {
   const [projectsScope, setProjectsScope] = useState<SaveScope>('window')
   const [projects, setProjects] = useState<Project[]>([])
   const [settings, setSettings] = useState<Settings>(loadSettings)
-  const [lookoutCards, setLookoutCards] = useState<LookoutCard[]>([])
-  const [lookoutPlugin, setLookoutPlugin] = useState(false)
 
   const updateSettings = useCallback((next: Settings) => {
     setSettings(next)
@@ -261,35 +239,6 @@ export function App(): React.JSX.Element {
     [drawerHeight, zoomIndex]
   )
 
-  /** Vertical twin of startSidebarDrag: trades height between the card rail
-   *  and the file explorer below it. The rail's own top is measured at drag
-   *  start rather than assumed, so the tab bar's height is never hardcoded. */
-  const startRailDrag = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      const scale = levelAt(zoomIndex).ui
-      const railTop = railRef.current?.getBoundingClientRect().top ?? 0
-      let latest = railHeight
-
-      const move = (ev: MouseEvent): void => {
-        latest = heightFromDrag(ev.clientY, railTop, scale)
-        setRailHeight(latest)
-      }
-      const up = (): void => {
-        window.removeEventListener('mousemove', move)
-        window.removeEventListener('mouseup', up)
-        document.body.style.cursor = ''
-        document.body.classList.remove('dragging')
-        saveRailHeight(latest)
-      }
-      document.body.style.cursor = 'row-resize'
-      document.body.classList.add('dragging')
-      window.addEventListener('mousemove', move)
-      window.addEventListener('mouseup', up)
-    },
-    [railHeight, zoomIndex]
-  )
-
   const startSidebarDrag = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
@@ -364,168 +313,10 @@ export function App(): React.JSX.Element {
     }
   }, [])
 
-  // Subscribed once: the card list is pushed whenever it changes, and the
-  // plugin flag only needs a single read at boot (Task 7 does not poll it).
-  useEffect(() => {
-    const off = window.seashell.lookout.onCards((e) => setLookoutCards(e.cards))
-    void window.seashell.lookout.getState().then((s) => setLookoutPlugin(s.pluginInstalled))
-    return off
-  }, [])
-
-  /** paneId -> the last question actually reported for it, so a re-read that
-   *  found the same question costs nothing and a new one cards immediately. */
-  const lookoutReported = useRef<Map<string, string>>(new Map())
-  useEffect(() => {
-    if (!settings.lookoutCards) {
-      // Disabled means unwatched: drop the last-sent memory so re-enabling
-      // reports every pane from scratch instead of trusting stale bookkeeping.
-      lookoutReported.current = new Map()
-      return
-    }
-    const panes = state.tabs.flatMap((t) =>
-      Object.values(t.panes)
-        .filter((p) => p.kind === 'term')
-        .map((p) => ({
-          paneId: p.id,
-          attention: p.attention ?? null,
-          focused: t.id === state.activeTabId && t.focusedPaneId === p.id,
-        }))
-    )
-    // Read every waiting pane every pass; only the readings that actually
-    // changed cross the IPC boundary. See detect.ts for why re-reading is the
-    // cheap half and re-reporting was the expensive half.
-    const readings = []
-    for (const paneId of planDetections(panes).toScan) {
-      const lines = readPaneTail(paneId)
-      if (!lines) continue
-      const extraction = extractQuestion(lines)
-      if (extraction) {
-        readings.push({ paneId, question: extraction.question, kind: extraction.kind })
-      }
-    }
-    const { toSend, nextSent } = changedQuestions(readings, lookoutReported.current)
-    lookoutReported.current = nextSent
-    for (const reading of toSend) window.seashell.lookout.detected(reading)
-  }, [settings.lookoutCards, state.tabs, state.activeTabId])
-
-  useEffect(() => {
-    window.seashell.lookout.setEnabled(settings.lookoutCards)
-  }, [settings.lookoutCards])
-
-  /** Edits in progress, kept across a card unmounting — see lookout/drafts.ts.
-   *  A ref, not state: it is written on every keystroke in a draft box, and
-   *  nothing outside that box reads it. */
-  const lookoutDrafts = useRef<DraftStore>(new Map())
-
-  /**
-   * Clock for card ages, ticked once a minute and ONLY while cards exist.
-   *
-   * Armed off the card list rather than left running, for the same reason
-   * main's sweep timer is: this app has spent real work on costing nothing
-   * while idle, and a timer that re-renders the tree every minute forever —
-   * to update a label on cards that are not there — would give some of that
-   * back. `ageLabel` is minute-granular, so a minute is the fastest tick that
-   * can change anything on screen.
-   */
-  const [lookoutNow, setLookoutNow] = useState(() => Date.now())
-  const hasCards = lookoutCards.length > 0
-  useEffect(() => {
-    if (!hasCards) return
-    // Stamped immediately as well as on the interval: a card raised 50s after
-    // the last tick would otherwise read "now" for its first ten seconds.
-    setLookoutNow(Date.now())
-    const timer = setInterval(() => setLookoutNow(Date.now()), 60_000)
-    return () => clearInterval(timer)
-  }, [hasCards])
-
-  // Live per-pane screen shape for the card stack's send-button gate — a
-  // fresh xterm-buffer read on every call (render *and* click time), never a
-  // cached value. See CardStack's doc comment for why click time re-reads.
-  const lookoutScreenMode = useCallback((paneId: string): 'input' | 'selector' | null => {
-    const lines = readPaneTail(paneId)
-    return lines ? (extractQuestion(lines)?.kind ?? null) : null
-  }, [])
-
-  /**
-   * What a card should call a pane: the same "N · label" the pane's own header
-   * shows, so a card is identifiable at a glance with several agents running.
-   * `label` is already whatever is most specific — the user's custom name when
-   * they set one, otherwise the claude session title. Falls back to the raw id
-   * only when the pane is gone, which is the one case where the id is the only
-   * true thing left to say.
-   */
-  const lookoutPaneName = useCallback(
-    (paneId: string): string => {
-      for (const tab of state.tabs) {
-        const order = dfsPaneOrder(tab.tree)
-        const index = order.indexOf(paneId)
-        const pane = tab.panes[paneId]
-        if (!pane) continue
-        const name = pane.label.trim()
-        const numbered = index >= 0 ? `${index + 1} · ` : ''
-        return name ? `${numbered}${name}` : paneId
-      }
-      return paneId
-    },
-    [state.tabs]
-  )
-
-  /** The pane's colour tag as hex, so a card carries the same identity the
-   *  pane header and tab strip use. Null for an untagged pane. */
-  const lookoutPaneColor = useCallback(
-    (paneId: string): string | null => {
-      for (const tab of state.tabs) {
-        const pane = tab.panes[paneId]
-        if (pane) return paneColorHex(pane.color)
-      }
-      return null
-    },
-    [state.tabs]
-  )
-
-  const lookoutGotoPane = useCallback(
-    (paneId: string) => {
-      const tab = state.tabs.find((t) => t.panes[paneId] !== undefined)
-      if (!tab) return
-      dispatch({ type: 'tab.select', tabId: tab.id })
-      dispatch({ type: 'pane.focus', paneId })
-      // Maximize it on arrival: the point of the button is to deal with this
-      // pane, and pane.zoom toggles, so only zoom when it is not already the
-      // zoomed one — otherwise arriving from a card would un-maximize it.
-      if (tab.zoomedPaneId !== paneId) dispatch({ type: 'pane.zoom', paneId })
-    },
-    [state.tabs]
-  )
-
-  const lookoutOnAction = useCallback((req: LookoutActionRequest) => {
-    // The response was discarded, which made every refusal indistinguishable
-    // from a success: click Approve, nothing happens, card still there. Main
-    // refuses for good reasons — a picker painted, the pane exited, the draft
-    // grew a line break — and each of them is actionable once said out loud.
-    void window.seashell.lookout.action(req).then((res) => {
-      if (!res.ok) dispatch({ type: 'toast', message: refusalMessage(res.code) })
-    })
-  }, [])
-
   const activeTab = useMemo(
     () => state.tabs.find((t) => t.id === state.activeTabId),
     [state.tabs, state.activeTabId]
   )
-
-  /**
-   * The one exception to "Lookout starts closed": a card the rail would
-   * actually show (active, and not suppressed as the focused pane's own)
-   * reveals the section, because an approval hidden behind a closed panel is
-   * an agent waiting on nobody. Only ever fires while the user has not
-   * touched the toggle themselves — an explicit hide stays hidden.
-   */
-  useEffect(() => {
-    if (!lookoutHidden || lookoutTouched.current || !settings.lookoutCards) return
-    const suppressed = activeTab?.focusedPaneId ?? null
-    if (lookoutCards.some((c) => c.state === 'active' && c.paneId !== suppressed)) {
-      setLookoutHidden(false)
-    }
-  }, [lookoutCards, lookoutHidden, settings.lookoutCards, activeTab])
 
   const newPane = useCallback(
     (command: PaneCommand, commandText?: string) => {
@@ -788,10 +579,10 @@ export function App(): React.JSX.Element {
    * writing to it. Nothing is relayed between panes afterwards.
    *
    * The briefing is typed and submitted, which is a write into a live agent
-   * session — it happens here, on the user's own click inside SeaShell, which
-   * is the same rule Lookout's Approve follows. It is refused for a pane that
-   * is not running an agent, because an English sentence typed at a shell
-   * prompt is a command line, not a comment.
+   * session. It happens here, on the user's own click inside SeaShell, the
+   * same rule every such write follows. It is refused for a pane that is not
+   * running an agent, because an English sentence typed at a shell prompt is
+   * a command line, not a comment.
    */
   const linkPanes = useCallback(
     async (paneId: string, otherPaneId: string) => {
@@ -971,10 +762,6 @@ export function App(): React.JSX.Element {
           break
         case 'layout.rebalance':
           dispatch({ type: 'layout.rebalance' })
-          break
-        case 'lookout.toggle':
-          lookoutTouched.current = true
-          setLookoutHidden((h) => !h)
           break
         case 'drawer.toggle':
           setDrawerOpen((o) => !o)
@@ -1356,30 +1143,6 @@ export function App(): React.JSX.Element {
   const panesAreZoomed = state.tabs.some((t) =>
     Object.values(t.panes).some((p) => p.zoomIndex !== undefined)
   )
-  // Suppression (hiding the focused pane's card from the stack, below) is a
-  // visibility rule only — the badge counts every active card regardless of
-  // pane, so it does not move just because focus does.
-  const suppressedPaneId = activeTab?.focusedPaneId ?? null
-  /**
-   * Zeroed the instant Lookout is switched off, without waiting for main to
-   * clear the store and push an empty list back. That round trip is short, but
-   * it is long enough to paint one frame of "cards are off" next to a status
-   * bar badge reading 3 — and a count of things the user just turned off is
-   * exactly the kind of small lie that makes a switch look untrustworthy.
-   */
-  const lookoutCount = settings.lookoutCards ? lookoutBadgeCount(lookoutCards) : 0
-
-  /** Mirrors CardStack's own "is there anything to show" rule — a card for the
-   *  focused pane is suppressed, so it does not make the rail appear. */
-  /**
-   * Lookout is a DEDICATED section, not a popup: it is there whenever the user
-   * has not hidden it, empty or not. An earlier version showed it only while
-   * cards existed, which meant a fresh launch — cards are process-lifetime, so
-   * every launch starts with none — looked exactly like a build with no Lookout
-   * in it at all. A section you cannot find when it is idle is not a section.
-   */
-  const railVisible = !lookoutHidden
-
   return (
     <div className="app">
       {/* The desktop behind the glass. Aero is the only theme that paints it,
@@ -1506,93 +1269,10 @@ export function App(): React.JSX.Element {
       </div>
 
       <div className="body">
-        {/* Reserved space, not an overlay: the rail is a column above the file
-            explorer, so a card never covers terminal content and never covers
-            the tree either — the explorer gives up height, the panes give up
-            nothing. Hidden entirely via :empty when CardStack renders nothing,
-            so an empty rail costs the explorer no height at all. Cards stack
-            here and stay until answered; see .lookout-rail in styles.css. */}
+        {/* Reserved space, not an overlay: the sidebar column sits beside the
+            panes, so the file explorer never covers terminal content. Hidden
+            entirely via :empty when nothing is mounted inside it. */}
         <div className="sidebar-col">
-          {railVisible && (
-            <div className={'lookout-head' + (settings.lookoutCards ? '' : ' lookout-head--off')}>
-              <span className="lookout-head__title">Lookout</span>
-              {lookoutCount > 0 && <span className="lookout-head__count">{lookoutCount}</span>}
-              {/* The actual off switch. Distinct from ✕ on purpose: ✕ (and
-                  ⇧⌘B) hide the section while detection carries on behind it,
-                  which is what you want for a panel and not what you want when
-                  cards are in your way. This one stops the watching and clears
-                  what is showing, and it is the same setting the Settings panel
-                  writes — one truth, two places to reach it. */}
-              <button
-                className={
-                  'lookout-head__power' +
-                  (settings.lookoutCards ? '' : ' lookout-head__power--off')
-                }
-                title={
-                  settings.lookoutCards
-                    ? 'Turn cards off — stops watching panes and clears the rail'
-                    : 'Cards are off. Click to start watching panes again.'
-                }
-                aria-pressed={!settings.lookoutCards}
-                onClick={() =>
-                  updateSettings({ ...settings, lookoutCards: !settings.lookoutCards })
-                }
-              >
-                {settings.lookoutCards ? '◉' : '○'}
-              </button>
-              <button
-                className="lookout-head__hide"
-                title="Hide Lookout (⇧⌘B)"
-                onClick={() => {
-                  lookoutTouched.current = true
-                  setLookoutHidden(true)
-                }}
-              >
-                ✕
-              </button>
-            </div>
-          )}
-          {/* Gated on railVisible like the header and the grip. It was not,
-              which made "Hide Lookout" hide the word Lookout and nothing else:
-              ⇧⌘B, the ✕ and the status-bar badge all left every card sitting
-              in the sidebar, send buttons and all, with the header that
-              explained them gone. The cards ARE the section — hiding the label
-              while leaving them on screen is the one reading of the command
-              nobody wants. */}
-          {railVisible && (
-            <aside
-              className="lookout-rail"
-              ref={railRef}
-              style={{ height: `calc(${railHeight}px * var(--ui-scale))` }}
-            >
-              <CardStack
-                cards={lookoutCards}
-                suppressedPaneId={suppressedPaneId}
-                pluginInstalled={lookoutPlugin}
-                enabled={settings.lookoutCards}
-                paneName={lookoutPaneName}
-                paneColor={lookoutPaneColor}
-                screenMode={lookoutScreenMode}
-                nowMs={lookoutNow}
-                drafts={lookoutDrafts.current}
-                onAction={lookoutOnAction}
-                onGotoPane={lookoutGotoPane}
-              />
-            </aside>
-          )}
-          {/* Only draggable when there is something to drag: with no cards the
-              rail is display:none and the grip would resize an invisible box. */}
-          {railVisible && state.sidebarVisible && state.explorerRoot && (
-            <div
-              className="rail__grip"
-              title="Drag to resize · double-click to reset"
-              onMouseDown={startRailDrag}
-              onDoubleClick={() => {
-                setRailHeight(RAIL_DEFAULT)
-                saveRailHeight(RAIL_DEFAULT)
-              }}
-            />
-          )}
           {state.sidebarVisible && state.explorerRoot && (
             <Explorer
               root={state.explorerRoot}
@@ -1770,11 +1450,6 @@ export function App(): React.JSX.Element {
       <StatusBar
         tab={activeTab}
         system={state.system}
-        lookoutCount={lookoutCount}
-        onLookoutClick={() => {
-          lookoutTouched.current = true
-          setLookoutHidden((h) => !h)
-        }}
       />
 
       {settingsOpen && (

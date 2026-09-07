@@ -9,7 +9,7 @@ A terminal window manager. Run many shells side by side in one window — plain
 macOS is the reference platform; Windows and Linux builds are experimental.
 
 <p align="center">
-  <img src="docs/hero.png" alt="SeaShell: six terminal panes tiled in one window running a git log, a test suite, a process table and a diff, with the file explorer and the Lookout rail down the left side, in the Nautical theme.">
+  <img src="docs/hero.png" alt="SeaShell: six terminal panes tiled in one window running a git log, a test suite, a process table and a diff, with the file explorer down the left side, in the Nautical theme.">
 </p>
 <p align="center"><i>Six panes in one window, in the Nautical theme.</i></p>
 
@@ -20,9 +20,7 @@ decision that had a tie-breaker was settled in favour of watching several long-r
 sessions at once. That is what it is for.
 
 **Agents work while you're not watching. So run six.** A session only needs you for the ten
-seconds it stops to ask something. Tile six of them in one window, let the cards catch each
-question the moment it lands, and answering becomes your whole job — the agents do the rest.
-That's how one person ships like six.
+seconds it stops to ask something. That's how one person ships like six.
 
 > **Status: pre-alpha.** Under active development.
 
@@ -128,47 +126,6 @@ These exist because of that:
 - **A pane is a real login shell.** Your dotfiles, your PATH, your history. Nothing is wrapped or
   intercepted, and the environment a pane inherits is scrubbed of SeaShell's own identity so a
   nested launch cannot confuse the agent running inside it.
-
-## Lookout
-
-Watching several agent panes means someone still has to notice the one that stopped to ask
-you something. Lookout does that noticing: the moment an unfocused pane goes idle on a
-question, a **card** appears in a rail beside the panes with the question on it, and a badge
-in the status bar counts every card waiting on you — the pane you are already looking at gets
-counted there too, just without a card of its own.
-
-Two lanes feed the same stack:
-
-- **Detector, built in.** SeaShell watches for a claude pane idle on a question and raises a
-  card with canned replies — `Continue` / `Yes` / `No`, `Go to pane`, dismiss. No config, no
-  tokens, no external process, on every platform.
-- **Drafted replies, via a plugin.** With the c-assistant companion plugin installed, a Claude
-  Code Stop hook drafts a one-line reply in your voice and pushes a richer card over the
-  control socket — `Approve ✓`, `Edit`, `Deny ✕`. A pushed card replaces the detector's card
-  for the same pane.
-
-The safety model is one rule regardless of lane: external tools can only propose a card, and
-only your own click inside SeaShell ever submits it into the pane. A card on a pane showing a
-picker screen is look-only — there is no single word to send into a menu, so it shows the
-question and stops there.
-
-Smart drafted cards require the c-assistant companion plugin:
-
-```bash
-/plugin marketplace add voidharbor/claude-plugins
-/plugin install c-assistant@voidharbor
-```
-
-For the full skill set, install the voidharbor bundle instead — `/plugin install voidharbor@voidharbor`
-installs all of voidharbor's skills at once, Lookout hooks included, so the bundle alone is
-enough for drafted cards. Installing both is also fine: the hooks detect the duplicate and
-only one copy runs per session.
-
-**Turning it off.** The **◉** button in the Lookout header is the switch: one click stops the
-watching and clears whatever is already in the rail. The same toggle lives in Settings under
-*Approval cards*. Note the difference from **⇧⌘B** and the **✕** beside it — those hide the
-section, which is a panel toggle, not an off switch: detection keeps running behind it and
-cards keep stacking up out of sight.
 
 ## Themes
 

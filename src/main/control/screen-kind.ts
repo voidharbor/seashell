@@ -3,22 +3,18 @@
  * at its input box), 'selector' (a picker where typed text + Enter, or even a
  * lone digit, confirms an option), or null (can't tell).
  *
- * [pure] — a raw pty output tail in, a verdict out. This is the main-process
- * counterpart of the renderer's extractQuestion (renderer/lookout/extract.ts):
- * that one reads xterm's rendered buffer, this one reads the raw stream main
- * already has, because at the moment an approve click lands the renderer's
- * buffer can lag the stream — main must not take the renderer's word for it.
+ * [pure] — a raw pty output tail in, a verdict out. It reads the raw stream
+ * main already has, matching ANSI-stripped stream segments rather than
+ * xterm's rendered buffer, since main must judge a pane's screen without
+ * waiting on the renderer.
  *
- * The two screen shapes never render together (see extract.ts's module doc),
- * and ink repaints the whole active widget on every render, so the signature
- * that appears LATEST in the stream names the current screen. Signatures are
- * kept in sync with extract.ts's constants by cross-reference, not by import:
- * that file matches emulator-rendered lines, this one matches ANSI-stripped
- * stream segments, and the two shapes are close but not the same.
+ * The two screen shapes never render together, and ink repaints the whole
+ * active widget on every render, so the signature that appears LATEST in the
+ * stream names the current screen.
  *
  * The verdict is used one way only: a positive 'selector' refuses a write.
  * 'input' and null both mean "no selector seen", so a misread here can only
- * block a send, never permit one the renderer would have blocked.
+ * block a send, never permit one that should have been refused.
  */
 
 /** How many ANSI-stripped stream segments above a confirm-footer to search
@@ -27,8 +23,7 @@
  *  wrapped to a narrow pane, the footer lands 17+ segments below the `❯ 1.`
  *  row, and a window smaller than that loses the pairing — the picker showing
  *  right now goes unseen and the misread PERMITS a send instead of blocking
- *  one. One screen's worth (the same bound recency uses) covers any widget;
- *  mirrors extract.ts's SELECTOR_SEARCH_WINDOW. */
+ *  one. One screen's worth (the same bound recency uses) covers any widget. */
 const CURSOR_OPTION_WINDOW = 60
 
 /** How many trailing segments count as "the screen showing right now". ink

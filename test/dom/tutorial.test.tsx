@@ -83,7 +83,7 @@ describe('Tutorial', () => {
     expect(stepIndex()).toBe(stepCount())
   })
 
-  it('reaches a step about Lookout when stepping all the way through', () => {
+  it('reaches every step title when stepping all the way through', () => {
     render(<Tutorial onClose={() => {}} />)
     const count = stepCount()
     const titles = [screen.getByRole('heading', { level: 2 }).textContent]
@@ -91,7 +91,7 @@ describe('Tutorial', () => {
       fireEvent.keyDown(window, { key: 'ArrowRight' })
       titles.push(screen.getByRole('heading', { level: 2 }).textContent)
     }
-    expect(titles).toContain('Lookout')
+    expect(titles).toContain('Previews are panes, not windows')
   })
 
   it('only marks itself seen once actually dismissed', () => {

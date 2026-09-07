@@ -27,11 +27,6 @@ import {
   type FsReadTextFileResponse,
   type FsStatBatchRequest,
   type FsStatBatchResponse,
-  type LookoutActionRequest,
-  type LookoutActionResponse,
-  type LookoutCardsEvent,
-  type LookoutDetectedRequest,
-  type LookoutState,
   type MetricsTickEvent,
   type OpenExternalHttpRequest,
   type OpenPathRequest,
@@ -123,14 +118,6 @@ const api: SeashellApi = {
     getTerminalFont: (): Promise<ArrayBuffer | null> =>
       ipcRenderer.invoke(CH.appGetTerminalFont),
     onCommand: (cb: (e: UiCommandEvent) => void) => subscribe<UiCommandEvent>(CH.uiCommand, cb),
-  },
-  lookout: {
-    onCards: (cb: (e: LookoutCardsEvent) => void) => subscribe<LookoutCardsEvent>(CH.lookoutCards, cb),
-    detected: (req: LookoutDetectedRequest): void => ipcRenderer.send(CH.lookoutDetected, req),
-    action: (req: LookoutActionRequest): Promise<LookoutActionResponse> =>
-      ipcRenderer.invoke(CH.lookoutAction, req),
-    getState: (): Promise<LookoutState> => ipcRenderer.invoke(CH.lookoutGetState),
-    setEnabled: (enabled: boolean): void => ipcRenderer.send(CH.lookoutSetEnabled, enabled),
   },
 }
 

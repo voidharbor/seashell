@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { screenKindOf } from '../../src/main/lookout/screen-kind.js'
+import { screenKindOf } from '../../src/main/control/screen-kind.js'
 
 /**
  * Raw pty streams, not xterm-rendered buffers: these fixtures carry the ANSI
  * chrome ink actually emits (cursor hide, erase-line, SGR runs) around the
- * plain-text shapes verified in lookout-extract.test.ts. The parser under
- * test reads main's per-pane output tail, which never passes through a
- * terminal emulator, so the fixtures must not either.
+ * plain-text shapes. The parser under test reads main's per-pane output tail,
+ * which never passes through a terminal emulator, so the fixtures must not
+ * either.
  */
 
 const SELECTOR_PAINT =
