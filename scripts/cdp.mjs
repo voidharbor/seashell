@@ -3,10 +3,11 @@
 //   node scripts/cdp.mjs 9333 "window.__seashellTerminals.size"
 //   node scripts/cdp.mjs 9333 --dblclick 400 300
 //   node scripts/cdp.mjs 9333 --key Escape
+//   node scripts/cdp.mjs 9333 --wheel 400 300 120 40 8
 // Uses Node's built-in WebSocket (Node 22+). Prints the JSON value of the expression.
 const [port, ...rest] = process.argv.slice(2)
 if (!port) {
-  console.error('usage: cdp.mjs <port> <expression> | --dblclick x y | --key Key')
+  console.error('usage: cdp.mjs <port> <expression> | --dblclick x y | --key Key | --wheel x y deltaY count gapMs')
   process.exit(2)
 }
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json()
@@ -37,6 +38,15 @@ if (rest[0] === '--dblclick') {
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: rest[1] })
   await send('Input.dispatchKeyEvent', { type: 'keyUp', key: rest[1] })
   console.log('key', rest[1])
+} else if (rest[0] === '--wheel') {
+  const x = Number(rest[1]), y = Number(rest[2]), deltaY = Number(rest[3])
+  const count = Number(rest[4]), gapMs = Number(rest[5])
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  for (let i = 0; i < count; i += 1) {
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY })
+    if (i < count - 1) await sleep(gapMs)
+  }
+  console.log('wheel dispatched', { x, y, deltaY, count, gapMs })
 } else {
   const res = await send('Runtime.evaluate', {
     expression: rest.join(' '),

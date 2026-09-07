@@ -9,6 +9,7 @@ import { KILL_LINE, inputLineSelection, shouldKillLine } from './inputline.js'
 import { isLocalHost, parseOsc7 } from './osc7.js'
 import { targetScrollLine } from './find-scroll.js'
 import { anchorAction } from './find-anchor.js'
+import { WheelRamp } from './wheel-ramp.js'
 
 /**
  * One xterm.js terminal bound to one PTY.
@@ -98,6 +99,9 @@ export class PaneTerminal {
   private searching = false
   private anchorSub: { dispose(): void } | null = null
 
+  private readonly ramp = new WheelRamp()
+  private appliedSensitivity = 1
+
   constructor(private readonly opts: PaneTerminalOptions) {
     this.term = new Terminal({
       fontFamily: FONT_FAMILY,
@@ -130,7 +134,10 @@ export class PaneTerminal {
       // chosen colors, which is a fidelity violation.
       minimumContrastRatio: 1,
 
-      scrollback: 5000,
+      // 20,000 lines, fixed. xterm allocates each line at full width, so a
+      // full buffer at 200 columns is ~48 MB per pane; chosen over 50,000 for
+      // that reason.
+      scrollback: 20_000,
       smoothScrollDuration: 0,
 
       /**
@@ -262,6 +269,7 @@ export class PaneTerminal {
     // term.element, so these are guaranteed to run before xterm's own handlers.
     this.opts.container.addEventListener('mousedown', this.handleMouseDown, true)
     this.opts.container.addEventListener('dblclick', this.handleDoubleClick, true)
+    this.opts.container.addEventListener('wheel', this.handleWheel, { capture: true, passive: true })
 
     this.warnOnBadFontResidual()
   }
@@ -743,6 +751,28 @@ export class PaneTerminal {
     this.refit()
   }
 
+  /**
+   * Measures only; never preventDefault. xterm keeps handling the wheel event
+   * and reads scrollSensitivity live, so raising it here is all the ramp needs.
+   * Forced back to 1x in the alternate buffer (less, vim: wheel becomes arrow
+   * keys) and when a program has mouse tracking on (xterm hands it the event).
+   */
+  private handleWheel = (ev: WheelEvent): void => {
+    if (this.disposed) return
+    let mult = this.ramp.feed(ev.deltaY, ev.deltaMode, performance.now())
+    if (this.term.buffer.active.type === 'alternate' || this.term.modes.mouseTrackingMode !== 'none') {
+      mult = 1
+    }
+    this.applySensitivity(mult)
+  }
+
+  private applySensitivity(mult: number): void {
+    const changed = mult === 1 ? this.appliedSensitivity !== 1 : Math.abs(mult - this.appliedSensitivity) >= 0.25
+    if (!changed) return
+    this.appliedSensitivity = mult
+    this.term.options.scrollSensitivity = mult
+  }
+
   private warnOnBadFontResidual(): void {
     const cw = (
       this.term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number } } } } } }
@@ -767,6 +797,8 @@ export class PaneTerminal {
     if (this.resizeTimer) clearTimeout(this.resizeTimer)
     this.opts.container.removeEventListener('mousedown', this.handleMouseDown, true)
     this.opts.container.removeEventListener('dblclick', this.handleDoubleClick, true)
+    this.opts.container.removeEventListener('wheel', this.handleWheel, true)
+    this.applySensitivity(1)
     this.disableWebgl()
     this.term.dispose()
   }
