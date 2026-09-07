@@ -51,6 +51,35 @@ describe('FindBar', () => {
     expect(onSearch).toHaveBeenLastCalledWith('x', 'prev', expect.objectContaining({ incremental: false }))
   })
 
+  it('tells the target to drop the match when the field is cleared', () => {
+    vi.useFakeTimers()
+    // Returns false throughout, so a miss would be set if the empty query were
+    // ever treated as one.
+    const { onSearch } = mount(vi.fn(() => false))
+    const input = screen.getByPlaceholderText('Find') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'x' } })
+    act(() => vi.advanceTimersByTime(130))
+    expect(input.className).toContain('findbar__input--miss')
+
+    fireEvent.change(input, { target: { value: '' } })
+    act(() => vi.advanceTimersByTime(130))
+    expect(onSearch).toHaveBeenLastCalledWith('', 'next', {
+      incremental: true,
+      caseSensitive: false,
+      regex: false,
+    })
+    expect(input.className).not.toContain('findbar__input--miss')
+    vi.useRealTimers()
+  })
+
+  it('does not send an empty query before anything has been searched', () => {
+    vi.useFakeTimers()
+    const { onSearch } = mount()
+    act(() => vi.advanceTimersByTime(130))
+    expect(onSearch).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
   it('shows the counter from the addon', () => {
     const { emit } = mount()
     emit({ resultIndex: 2, resultCount: 14 })

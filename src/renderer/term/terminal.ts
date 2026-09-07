@@ -526,8 +526,12 @@ export class PaneTerminal {
   find(query: string, direction: 'next' | 'prev', opts: FindOptions): boolean {
     if (this.disposed) return false
     if (!query) {
-      // The query went empty. Nothing is highlighted, so nothing is pinned.
-      this.clearAnchor()
+      // The query went empty, so the pin has to go and so does the addon's own
+      // background refresh. That refresh keeps firing on every write for as long
+      // as the addon holds a cached term, and would go on re-selecting the stale
+      // match through keepAnchor(). clearSearch() drops the cached term along
+      // with the decorations and the selection.
+      this.clearSearch()
       return false
     }
     const o = this.searchOptions(opts)

@@ -32,8 +32,17 @@ export function FindBar(props: FindBarProps): React.JSX.Element {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const lastNonce = useRef(props.nonce)
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** True once this bar has actually run a search, so emptying the field only
+   *  sends the "drop what you are holding" instruction when there is something
+   *  to drop. Without it, opening the bar would clear the pane's selection. */
+  const searched = useRef(false)
 
   const opts = (incremental: boolean): FindOptions => ({ incremental, caseSensitive, regex })
+
+  const search = (q: string, direction: 'next' | 'prev', incremental: boolean): boolean => {
+    searched.current = q !== ''
+    return props.onSearch(q, direction, opts(incremental))
+  }
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -50,7 +59,7 @@ export function FindBar(props: FindBarProps): React.JSX.Element {
     if (props.nonce === lastNonce.current) return
     lastNonce.current = props.nonce
     if (!query) return
-    setMiss(!props.onSearch(query, props.nonceDirection, opts(false)))
+    setMiss(!search(query, props.nonceDirection, false))
     // Only the nonce should drive this, never a keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.nonce])
@@ -62,10 +71,20 @@ export function FindBar(props: FindBarProps): React.JSX.Element {
     if (!query) {
       setMiss(false)
       setCount(null)
-      return
+      // Emptying the field is an instruction, not a search. The target is
+      // holding a match, and something like the terminal's search addon goes on
+      // re-selecting it in the background until it is told to let go. The result
+      // is neither a hit nor a miss, so it never paints the field red.
+      if (!searched.current) return
+      debounce.current = setTimeout(() => {
+        search('', 'next', true)
+      }, FIND_DEBOUNCE_MS)
+      return () => {
+        if (debounce.current) clearTimeout(debounce.current)
+      }
     }
     debounce.current = setTimeout(() => {
-      setMiss(!props.onSearch(query, 'next', opts(true)))
+      setMiss(!search(query, 'next', true))
     }, FIND_DEBOUNCE_MS)
     return () => {
       if (debounce.current) clearTimeout(debounce.current)
@@ -76,7 +95,7 @@ export function FindBar(props: FindBarProps): React.JSX.Element {
 
   const run = (direction: 'next' | 'prev'): void => {
     if (!query) return
-    setMiss(!props.onSearch(query, direction, opts(false)))
+    setMiss(!search(query, direction, false))
   }
 
   // Shown while there is a query or a result to report, so a count arriving

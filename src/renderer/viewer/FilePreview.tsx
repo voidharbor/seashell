@@ -167,6 +167,9 @@ export function FilePreview(props: FilePreviewProps): React.JSX.Element {
 
   /** Browser-native find over the rendered text, used by the pane's find bar. */
   const runFind = (query: string, direction: 'next' | 'prev', opts: FindOptions): boolean => {
+    // An emptied field asks the target to drop the match it is holding. There is
+    // nothing held here, and Chromium's find() reads an empty needle as a miss.
+    if (!query) return false
     const sel = window.getSelection()
     if (!sel) return false
     bodyRef.current?.focus()
