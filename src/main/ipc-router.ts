@@ -32,6 +32,7 @@ import {
   upsertProject,
 } from './state/store.js'
 import { clearLastSession, loadLastSession, saveLastSession } from './state/last-session.js'
+import { createSnapshotGate } from './state/snapshot-gate.js'
 import { sessionIdsForPanes } from './state/session-lookup.js'
 import { resumeModesForPanes } from './state/resume-mode.js'
 
@@ -127,45 +128,21 @@ const IMAGE_MIME: Record<string, string> = {
  *  ceiling is about renderer memory, not disk. */
 const IMAGE_MAX_BYTES = 16 * 1024 * 1024
 
-/**
- * The one thing quit waits on before it starts reaping.
- *
- * Only the renderer knows the current layout, so main cannot write the
- * last-session file itself; it has to ask and then wait. The slot below is the
- * resolver for that wait, and it is deliberately a single slot: there is one
- * window and one quit, and a queue of pending snapshot requests would only ever
- * describe a bug.
- */
-let pendingSnapshot: (() => void) | null = null
+/** The wait quit hangs on, and the slot the two session handlers answer. */
+const snapshotGate = createSnapshotGate()
 
 /**
  * Asks the renderer for a snapshot and resolves when it answers, or when
- * `timeoutMs` passes, whichever comes first. The timeout is the load-bearing
- * half: a renderer that is wedged, crashed or mid-reload must never be able to
- * make the app unquittable.
+ * `timeoutMs` passes, whichever comes first. The timing lives in the gate; all
+ * this adds is the window to ask.
  */
 export function awaitSnapshot(win: BrowserWindow, timeoutMs: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let done = false
-    const finish = (): void => {
-      if (done) return
-      done = true
-      if (pendingSnapshot === finish) pendingSnapshot = null
-      if (timer) clearTimeout(timer)
-      resolve()
-    }
-
-    pendingSnapshot = finish
-    timer = setTimeout(finish, timeoutMs)
-
-    try {
-      if (win.isDestroyed()) finish()
-      else win.webContents.send(CH.sessionRequestSnapshot)
-    } catch {
-      finish() // nobody to ask; quit proceeds
-    }
-  })
+  return snapshotGate.request(() => {
+    // A destroyed window has nobody to answer. The gate reads the throw as
+    // that, and quit proceeds now rather than sitting out the whole timeout.
+    if (win.isDestroyed()) throw new Error('window is gone')
+    win.webContents.send(CH.sessionRequestSnapshot)
+  }, timeoutMs)
 }
 
 export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher }): void {
@@ -481,7 +458,7 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
         /* the snapshot is a nicety; quit must not hang on it */
       }
     }
-    pendingSnapshot?.()
+    snapshotGate.answer()
   })
 
   ipcMain.handle(CH.sessionLoad, () => loadLastSession(app.getPath('userData')))
@@ -496,7 +473,7 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
     // renderer looked and decided there was nothing worth keeping. Waiting out
     // the full timeout for that would put a visible pause on every quit of a
     // window holding one plain shell.
-    pendingSnapshot?.()
+    snapshotGate.answer()
   })
 
   ipcMain.handle(CH.appGetPaths, (): AppPaths => {

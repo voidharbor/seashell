@@ -30,6 +30,21 @@ describe('last session file', () => {
     await fs.writeFile(path.join(dir, 'last-session.json'), JSON.stringify({ schemaVersion: 2, savedAt: 'x', tabs: [] }))
     expect(await loadLastSession(dir)).toBeNull()
   })
+  it('survives two overlapping writes', async () => {
+    // The 30 second timer and the snapshot quit forces can be in flight at the
+    // same moment, and ipcMain runs handlers concurrently. Whichever lands
+    // last, what is on disk has to be one whole file.
+    const many = (name: string): SavedTab[] =>
+      Array.from({ length: 40 }, (_, i) => ({ ...tab(), id: `t${i}`, name: `${name}-${i}` }))
+    await Promise.all([saveLastSession(many('a'), dir), saveLastSession(many('b'), dir)])
+    const back = await loadLastSession(dir)
+    expect(back?.tabs).toHaveLength(40)
+    const first = back!.tabs[0]!.name
+    expect(back!.tabs.every((t) => t.name.startsWith(first.slice(0, 1)))).toBe(true)
+    // And no temp file is left behind for the next load to trip over.
+    expect((await fs.readdir(dir)).filter((f) => f.includes('.tmp'))).toEqual([])
+  })
+
   it('clear removes it and tolerates absence', async () => {
     await saveLastSession([tab()], dir)
     await clearLastSession(dir)

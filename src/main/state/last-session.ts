@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { LastSession, SavedTab } from '../../shared/ipc.js'
+import { writeFileAtomic } from './atomic-write.js'
 import { isValidProject } from './store.js'
 
 const FILE = 'last-session.json'
@@ -13,15 +14,15 @@ export type { LastSession }
 
 /**
  * The window as it last stood, so a relaunch can offer it back. Same tab shape
- * as a project, validated by the same rule, written atomically so a crash
- * mid-write leaves the previous snapshot rather than half of a new one.
+ * as a project, validated by the same rule, and written through the same
+ * atomic write, so a crash mid-write leaves the previous snapshot rather than
+ * half of a new one, and so the 30 second timer and the snapshot quit forces
+ * cannot interleave: ipcMain runs handlers concurrently, and two writers on
+ * one fixed temp name produce a file that is half of each.
  */
 export async function saveLastSession(tabs: SavedTab[], dir: string): Promise<void> {
-  const file = path.join(dir, FILE)
-  const tmp = `${file}.tmp`
   const body: LastSession = { schemaVersion: SCHEMA_VERSION, savedAt: new Date().toISOString(), tabs }
-  await fs.writeFile(tmp, JSON.stringify(body, null, 2))
-  await fs.rename(tmp, file)
+  await writeFileAtomic(path.join(dir, FILE), JSON.stringify(body, null, 2))
 }
 
 export async function loadLastSession(dir: string): Promise<LastSession | null> {

@@ -2,6 +2,7 @@ import { app } from 'electron'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { Project, SavedTab } from '../../shared/ipc.js'
+import { writeFileAtomic } from './atomic-write.js'
 
 /**
  * Named projects — reopenable sets of tabs and panes (spec §11).
@@ -37,39 +38,6 @@ function filePath(): string {
 }
 
 /**
- * Atomic write, then an fsync of the containing directory.
- *
- * `fh.sync()` guarantees the temp file's bytes reached the disk; it says
- * nothing about the directory entry the rename creates. Without the directory
- * fsync the rename itself is not durable, so a crash at the wrong moment can
- * leave the old file in place having reported success. This is the one write in
- * the app where a torn result would silently lose the user's saved work.
- */
-async function writeFileAtomic(body: string): Promise<void> {
-  const target = filePath()
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-
-  const fh = await fs.open(tmp, 'w')
-  try {
-    await fh.writeFile(body, 'utf8')
-    await fh.sync()
-  } finally {
-    await fh.close()
-  }
-
-  await fs.rename(tmp, target)
-
-  try {
-    const dh = await fs.open(path.dirname(target), 'r')
-    await dh.sync()
-    await dh.close()
-  } catch {
-    // Directory fsync is unsupported on some filesystems. The rename already
-    // happened; losing only its durability guarantee is acceptable.
-  }
-}
-
-/**
  * A missing file is first run, not a failure. A file that exists but does not
  * parse is renamed aside rather than deleted — it is the only debuggable
  * artifact of whatever went wrong, and a user's saved projects are worth more
@@ -99,6 +67,7 @@ export async function loadProjects(): Promise<Project[]> {
 
 export async function saveProjects(projects: Project[]): Promise<void> {
   await writeFileAtomic(
+    filePath(),
     JSON.stringify({ schemaVersion: SCHEMA_VERSION, projects } satisfies ProjectsFile, null, 2)
   )
 }
