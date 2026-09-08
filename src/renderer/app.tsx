@@ -411,6 +411,36 @@ export function App(): React.JSX.Element {
    */
   const [currentProject, setCurrentProject] = useState<{ id: string; name: string } | null>(null)
 
+  /**
+   * The claude session id live in each terminal pane, right now.
+   *
+   * Captured at the moment of writing rather than remembered: a restarted
+   * claude has a new id, and a save must record the current one, not the one
+   * from when the project was first created. Undefined when the registry cannot
+   * be reached, which every caller treats the same way, as panes that save as a
+   * plain claude.
+   *
+   * Shared by the two writers, the named project and the last-session snapshot,
+   * because they are the same capture. Two copies of the `kind === 'term'`
+   * filter and the same 64-pane cap is precisely the drift this file argues
+   * against everywhere else.
+   */
+  const collectSessionIds = useCallback(async (): Promise<
+    ReadonlyMap<string, string> | undefined
+  > => {
+    const livePanes = state.tabs.flatMap((t) =>
+      Object.values(t.panes)
+        .filter((p) => p.kind === 'term')
+        .map((p) => ({ paneId: p.id, cwd: p.cwd }))
+    )
+    try {
+      const res = await window.seashell.projects.sessionIds({ panes: livePanes.slice(0, 64) })
+      return new Map(Object.entries(res.ids))
+    } catch {
+      return undefined // registry unavailable: panes save as plain claude
+    }
+  }, [state])
+
   /** Closes every preview pane in the active tab, leaving the terminals alone. */
   /**
    * Saves the window, or just the active tab.
@@ -428,21 +458,7 @@ export function App(): React.JSX.Element {
    */
   const saveProject = useCallback(
     async (name: string, id?: string, scope: 'window' | 'tab' = 'window') => {
-      // Capture the claude session ids live in these panes right now — a
-      // restarted claude has a new id, and saving must record the current
-      // one, not the one from when the project was first created.
-      const livePanes = state.tabs.flatMap((t) =>
-        Object.values(t.panes)
-          .filter((p) => p.kind === 'term')
-          .map((p) => ({ paneId: p.id, cwd: p.cwd }))
-      )
-      let sessionIds: ReadonlyMap<string, string> | undefined
-      try {
-        const res = await window.seashell.projects.sessionIds({ panes: livePanes.slice(0, 64) })
-        sessionIds = new Map(Object.entries(res.ids))
-      } catch {
-        sessionIds = undefined // registry unavailable: panes save as plain claude
-      }
+      const sessionIds = await collectSessionIds()
       const tabs =
         scope === 'tab'
           ? activeTab
@@ -473,7 +489,7 @@ export function App(): React.JSX.Element {
             : `Saved project “${res.project.name}”`,
       })
     },
-    [state, activeTab, refreshProjects]
+    [state, activeTab, refreshProjects, collectSessionIds]
   )
 
   /**
@@ -498,20 +514,13 @@ export function App(): React.JSX.Element {
    */
   const snapshotSession = useCallback(
     async (force = false) => {
-      const livePanes = state.tabs.flatMap((t) =>
-        Object.values(t.panes)
-          .filter((p) => p.kind === 'term')
-          .map((p) => ({ paneId: p.id, cwd: p.cwd }))
-      )
-      let sessionIds: ReadonlyMap<string, string> | undefined
-      try {
-        const res = await window.seashell.projects.sessionIds({ panes: livePanes.slice(0, 64) })
-        sessionIds = new Map(Object.entries(res.ids))
-      } catch {
-        sessionIds = undefined // registry unavailable: panes save as plain claude
-      }
+      // A window with no tabs is never an answer about what to restore. It is
+      // boot, or the gap between choosing Restore and the rebuilt panes
+      // arriving, and a forced snapshot in that gap would clear the very file
+      // the user just chose to bring back. Both states resolve on their own.
+      if (state.tabs.length === 0) return
 
-      const tabs = stateToTabs(state, sessionIds)
+      const tabs = stateToTabs(state, await collectSessionIds())
       try {
         if (!shouldOfferRestore(tabs)) {
           if (force || lastSnapshotRef.current !== '') {
@@ -531,7 +540,7 @@ export function App(): React.JSX.Element {
         // the next attempt does not simply overwrite.
       }
     },
-    [state]
+    [state, collectSessionIds]
   )
 
   /**
