@@ -13,6 +13,7 @@ import {
   type LinksEnsureResponse,
 } from '../shared/ipc.js'
 import type { PtyManager } from './pty/manager.js'
+import type { DirWatcher } from './fs/watcher.js'
 import { readDir } from './fs/tree.js'
 import { readTextFile } from './fs/read.js'
 import { writeTextFile } from './fs/write.js'
@@ -59,6 +60,7 @@ const ResizeReq = z.object({
 })
 const KillReq = z.object({ paneId: PaneId })
 const ReadDirReq = z.object({ path: AbsPath, respectGitignore: z.boolean() })
+const WatchDirReq = z.object({ dir: AbsPath })
 const StatBatchReq = z.object({
   cwd: AbsPath,
   candidates: z.array(z.string().max(4096)).max(512),
@@ -166,7 +168,7 @@ export function awaitSnapshot(win: BrowserWindow, timeoutMs: number): Promise<vo
   })
 }
 
-export function registerIpc(ptyManager: PtyManager): void {
+export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher }): void {
   ipcMain.handle(CH.ptySpawn, (_e, raw) => {
     const parsed = SpawnReq.safeParse(raw)
     if (!parsed.success) {
@@ -297,6 +299,27 @@ export function registerIpc(ptyManager: PtyManager): void {
       const code = (err as NodeJS.ErrnoException).code === 'EACCES' ? 'EACCES' : 'ENOENT'
       return { ok: false, code, message: 'could not read image' }
     }
+  })
+
+  // ------------------------------------------------------------- watching
+  /**
+   * Fire-and-forget: the explorer subscribes an expanded directory, unsubscribes
+   * one it collapsed, and touches every expanded directory on each diff so the
+   * pool evicts the least recently viewed first rather than by subscribe order.
+   */
+  ipcMain.on(CH.watchSubscribe, (_e, raw) => {
+    const parsed = WatchDirReq.safeParse(raw)
+    if (parsed.success) opts.watcher.subscribe(parsed.data.dir)
+  })
+
+  ipcMain.on(CH.watchUnsubscribe, (_e, raw) => {
+    const parsed = WatchDirReq.safeParse(raw)
+    if (parsed.success) opts.watcher.unsubscribe(parsed.data.dir)
+  })
+
+  ipcMain.on(CH.watchTouch, (_e, raw) => {
+    const parsed = WatchDirReq.safeParse(raw)
+    if (parsed.success) opts.watcher.touch(parsed.data.dir)
   })
 
   /**

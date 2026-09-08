@@ -7,6 +7,7 @@ import { Updater } from './update/updater.js'
 import { buildMenu } from './menu.js'
 import { awaitSnapshot, registerIpc } from './ipc-router.js'
 import { PtyManager } from './pty/manager.js'
+import { DirWatcher } from './fs/watcher.js'
 import { MetricsMonitor } from './monitor/monitor.js'
 import { startControlServer, type ControlServer } from './control/server.js'
 import { checkTtyForeground } from './control/foreground-check.js'
@@ -42,6 +43,7 @@ let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
 let metrics: MetricsMonitor | null = null
 let controlServer: ControlServer | null = null
+let watcher: DirWatcher | null = null
 
 const RENDERER_DIR = path.join(dirname, '../renderer')
 
@@ -242,7 +244,12 @@ app.whenReady().then(() => {
     return tail === null ? null : screenKindOf(tail)
   }
 
-  registerIpc(ptyManager)
+  watcher = new DirWatcher({
+    emit: (dir) => mainWindow?.webContents.send(CH.watchChanged, { dir }),
+    lost: (dir) => mainWindow?.webContents.send(CH.watchLost, { dir }),
+  })
+
+  registerIpc(ptyManager, { watcher })
 
   void startControlServer({
     socketPath: path.join(app.getPath('userData'), 'control.sock'),
@@ -346,6 +353,14 @@ app.on('before-quit', (e) => {
         Promise.all([
           ptyManager?.killAll() ?? Promise.resolve(),
           controlServer?.close() ?? Promise.resolve(),
+          // close() is synchronous; wrapped so a throw here cannot block quit.
+          (async () => {
+            try {
+              watcher?.close()
+            } catch {
+              /* a stuck fs watch must not delay quit */
+            }
+          })(),
         ]),
         new Promise<void>((r) => setTimeout(r, QUIT_DRAIN_TIMEOUT_MS)),
       ])
