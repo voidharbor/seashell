@@ -102,12 +102,13 @@ Running agents is not the same as running commands. An agent session lasts hours
 that time either thinking or waiting on you, and prints paths you immediately want to look at.
 These exist because of that:
 
-- **Panes tell you when they want you.** A pane breathes its border when its program rings the
-  terminal bell to ask for you, and pulses briefly when a job finishes, never the pane you are
-  already looking at. An optional ping sounds the moment a pane starts asking.
+- **Panes tell you when they want you.** A pane breathes its border only when its program rings
+  the terminal bell and you are not already looking at it, and pulses briefly when a job
+  finishes. An optional ping sounds the moment a pane starts asking.
 
   To get the glow from Claude Code, set `"preferredNotifChannel": "terminal_bell"` in
-  `~/.claude/settings.json`.
+  `~/.claude/settings.json`. Claude then rings about a minute after it finishes and sits waiting
+  for you.
 - **Sleep.** One click in the tab bar stops every pane asking, glow and ping together, for when you
   need to concentrate on one of them.
 - **Panes name themselves.** A pane takes the title the running program sets — Claude Code
@@ -117,9 +118,11 @@ These exist because of that:
   tree, including anything that double-forked away from the shell. Forgotten agent sessions
   quietly eating a 16 GB machine is the problem this app was built to end; panes over 200 MB show
   their memory in the title bar.
-- **Paths and previews.** Double-click a path an agent printed and the explorer reveals it. Inside
-  a full-screen program that claims the mouse, hold ⌥. Open the file and it becomes a tiled pane
-  with syntax highlighting, beside the agent that mentioned it.
+- **Paths and previews.** Double-click a path an agent printed and the explorer reveals it, even
+  when the agent wrapped it across two rows or shortened it to `…/x.ts`. Inside a full-screen
+  program that claims the mouse, hold ⌥. Cmd double-click also opens it as a tiled preview pane
+  with syntax highlighting, beside the agent that mentioned it; Cmd+Opt double-click opens it in
+  its default app instead.
 - **⌘A selects your input line**, not thousands of lines of scrollback — the difference between
   editing the prompt you are halfway through and selecting an entire transcript.
 - **Shift+Enter sends ESC CR**, the multi-line-input binding agents expect, with no setup and
@@ -173,11 +176,23 @@ so no theme can resize your interface.
   or a coding agent. Full-screen TUI programs render exactly as they do in a native terminal —
   alternate screen buffer, 24-bit color, correct glyph widths.
 - **Built-in file explorer.** A lazy-loaded tree beside the panes. Drag a file into a terminal
-  to paste its quoted path.
+  to paste its quoted path. An expanded folder watches itself and refreshes on its own when a
+  file inside it changes.
 - **Paths become clickable.** Any filesystem path printed in a pane is detected and verified
-  against disk. Double-click it and the explorer expands to that file and highlights it —
-  nothing is opened behind your back. Opening is a separate, deliberate act from the tree.
-  Bare URLs in output are clickable too, and open in your browser.
+  against disk, including one an agent hard-wrapped across two rows or printed in the shortened
+  `…/x.ts` form. SeaShell searches the pane's own directory, then home, for a match. Double-click
+  reveals it in the explorer, nothing is opened behind your back. Cmd double-click also opens it
+  as a preview pane, and Cmd+Opt double-click opens it in its default app. A path that resolves
+  nowhere says so in a toast rather than doing nothing. Bare URLs in output are clickable too,
+  and open in your browser.
+- **Find, as you type.** ⌘F opens a find bar in the focused pane. It searches on every
+  keystroke, shows an `N of M` match counter, and has Aa and .* toggles for case and regex. It
+  wraps around at either end, and once a match is found it stays selected and on screen, even
+  while the pane keeps printing beneath it.
+- **Scrolling picks up speed.** A hard flick of the trackpad or wheel scrolls faster the harder
+  you flick it; a slow, deliberate scroll is untouched. Scrollback holds 20,000 lines per pane.
+  If the ramp ever feels too eager or too lazy, `onset` and `gain` in `WHEEL_RAMP_DEFAULTS`
+  (`src/renderer/term/wheel-ramp.ts`) are the two constants to change together.
 - **Preview panes.** Open a file and it becomes a tiled pane beside your terminals with syntax
   highlighting; point a web preview at a URL and watch a dev server render next to the pane
   running it. Previews are ordinary leaves in the layout tree, so they resize with the same
@@ -197,6 +212,9 @@ so no theme can resize your interface.
   Code session by running `claude -r` where you can watch it. Save the whole window, or just
   the active tab. Opening a project replaces the window; adding one brings its tabs in
   alongside whatever is already running.
+- **Restores itself on launch.** SeaShell snapshots the window every 30 seconds and again at
+  quit. The next launch offers Restore or Start fresh before anything spawns; Restore brings
+  back every tab and pane, and each Claude pane resumes its session where it left off.
 - **Zoom that stays sharp.** ⌘+ / ⌘− scale the terminal text and the interface together. The
   font steps through only sizes whose advance lands near a device-pixel boundary, because the
   WebGL renderer floors `charWidth * dpr` and anything else drifts into misaligned borders.
@@ -264,9 +282,12 @@ SeaShell deliberately does not do these things:
 
 - **Edit files.** File previews are read-only. Use your editor.
 - **Manage remote sessions.** No SSH profile management.
-- **Restore sessions.** A project saves an arrangement, not a session. No scrollback, no
-  running processes, nothing that only means something while the app is up. A restored pane is
-  a fresh login shell at the saved directory.
+- **Bring back scrollback or an arbitrary process.** Reopening a project, or the automatic
+  prompt at launch, brings back the tabs, the panes, and each pane's directory and colour, and a
+  Claude pane resumes its conversation with `claude -r`. What does not come back is the
+  scrollback, left out deliberately since a terminal buffer routinely holds keys and customer
+  data, and any other running process, which starts over as a fresh login shell in the saved
+  directory.
 - **Treat Windows and Linux as first-class.** Both are built and published, but macOS is the
   reference platform and the others are experimental. On Windows the kill ladder reports
   `verifiedKill: false`: the pseudoconsole terminates ordinary children, but a process that

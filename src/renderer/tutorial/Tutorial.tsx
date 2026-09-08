@@ -80,10 +80,30 @@ const STEPS: Step[] = [
       'highlights it. It reveals — it does not open. Inside a pane running ' +
       'an agent or any full-screen program, hold Option: those programs claim the ' +
       'mouse for themselves, and Option is how you tell SeaShell the click was ' +
-      'meant for it. Bare URLs are clickable anywhere.',
+      'meant for it. Cmd double-click also opens it as a preview pane, and ' +
+      'Cmd+Opt double-click opens it in its default app instead. Bare URLs are ' +
+      'clickable anywhere.',
     keys: [
       ['double-click', 'Reveal a path in the explorer'],
       ['⌥ double-click', 'Same, inside an agent or TUI pane'],
+      ['⌘ double-click', 'Also open it as a preview pane'],
+      ['⌘⌥ double-click', 'Open it in its default app'],
+    ],
+  },
+  {
+    title: 'Find and scroll',
+    body:
+      'Find searches as you type. ⌘F opens a bar in the focused pane, and a ' +
+      'counter reads how many matches turned up. Aa and .* toggle case-sensitive ' +
+      'and regex search, and reaching the last match wraps back to the first. ' +
+      'Once you land on a match it stays selected and on screen, even while the ' +
+      'pane keeps printing underneath it. Scrolling now has a feel to it: flick ' +
+      'harder and it flies faster, while a slow drag stays exactly as precise as ' +
+      'before.',
+    keys: [
+      ['⌘F', 'Find in the pane'],
+      ['⏎ / ⇧⏎', 'Next and previous match'],
+      ['⌘G / ⇧⌘G', 'Next and previous match, from anywhere'],
     ],
   },
   {
