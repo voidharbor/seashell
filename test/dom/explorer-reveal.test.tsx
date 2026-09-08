@@ -33,6 +33,13 @@ beforeEach(() => {
         )
       ),
     },
+    watch: {
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      touch: vi.fn(),
+      onChanged: vi.fn(() => () => {}),
+      onLost: vi.fn(() => () => {}),
+    },
   })
   // happy-dom leaves scrollIntoView unimplemented; the reveal calls it in a
   // requestAnimationFrame after the row exists.

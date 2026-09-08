@@ -56,6 +56,7 @@ import {
   type SeashellApi,
   type UiCommandEvent,
   type UpdateState,
+  type WatchDirRequest,
 } from '../shared/ipc.js'
 
 /**
@@ -98,6 +99,13 @@ const api: SeashellApi = {
       ipcRenderer.invoke(CH.fsWriteTextFile, req),
     readImageFile: (req: FsReadImageFileRequest): Promise<FsReadImageFileResponse> =>
       ipcRenderer.invoke(CH.fsReadImageFile, req),
+  },
+  watch: {
+    subscribe: (req: WatchDirRequest): void => ipcRenderer.send(CH.watchSubscribe, req),
+    unsubscribe: (req: WatchDirRequest): void => ipcRenderer.send(CH.watchUnsubscribe, req),
+    touch: (req: WatchDirRequest): void => ipcRenderer.send(CH.watchTouch, req),
+    onChanged: (cb: (e: WatchDirRequest) => void) => subscribe<WatchDirRequest>(CH.watchChanged, cb),
+    onLost: (cb: (e: WatchDirRequest) => void) => subscribe<WatchDirRequest>(CH.watchLost, cb),
   },
   open: {
     withDefaultApp: (req: OpenPathRequest): Promise<OpenPathResponse> =>

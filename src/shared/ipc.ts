@@ -45,6 +45,14 @@ export const CH = {
   updateDownload: 'update:download',
   updateInstall: 'update:install',
 
+  watchSubscribe: 'watch:subscribe',
+  watchUnsubscribe: 'watch:unsubscribe',
+  watchTouch: 'watch:touch',
+  /** Main to renderer: this watched directory's contents changed. */
+  watchChanged: 'watch:changed',
+  /** Main to renderer: the watch on this directory was dropped (missing, evicted, or errored). */
+  watchLost: 'watch:lost',
+
   linksEnsure: 'links:ensure',
   projectsList: 'projects:list',
   projectsSessionIds: 'projects:sessionIds',
@@ -257,6 +265,15 @@ export type FsReadImageFileResponse = Result<
   { base64: string; mime: string; size: number },
   'ETOOBIG' | 'ENOENT' | 'EACCES' | 'EUNSUPPORTED'
 >
+
+// ---------------------------------------------------------------------------
+// Live file watching. Keeps the explorer's expanded directories current
+// without waiting on a manual refresh.
+// ---------------------------------------------------------------------------
+
+export interface WatchDirRequest {
+  dir: string
+}
 
 // ---------------------------------------------------------------------------
 // Opening things
@@ -497,6 +514,17 @@ export interface SeashellApi {
     readTextFile(req: FsReadTextFileRequest): Promise<FsReadTextFileResponse>
     writeTextFile(req: FsWriteTextFileRequest): Promise<FsWriteTextFileResponse>
     readImageFile(req: FsReadImageFileRequest): Promise<FsReadImageFileResponse>
+  }
+  watch: {
+    /** Fire and forget: start reporting changes to this directory. */
+    subscribe(req: WatchDirRequest): void
+    /** Fire and forget: stop reporting changes to this directory. */
+    unsubscribe(req: WatchDirRequest): void
+    /** Fire and forget: mark this directory as recently used, so it survives
+     *  eviction ahead of directories nobody has looked at in a while. */
+    touch(req: WatchDirRequest): void
+    onChanged(cb: (e: WatchDirRequest) => void): () => void
+    onLost(cb: (e: WatchDirRequest) => void): () => void
   }
   open: {
     withDefaultApp(req: OpenPathRequest): Promise<OpenPathResponse>

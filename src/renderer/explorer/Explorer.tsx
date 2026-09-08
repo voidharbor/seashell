@@ -121,6 +121,66 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.refreshNonce])
 
+  // `onChanged` fires with a dir, not a Set, so the handler below needs the
+  // current expanded set without depending on it. A dependency would tear
+  // down and rebuild the IPC subscription on every expand/collapse.
+  const expandedRef = useRef(expanded)
+  useEffect(() => {
+    expandedRef.current = expanded
+  }, [expanded])
+
+  /**
+   * Keeps main's watch pool in sync with what is actually expanded here.
+   *
+   * A ref, not state: which directories are currently subscribed is plumbing
+   * for this effect alone, and diffing against it (rather than unsubscribing
+   * everything and resubscribing) is what makes an unaffected directory's watch
+   * survive an unrelated expand elsewhere in the tree. Every member is also
+   * touched on each diff, so the pool's eviction order tracks what the user is
+   * actually looking at rather than subscribe order.
+   */
+  const subscribedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const subscribed = subscribedRef.current
+    for (const dir of expanded) {
+      if (!subscribed.has(dir)) {
+        window.seashell.watch.subscribe({ dir })
+        subscribed.add(dir)
+      }
+      window.seashell.watch.touch({ dir })
+    }
+    for (const dir of [...subscribed]) {
+      if (!expanded.has(dir)) {
+        window.seashell.watch.unsubscribe({ dir })
+        subscribed.delete(dir)
+      }
+    }
+  }, [expanded])
+
+  // Unmount only: every subscription this instance ever made must go with it.
+  useEffect(() => {
+    return () => {
+      for (const dir of subscribedRef.current) window.seashell.watch.unsubscribe({ dir })
+      subscribedRef.current.clear()
+    }
+  }, [])
+
+  /**
+   * A watched directory changing re-lists it in place, no ⌘R needed. `lost`
+   * carries no UI of its own: that directory just stops auto-refreshing until
+   * it is collapsed and re-expanded, and click-to-refresh still works on it.
+   */
+  useEffect(() => {
+    const offChanged = window.seashell.watch.onChanged(({ dir }) => {
+      if (expandedRef.current.has(dir)) void load(dir)
+    })
+    const offLost = window.seashell.watch.onLost(() => {})
+    return () => {
+      offChanged()
+      offLost()
+    }
+  }, [load])
+
   const toggle = useCallback(
     (dir: string) => {
       setExpanded((prev) => {
