@@ -16,7 +16,7 @@
     "pack:mac": "npm run build && electron-builder --mac",
     "pack:win": "npm run build && electron-builder --win",
     "pack:universal": "npm run build && electron-builder --mac --universal",
-    "dist:mac": "npm run build && electron-builder --mac dmg --universal"
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --universal"
   },
   "dependencies": {
     "node-pty": "1.1.0"

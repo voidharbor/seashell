@@ -30,6 +30,9 @@ afterPack: build/afterPack.cjs
 mac:
   category: public.app-category.developer-tools
   icon: build/icon.icns
+  # The in-app updater looks for exactly this name, SeaShell-<version>-<arch>,
+  # and downloads only the universal zip. Renaming the artifact breaks it.
+  artifactName: ${productName}-${version}-${arch}.${ext}
   # node-pty ships ONE single-arch prebuild per platform and picks at runtime by
   # process.arch. @electron/universal walks both slices, sees a Mach-O that is
   # not itself universal sitting identically in each, assumes a packaging bug and

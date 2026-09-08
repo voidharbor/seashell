@@ -877,6 +877,21 @@ body.dragging .sidebar__grip {
   background: var(--accent);
 }
 
+/* -------------------------------------------------------- update banner */
+
+/* Sits directly above the status bar and reads as part of the same chrome.
+   The app's own tokens, not raw colours, so it follows the theme. */
+.update-banner {
+  display: flex;
+  gap: calc(10px * var(--ui-scale));
+  align-items: center;
+  padding: calc(6px * var(--ui-scale)) calc(12px * var(--ui-scale));
+  font-size: calc(12px * var(--ui-scale));
+  color: var(--text);
+  background-color: var(--barBg, var(--chrome));
+  border-top: 1px solid var(--line);
+}
+
 /* ------------------------------------------------------------ status bar */
 
 .statusbar {

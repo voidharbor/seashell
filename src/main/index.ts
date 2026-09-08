@@ -1,6 +1,9 @@
-import { app, BrowserWindow, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, net, protocol, shell } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { CH } from '../shared/ipc.js'
+import { Updater } from './update/updater.js'
 import { buildMenu } from './menu.js'
 import { awaitSnapshot, registerIpc } from './ipc-router.js'
 import { PtyManager } from './pty/manager.js'
@@ -150,6 +153,41 @@ function createWindow(): void {
 }
 
 /**
+ * What the last install script had to say, if it did not finish.
+ *
+ * The swap runs after this process is gone, so a failure has nowhere to be
+ * reported when it happens. The log is read once on the next launch: unless it
+ * ends in success its last line goes to the renderer as an ordinary toast, and
+ * the log is deleted first so nobody is told the same thing twice.
+ */
+async function reportLastInstall(): Promise<void> {
+  const logPath = path.join(app.getPath('userData'), 'updates', 'install.log')
+  let last = ''
+  try {
+    const text = await fsp.readFile(logPath, 'utf8')
+    const lines = text.trimEnd().split('\n')
+    last = lines[lines.length - 1] ?? ''
+  } catch {
+    return // no log at all is the ordinary case
+  }
+  if (last === '' || last.includes('install done')) return
+  await fsp.rm(logPath, { force: true })
+  const win = mainWindow
+  if (!win) return
+  // A grace period after the load event: the renderer subscribes to this
+  // channel on its first render, which lands a beat later.
+  const send = (): void => {
+    setTimeout(() => {
+      if (!win.isDestroyed()) {
+        win.webContents.send(CH.appToast, { message: `Update did not install: ${last}` })
+      }
+    }, 800)
+  }
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
+  else send()
+}
+
+/**
  * One instance only.
  *
  * Two copies of SeaShell share a single `userData` directory, and both rewrite
@@ -224,6 +262,32 @@ app.whenReady().then(() => {
   createWindow()
   buildMenu(() => mainWindow)
   metrics.start()
+
+  /**
+   * The updater.
+   *
+   * Nothing here installs anything on its own: it checks once, five seconds in
+   * so the check never competes with the first paint, and everything after
+   * that is a click in the banner.
+   *
+   * SEASHELL_FAKE_VERSION makes an unpackaged dev instance believe it is old,
+   * for smoke-testing the banner. Documented in the README dev note, along
+   * with the three SEASHELL_UPDATE_* overrides updater.ts reads.
+   */
+  const updater = new Updater({
+    currentVersion: process.env.SEASHELL_FAKE_VERSION ?? app.getVersion(),
+    isPackaged: app.isPackaged || Boolean(process.env.SEASHELL_FAKE_VERSION),
+    exePath: app.getPath('exe'),
+    userData: app.getPath('userData'),
+    platform: process.platform,
+    pid: process.pid,
+    send: (s) => mainWindow?.webContents.send(CH.updateState, s),
+    quit: () => app.quit(),
+  })
+  ipcMain.on(CH.updateDownload, () => void updater.download())
+  ipcMain.on(CH.updateInstall, () => void updater.install())
+  setTimeout(() => void updater.start(), 5000)
+  void reportLastInstall()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

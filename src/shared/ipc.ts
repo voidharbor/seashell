@@ -37,6 +37,13 @@ export const CH = {
 
   appGetPaths: 'app:getPaths',
   appGetTerminalFont: 'app:getTerminalFont',
+  /** Main to renderer: show this line in the toast. */
+  appToast: 'app:toast',
+
+  /** Main to renderer: where the update check has got to. */
+  updateState: 'update:state',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
 
   linksEnsure: 'links:ensure',
   projectsList: 'projects:list',
@@ -331,6 +338,29 @@ export interface UiCommandEvent {
   command: string
 }
 
+/** Something main has to say, shown in the renderer's ordinary toast. */
+export interface AppToastEvent {
+  message: string
+}
+
+// ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the update check has got to, as one value the banner renders directly.
+ *
+ * `canInstall` is false when this copy of SeaShell is not the one in
+ * /Applications: the swap script only knows how to replace that bundle, so
+ * anywhere else the banner offers the release page instead of a download.
+ */
+export type UpdateState =
+  | { phase: 'idle' }
+  | { phase: 'available'; version: string; pageUrl: string; canInstall: boolean }
+  | { phase: 'downloading'; version: string; received: number; total: number }
+  | { phase: 'ready'; version: string }
+  | { phase: 'error'; version: string; message: string }
+
 // ---------------------------------------------------------------------------
 // Projects — named, reopenable sets of tabs and panes
 // ---------------------------------------------------------------------------
@@ -500,6 +530,13 @@ export interface SeashellApi {
     /** Terminal.app's private SF Mono Terminal face, or null if unreadable. */
     getTerminalFont(): Promise<ArrayBuffer | null>
     onCommand(cb: (e: UiCommandEvent) => void): () => void
+    onToast(cb: (e: AppToastEvent) => void): () => void
+  }
+  update: {
+    onState(cb: (s: UpdateState) => void): () => void
+    /** Both are fire and forget: the answer arrives as the next state event. */
+    download(): void
+    install(): void
   }
 }
 

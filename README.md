@@ -30,6 +30,15 @@ Download the `.dmg` from [Releases](https://github.com/voidharbor/seashell/relea
 and drag SeaShell to Applications. The build is universal — it runs natively on Apple Silicon
 and Intel, no Rosetta.
 
+### Updates
+
+SeaShell asks GitHub for the latest release once per launch and offers it in a banner above the
+status bar. Nothing is downloaded or installed without a click: **Download** fetches the
+universal zip, and **Install and Relaunch** closes every pane, swaps the app in Applications and
+reopens it. When there is no new release, or the machine is offline, the check says nothing at
+all. The quarantine step below applies only to the first install, since an update applied from
+inside the app clears the flag itself.
+
 ### First launch: "SeaShell cannot be opened"
 
 macOS will refuse to open it the first time, with either *"cannot be opened because the
@@ -233,6 +242,13 @@ Two settings in `electron-builder.yml` are what make that true, and both are loa
 - **`x64ArchFiles`** — `@electron/universal` aborts when it finds a non-universal Mach-O
   present identically in both slices. The per-arch `node-pty` prebuilds are exactly that, on
   purpose.
+
+Four environment variables exist for smoke-testing the updater, and are never set in a real
+launch. `SEASHELL_FAKE_VERSION` makes an unpackaged dev instance report that version as its own
+and behave as if it were packaged, so the check runs at all. `SEASHELL_UPDATE_API` replaces the
+GitHub releases URL the check reads. `SEASHELL_UPDATE_ORIGIN` replaces the URL prefix a release
+zip is allowed to come from. `SEASHELL_UPDATE_APP_PATH` replaces the bundle the install script
+swaps, which is what keeps a test off `/Applications/SeaShell.app`.
 
 The app is ad-hoc signed (`codesign -s -`), which is what Apple Silicon requires in order to
 execute at all. It is **not** signed with a Developer ID and not notarized, which is why the

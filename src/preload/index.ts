@@ -13,6 +13,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import {
   CH,
   type AppPaths,
+  type AppToastEvent,
   type FindBySuffixRequest,
   type FindBySuffixResponse,
   type FsProbeRequest,
@@ -54,6 +55,7 @@ import {
   type SessionSaveRequest,
   type SeashellApi,
   type UiCommandEvent,
+  type UpdateState,
 } from '../shared/ipc.js'
 
 /**
@@ -130,6 +132,12 @@ const api: SeashellApi = {
     getTerminalFont: (): Promise<ArrayBuffer | null> =>
       ipcRenderer.invoke(CH.appGetTerminalFont),
     onCommand: (cb: (e: UiCommandEvent) => void) => subscribe<UiCommandEvent>(CH.uiCommand, cb),
+    onToast: (cb: (e: AppToastEvent) => void) => subscribe<AppToastEvent>(CH.appToast, cb),
+  },
+  update: {
+    onState: (cb: (s: UpdateState) => void) => subscribe<UpdateState>(CH.updateState, cb),
+    download: (): void => ipcRenderer.send(CH.updateDownload),
+    install: (): void => ipcRenderer.send(CH.updateInstall),
   },
 }
 

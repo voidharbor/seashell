@@ -47,7 +47,8 @@ import { ProjectsPanel, type SaveScope } from './projects/ProjectsPanel.js'
 import { stateToTabs, tabToSaved, tabsFromSaved } from './projects/serialize.js'
 import { shouldOfferRestore } from './session/offer.js'
 import { RestoreCard } from './session/RestoreCard.js'
-import type { LastSession, Project } from '../shared/ipc.js'
+import { UpdateBanner } from './update/UpdateBanner.js'
+import type { LastSession, Project, UpdateState } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 import { dirtyPreviewPanes } from './viewer/FilePreview.js'
 
@@ -97,6 +98,16 @@ export function App(): React.JSX.Element {
    *  open, so it reads this once per open rather than tracking it. */
   const [projectsScope, setProjectsScope] = useState<SaveScope>('window')
   const [projects, setProjects] = useState<Project[]>([])
+  /** Where the update check has got to, straight from main. */
+  const [updateState, setUpdateState] = useState<UpdateState>({ phase: 'idle' })
+  /** The version the user last said "Later" to, so the banner stays gone. */
+  const [dismissedUpdate, setDismissedUpdate] = useState(() => {
+    try {
+      return localStorage.getItem('seashell.updateDismissed') ?? ''
+    } catch {
+      return ''
+    }
+  })
   const [settings, setSettings] = useState<Settings>(loadSettings)
 
   const updateSettings = useCallback((next: Settings) => {
@@ -138,6 +149,15 @@ export function App(): React.JSX.Element {
   ])
 
   useEffect(() => unlockAudio(), [])
+
+  useEffect(() => window.seashell.update.onState(setUpdateState), [])
+
+  /** Anything main has to say for itself, in the same toast as everything else.
+   *  Today that is the report from an update that failed to install. */
+  useEffect(
+    () => window.seashell.app.onToast((e) => dispatch({ type: 'toast', message: e.message })),
+    []
+  )
 
   const refreshProjects = useCallback(async () => {
     const res = await window.seashell.projects.list()
@@ -1293,6 +1313,16 @@ export function App(): React.JSX.Element {
     )
   }
 
+  /**
+   * An offer already refused is not an offer. A version the user said "Later"
+   * to stays hidden until the next one, but a download or install they started
+   * themselves is always shown through to its end.
+   */
+  const updateBanner: UpdateState =
+    updateState.phase === 'available' && updateState.version === dismissedUpdate
+      ? { phase: 'idle' }
+      : updateState
+
   const order = activeTab ? dfsPaneOrder(activeTab.tree) : []
 
   /** Panes in this tab that could share notes, in the order they appear. */
@@ -1627,6 +1657,23 @@ export function App(): React.JSX.Element {
         </div>
 
       </div>
+
+      <UpdateBanner
+        state={updateBanner}
+        onDownload={() => window.seashell.update.download()}
+        onInstall={() => window.seashell.update.install()}
+        onLater={() => {
+          if (updateState.phase !== 'idle') {
+            setDismissedUpdate(updateState.version)
+            try {
+              localStorage.setItem('seashell.updateDismissed', updateState.version)
+            } catch {
+              /* storage can be unavailable; the banner still hides for now */
+            }
+          }
+          setUpdateState({ phase: 'idle' })
+        }}
+      />
 
       <StatusBar
         tab={activeTab}
