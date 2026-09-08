@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Drive a SeaShell instance started with --remote-debugging-port=<port>.
 //   node scripts/cdp.mjs 9333 "window.__seashellTerminals.size"
-//   node scripts/cdp.mjs 9333 --dblclick 400 300
+//   node scripts/cdp.mjs 9333 --dblclick 400 300 [modifiers]   (Alt=1 Ctrl=2 Meta=4 Shift=8)
 //   node scripts/cdp.mjs 9333 --key Escape
 //   node scripts/cdp.mjs 9333 --wheel 400 300 120 40 8
 // Uses Node's built-in WebSocket (Node 22+). Prints the JSON value of the expression.
 const [port, ...rest] = process.argv.slice(2)
 if (!port) {
-  console.error('usage: cdp.mjs <port> <expression> | --dblclick x y | --key Key | --wheel x y deltaY count gapMs')
+  console.error('usage: cdp.mjs <port> <expression> | --dblclick x y [modifiers] | --key Key | --wheel x y deltaY count gapMs')
   process.exit(2)
 }
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json()
@@ -29,11 +29,13 @@ const send = (method, params = {}) =>
 
 if (rest[0] === '--dblclick') {
   const x = Number(rest[1]), y = Number(rest[2])
+  // CDP modifier bitmask, held down for both presses: Alt=1, Ctrl=2, Meta=4, Shift=8.
+  const modifiers = Number(rest[3] ?? 0)
   for (const clickCount of [1, 2]) {
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount })
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount })
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount, modifiers })
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount, modifiers })
   }
-  console.log('dblclick dispatched at', x, y)
+  console.log('dblclick dispatched at', x, y, 'modifiers', modifiers)
 } else if (rest[0] === '--key') {
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: rest[1] })
   await send('Input.dispatchKeyEvent', { type: 'keyUp', key: rest[1] })

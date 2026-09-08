@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { PaneTerminal } from '../term/terminal.js'
 import { currentXtermTheme } from '../theme/live.js'
-import { pathAtPoint } from './pathclick.js'
+import { pathAtPoint, rowContext } from './pathclick.js'
+import { resolvePathClick } from '../links/resolve.js'
 import { WebPreview } from './WebPreview.js'
 import { ColorDot, ColorPicker } from './ColorPicker.js'
 import { LinkPicker, type LinkCandidate } from './LinkPicker.js'
@@ -105,6 +106,10 @@ export interface PaneViewProps {
   onZoom: () => void
   /** `isDir` decides whether the explorer opens the folder or merely selects it. */
   onReveal: (path: string, isDir: boolean) => void
+  /** Cmd+double-click on a path previews it, Cmd+Opt hands it to the OS. */
+  onOpen: (path: string, mode: 'preview' | 'os') => void
+  /** How far a truncated `…/x.tsx` may be searched for: the explorer's root. */
+  searchRoot: string
   onSpawned: (pid: number) => void
   onRestart: () => void
   onUrlChange: (url: string) => void
@@ -280,6 +285,10 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
   revealRef.current = props.onReveal
   const toastRef = useRef(props.onToast)
   toastRef.current = props.onToast
+  const openRef = useRef(props.onOpen)
+  openRef.current = props.onOpen
+  const searchRootRef = useRef(props.searchRoot)
+  searchRootRef.current = props.searchRoot
   const spawnedRef = useRef(props.onSpawned)
   spawnedRef.current = props.onSpawned
   const titleRef = useRef(props.onTitle)
@@ -330,45 +339,35 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
        * the explorer root, and a relative string never does. It expanded
        * nothing, selected nothing, and looked exactly like a dead double-click.
        *
-       * `statBatch` is the round trip built for this. It resolves the candidate
-       * against the pane's current directory, follows symlinks to a canonical
-       * path, and — the part that matters — omits anything that does not exist.
-       * So a double-click on prose that merely looks like a path resolves to
-       * nothing and stays silent, while a real file reveals.
+       * `resolvePathClick` owns the whole decision (which candidates to try,
+       * whether to search for a truncated tail, and what a miss says) because
+       * the drawer's shell has to answer it identically and the two copies had
+       * already drifted apart. A miss always comes back with a message: silence
+       * is what made a near miss indistinguishable from a dead feature.
        */
-      onDoubleClick: (x, y) => {
-        const candidate = pathAtPoint(t.term, x, y)
-        if (!candidate) return
-        void window.seashell.fs
-          .statBatch({ cwd: cwdRef.current, candidates: [candidate] })
-          .then((res) => {
-            const hit = res.results[0]
-            // `kind` is forwarded, not dropped. Without it the explorer cannot
-            // tell a folder from a file, so a revealed directory was selected
-            // and scrolled to but never actually opened.
-            if (hit) {
-              revealRef.current(hit.resolved, hit.kind === 'dir')
-              return
-            }
-            /**
-             * A miss used to end here, in silence.
-             *
-             * `statBatch` omits anything that does not exist, so every kind of
-             * near-miss, a path relative to a directory the pane is no longer
-             * in, a name the tokenizer over-extracted, a Claude-truncated
-             * `…/x.ts`, produced exactly the same nothing as double-clicking
-             * ordinary prose. There was no way to tell a feature that had
-             * decided not to fire from a feature that was broken, and it read
-             * as the latter every time.
-             *
-             * Naming the candidate AND the directory it was resolved against is
-             * the whole diagnosis in one line: it says what SeaShell thought it
-             * was looking for, and where it looked.
-             */
-            toastRef.current(
-              `No file at ${candidate} from ${cwdRef.current || 'an unknown directory'}`
-            )
-          })
+      onDoubleClick: (x, y, mods) => {
+        const hit = pathAtPoint(t.term, x, y)
+        if (!hit) return
+        const ctx = rowContext(t.term, hit.absY, hit.start, hit.end)
+        void resolvePathClick(
+          { hit, rows: ctx, cwd: cwdRef.current, searchRoot: searchRootRef.current },
+          {
+            statBatch: (req) => window.seashell.fs.statBatch(req),
+            findBySuffix: (req) => window.seashell.fs.findBySuffix(req),
+          }
+        ).then((out) => {
+          if (out.kind === 'miss') {
+            toastRef.current(out.message)
+            return
+          }
+          // Revealing always happens, with either modifier or neither: seeing
+          // where the file lives is the part that is never wrong.
+          revealRef.current(out.hit.resolved, out.hit.isDir)
+          // A directory has nothing to open. The explorer expands it instead.
+          if (out.hit.isDir) return
+          if (mods.meta && mods.alt) openRef.current(out.hit.resolved, 'os')
+          else if (mods.meta) openRef.current(out.hit.resolved, 'preview')
+        })
       },
     })
     terminals.set(pane.id, t)

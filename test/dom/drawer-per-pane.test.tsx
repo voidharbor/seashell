@@ -26,7 +26,12 @@ class FakeTerminal {
   term = { cols: 80, rows: 24, focus: vi.fn() }
   /** `onDoubleClick` is kept because it is the only way in: the real gesture
    *  needs a live xterm to hit-test, so a test drives the callback directly. */
-  constructor(public readonly opts: { paneId: string; onDoubleClick: (x: number, y: number) => void }) {
+  constructor(
+    public readonly opts: {
+      paneId: string
+      onDoubleClick: (x: number, y: number, mods: { meta: boolean; alt: boolean }) => void
+    }
+  ) {
     built.push(this)
   }
 }
@@ -40,7 +45,16 @@ const built: FakeTerminal[] = []
  * before the handler under test ever ran. Stubbing it is what makes the
  * resolve-and-report half reachable.
  */
-const pathAtPoint = vi.fn<(term: unknown, x: number, y: number) => string | null>(() => null)
+interface FakeHit {
+  path: string
+  start: number
+  end: number
+  absY: number
+}
+const pathAtPoint = vi.fn<(term: unknown, x: number, y: number) => FakeHit | null>(() => null)
+/** A token that touches neither edge of an 80-column row, so the wrap-join
+ *  pass adds nothing and the candidate list is the token alone. */
+const hitOf = (path: string): FakeHit => ({ path, start: 0, end: path.length, absY: 1 })
 
 vi.mock('../../src/renderer/term/terminal.js', () => ({
   PaneTerminal: FakeTerminal,
@@ -53,6 +67,9 @@ vi.mock('../../src/renderer/panes/PaneView.js', () => ({
 }))
 vi.mock('../../src/renderer/panes/pathclick.js', () => ({
   pathAtPoint: (term: unknown, x: number, y: number) => pathAtPoint(term, x, y),
+  // Reads the xterm buffer for real, so it is stubbed for the same reason
+  // pathAtPoint is: there is no buffer behind a fake terminal.
+  rowContext: () => ({ prevRow: null, nextRow: null, startCol: 0, endCol: 13, cols: 80 }),
 }))
 
 const { DrawerShell } = await import('../../src/renderer/drawer/DrawerShell.js')
@@ -84,6 +101,10 @@ const defaults: DrawerProps = {
   focusCwd: '/Users/test/one',
   gridWidth: 800,
   onReveal: () => {},
+  onOpen: (path: string, mode: string) => {
+    throw new Error(`unexpected open: ${path} as ${mode}`)
+  },
+  searchRoot: '/Users/test',
   onToast: (message: string) => {
     throw new Error(`unexpected toast: ${message}`)
   },
@@ -111,7 +132,10 @@ beforeEach(() => {
       onExit: vi.fn(() => () => {}),
     },
     open: { externalHttp: vi.fn() },
-    fs: { statBatch: vi.fn(async () => ({ results: [] })) },
+    fs: {
+      statBatch: vi.fn(async () => ({ results: [] })),
+      findBySuffix: vi.fn(async () => ({ paths: [], truncated: false })),
+    },
   }
 })
 
@@ -180,8 +204,8 @@ describe('a path that resolves nowhere', () => {
 
     // No OSC 7 has arrived, so the pane's own directory is what it resolves
     // against, which is the case a fresh drawer is always in.
-    pathAtPoint.mockReturnValue('notafile/x.ts')
-    built[0]!.opts.onDoubleClick(40, 40)
+    pathAtPoint.mockReturnValue(hitOf('notafile/x.ts'))
+    built[0]!.opts.onDoubleClick(40, 40, { meta: false, alt: false })
 
     await vi.waitFor(() => expect(onToast).toHaveBeenCalledTimes(1))
     expect(onToast).toHaveBeenCalledWith('No file at notafile/x.ts from /Users/test/one')
@@ -197,10 +221,66 @@ describe('a path that resolves nowhere', () => {
       }))
     render(<DrawerShell {...props({ onToast, onReveal })} />)
 
-    pathAtPoint.mockReturnValue('real.ts')
-    built[0]!.opts.onDoubleClick(40, 40)
+    pathAtPoint.mockReturnValue(hitOf('real.ts'))
+    built[0]!.opts.onDoubleClick(40, 40, { meta: false, alt: false })
 
     await vi.waitFor(() => expect(onReveal).toHaveBeenCalledWith('/Users/test/one/real.ts', false))
     expect(onToast).not.toHaveBeenCalled()
+  })
+})
+
+
+/**
+ * The modifiers ride along with the same gesture. A plain double-click only
+ * reveals, which is inert; Cmd asks for the file itself, and Cmd+Opt asks for
+ * it outside SeaShell. Both still reveal, because seeing where a file lives is
+ * the part that is never wrong.
+ */
+describe('Cmd and Cmd+Opt on a resolved path', () => {
+  function hitting(): void {
+    ;(window as unknown as { seashell: { fs: { statBatch: unknown } } }).seashell.fs.statBatch =
+      vi.fn(async () => ({
+        results: [{ i: 0, resolved: '/Users/test/one/real.ts', kind: 'file', size: 1, exec: false }],
+      }))
+  }
+
+  it('previews on Cmd', async () => {
+    hitting()
+    const onOpen = vi.fn()
+    const onReveal = vi.fn()
+    render(<DrawerShell {...props({ onOpen, onReveal })} />)
+
+    pathAtPoint.mockReturnValue(hitOf('real.ts'))
+    built[0]!.opts.onDoubleClick(40, 40, { meta: true, alt: false })
+
+    await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith('/Users/test/one/real.ts', 'preview'))
+    expect(onReveal).toHaveBeenCalledWith('/Users/test/one/real.ts', false)
+  })
+
+  it('hands the file to the OS on Cmd+Opt', async () => {
+    hitting()
+    const onOpen = vi.fn()
+    render(<DrawerShell {...props({ onOpen })} />)
+
+    pathAtPoint.mockReturnValue(hitOf('real.ts'))
+    built[0]!.opts.onDoubleClick(40, 40, { meta: true, alt: true })
+
+    await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith('/Users/test/one/real.ts', 'os'))
+  })
+
+  it('never opens a directory, whatever is held down', async () => {
+    ;(window as unknown as { seashell: { fs: { statBatch: unknown } } }).seashell.fs.statBatch =
+      vi.fn(async () => ({
+        results: [{ i: 0, resolved: '/Users/test/one/src', kind: 'dir', size: 0, exec: false }],
+      }))
+    const onOpen = vi.fn()
+    const onReveal = vi.fn()
+    render(<DrawerShell {...props({ onOpen, onReveal })} />)
+
+    pathAtPoint.mockReturnValue(hitOf('src'))
+    built[0]!.opts.onDoubleClick(40, 40, { meta: true, alt: true })
+
+    await vi.waitFor(() => expect(onReveal).toHaveBeenCalledWith('/Users/test/one/src', true))
+    expect(onOpen).not.toHaveBeenCalled()
   })
 })

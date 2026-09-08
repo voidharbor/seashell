@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { PaneTerminal } from '../term/terminal.js'
 import { currentXtermTheme } from '../theme/live.js'
-import { pathAtPoint } from '../panes/pathclick.js'
+import { pathAtPoint, rowContext } from '../panes/pathclick.js'
+import { resolvePathClick } from '../links/resolve.js'
 import { currentHostname, terminals } from '../panes/PaneView.js'
 import { cdCommandFor } from './cd.js'
 import { drawerPtyId } from './id.js'
@@ -31,6 +32,10 @@ export interface DrawerShellProps {
   /** Grid width in px; only watched so the terminal refits when it changes. */
   gridWidth: number
   onReveal(path: string, isDir: boolean): void
+  /** Cmd+double-click on a path previews it, Cmd+Opt hands it to the OS. */
+  onOpen(path: string, mode: 'preview' | 'os'): void
+  /** How far a truncated `…/x.tsx` may be searched for: the explorer's root. */
+  searchRoot: string
   /** Told when a double-clicked path resolves nowhere, so the drawer is as
    *  talkative about a miss as a pane is. */
   onToast(message: string): void
@@ -82,6 +87,10 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
   revealRef.current = props.onReveal
   const toastRef = useRef(props.onToast)
   toastRef.current = props.onToast
+  const openRef = useRef(props.onOpen)
+  openRef.current = props.onOpen
+  const searchRootRef = useRef(props.searchRoot)
+  searchRootRef.current = props.searchRoot
 
   // Terminal lifecycle. Registered in the shared `terminals` map, which is
   // what routes the global pty.onData dispatch (app.tsx) here for free.
@@ -102,28 +111,31 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
         cwdRef.current = c
         setCwd(c)
       },
-      // Same clickable-paths behaviour as a pane: resolve against the shell's
-      // live cwd, reveal only what actually exists.
-      onDoubleClick: (x, y) => {
-        const candidate = pathAtPoint(t.term, x, y)
-        if (!candidate) return
+      // Same clickable-paths behaviour as a pane, through the same resolver:
+      // one shell in a drawer is not a reason for a path to behave differently.
+      onDoubleClick: (x, y, mods) => {
+        const hit = pathAtPoint(t.term, x, y)
+        if (!hit) return
         // Named apart from the `cwd` state above, which this used to shadow.
         // The ref is the live one; the state exists only to render the header.
         const resolveCwd = cwdRef.current || props.focusCwd
-        void window.seashell.fs
-          .statBatch({ cwd: resolveCwd, candidates: [candidate] })
-          .then((res) => {
-            const hit = res.results[0]
-            if (hit) {
-              revealRef.current(hit.resolved, hit.kind === 'dir')
-              return
-            }
-            // Same reason as the pane: a silent miss is indistinguishable from
-            // a broken feature, and the drawer misses for the same reasons.
-            toastRef.current(
-              `No file at ${candidate} from ${resolveCwd || 'an unknown directory'}`
-            )
-          })
+        const ctx = rowContext(t.term, hit.absY, hit.start, hit.end)
+        void resolvePathClick(
+          { hit, rows: ctx, cwd: resolveCwd, searchRoot: searchRootRef.current },
+          {
+            statBatch: (req) => window.seashell.fs.statBatch(req),
+            findBySuffix: (req) => window.seashell.fs.findBySuffix(req),
+          }
+        ).then((out) => {
+          if (out.kind === 'miss') {
+            toastRef.current(out.message)
+            return
+          }
+          revealRef.current(out.hit.resolved, out.hit.isDir)
+          if (out.hit.isDir) return
+          if (mods.meta && mods.alt) openRef.current(out.hit.resolved, 'os')
+          else if (mods.meta) openRef.current(out.hit.resolved, 'preview')
+        })
       },
     })
     terminals.set(ptyId, t)

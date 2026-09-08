@@ -16,6 +16,7 @@ import { applyTheme, themeVars } from './theme/apply.js'
 import { setCurrentXtermTheme } from './theme/live.js'
 import { xtermThemeFrom } from './term/palette.js'
 import { Explorer } from './explorer/Explorer.js'
+import { openPath, type OpenDeps } from './explorer/open.js'
 import { StatusBar } from './status/StatusBar.js'
 import { loadTerminalFont } from './term/terminal.js'
 import { editTargetId, isTextField, terminalOwningFocus } from './term/edit-target.js'
@@ -1118,6 +1119,27 @@ export function App(): React.JSX.Element {
     }
   }, [drawerPanes, livePaneIds])
 
+  /**
+   * How a file opens, wherever the request comes from. The explorer builds the
+   * same deps for its own rows; this copy serves the terminal gesture, so a
+   * Cmd+double-clicked path in a pane lands in the same viewer, and refuses an
+   * executable with the same words, as a double-clicked row in the sidebar.
+   *
+   * Declared above the readiness guard: it is a hook, and a hook below an
+   * early return would change the hook order the first time `ready` flips.
+   */
+  const openDeps: OpenDeps = useMemo(
+    () => ({
+      probe: (req) => window.seashell.fs.probe(req),
+      withDefaultApp: (req) => window.seashell.open.withDefaultApp(req),
+      revealInFinder: (req) => window.seashell.open.revealInFinder(req),
+      onOpenInViewer: (p) =>
+        dispatch({ type: 'pane.newFile', path: p, autoColor: autoColorRef.current }),
+      onToast: (m) => dispatch({ type: 'toast', message: m }),
+    }),
+    []
+  )
+
   if (!ready) return <div className="empty">Starting SeaShell…</div>
 
   const order = activeTab ? dfsPaneOrder(activeTab.tree) : []
@@ -1362,6 +1384,10 @@ export function App(): React.JSX.Element {
                   onClose={() => void closePane(r.paneId)}
                   onZoom={() => dispatch({ type: 'pane.zoom', paneId: r.paneId })}
                   onReveal={(p, isDir) => revealPath(p, isDir)}
+                  onOpen={(p, mode) =>
+                    void openPath(p, openDeps, mode === 'os' ? 'os' : undefined)
+                  }
+                  searchRoot={state.explorerRoot || home}
                   onSpawned={(pid) => dispatch({ type: 'pane.spawned', paneId: r.paneId, pid })}
                   onRestart={() => dispatch({ type: 'pane.restarting', paneId: r.paneId })}
                   onUrlChange={(url) => dispatch({ type: 'pane.setUrl', paneId: r.paneId, url })}
@@ -1436,6 +1462,8 @@ export function App(): React.JSX.Element {
                 focusCwd={p?.metrics?.cwd || p?.cwd || home}
                 gridWidth={gridSize.width}
                 onReveal={(path, isDir) => revealPath(path, isDir)}
+                onOpen={(p, mode) => void openPath(p, openDeps, mode === 'os' ? 'os' : undefined)}
+                searchRoot={state.explorerRoot || home}
                 onToast={(m) => dispatch({ type: 'toast', message: m })}
                 onClose={() => setDrawerOpen(false)}
                 onDragStart={startDrawerDrag}

@@ -29,7 +29,7 @@ export interface PaneTerminalOptions {
    * A double-click that this pane did NOT forward to the PTY. The host resolves
    * it against the buffer to decide whether a path was clicked.
    */
-  onDoubleClick: (clientX: number, clientY: number) => void
+  onDoubleClick: (clientX: number, clientY: number, mods: { meta: boolean; alt: boolean }) => void
   /** OSC 8 hyperlink activation. Only ever http/https. */
   onHttpLink: (url: string) => void
   /** Terminal font size in px, from the current zoom level. */
@@ -399,7 +399,9 @@ export class PaneTerminal {
     if (near && now - this.lastClaim.at < 500) return
     this.lastClaim = { x: ev.clientX, y: ev.clientY, at: now }
 
-    this.opts.onDoubleClick(ev.clientX, ev.clientY)
+    // Cmd and Cmd+Opt travel with the gesture: the host reveals either way and
+    // uses them to decide whether to also open the file, and with what.
+    this.opts.onDoubleClick(ev.clientX, ev.clientY, { meta: ev.metaKey, alt: ev.altKey })
   }
 
   /**

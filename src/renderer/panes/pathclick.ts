@@ -1,4 +1,5 @@
 import type { Terminal } from '@xterm/xterm'
+import type { PathHit, RowContext } from '../links/resolve.js'
 import { tokenizeLine } from '../links/tokenizer.js'
 import {
   assembleLogicalLine,
@@ -17,8 +18,14 @@ import {
  * Wrapped lines matter: a long path printed at the edge of the pane occupies
  * two buffer rows, and tokenizing each row separately would split the path in
  * half. So the whole logical line is reassembled first.
+ *
+ * The hit carries the token's column span and the row it was on, because that
+ * is the only evidence available for the other kind of wrap: a program that
+ * hard-wraps its own output writes a real newline, so xterm never marks the
+ * continuation row and the logical line stops at the screen edge. `wrap-join`
+ * needs the span to tell that case from an ordinary token.
  */
-export function pathAtPoint(term: Terminal, clientX: number, clientY: number): string | null {
+export function pathAtPoint(term: Terminal, clientX: number, clientY: number): PathHit | null {
   const el = term.element
   if (!el) return null
 
@@ -47,7 +54,46 @@ export function pathAtPoint(term: Terminal, clientX: number, clientY: number): s
   if (candidates.length === 0) return null
 
   const hit = candidateAtCell(candidates, logical.idxMap, cell)
-  return hit ? hit.candidate.path : null
+  if (!hit) return null
+
+  /**
+   * The span, in 0-based columns of the clicked row, [start, end).
+   *
+   * `idxMap` is per code unit of the whole logical line, so the first and last
+   * entries of the candidate name real buffer cells. When either of them sits
+   * on another row the token is already an xterm-wrapped one: it spans the
+   * full width by definition, so the bounds become the whole row and the
+   * wrap-join pass simply finds nothing new to add.
+   */
+  const first = logical.idxMap[hit.candidate.start]
+  const last = logical.idxMap[hit.candidate.end - 1]
+  const sameRow = first !== undefined && last !== undefined && first.y === cell.y && last.y === cell.y
+  return {
+    path: hit.candidate.path,
+    start: sameRow ? first.x - 1 : 0,
+    end: sameRow ? last.x : term.cols,
+    absY: cell.y,
+  }
+}
+
+/** The candidate's column span on its row plus the raw text of its neighbours,
+ *  for the wrap-join pass. `absY` is the 1-based buffer row pathAtPoint used. */
+export function rowContext(
+  term: Terminal,
+  absY: number,
+  candidateStart: number,
+  candidateEnd: number
+): RowContext {
+  const buf = term.buffer.active
+  const y = absY - 1
+  const text = (row: number): string | null => buf.getLine(row)?.translateToString(true) ?? null
+  return {
+    prevRow: y > 0 ? text(y - 1) : null,
+    nextRow: text(y + 1),
+    startCol: candidateStart,
+    endCol: candidateEnd,
+    cols: term.cols,
+  }
 }
 
 /**

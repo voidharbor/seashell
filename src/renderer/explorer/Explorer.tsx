@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FsDirEntry } from '../../shared/ipc.js'
 import type { RevealTarget } from '../store.js'
 import { expandChain } from './chain.js'
+import { openPath, type OpenDeps } from './open.js'
 import { FileIcon, FolderIcon } from './icons.js'
 
 /**
@@ -184,41 +185,31 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revealPath, root])
 
+  /**
+   * The open routing itself lives in `open.ts`, because a double-clicked path
+   * in a terminal has to open exactly the way a double-clicked row here does.
+   * This is the only place that supplies it the real preload calls.
+   */
+  const openDeps: OpenDeps = useMemo(
+    () => ({
+      probe: (req) => window.seashell.fs.probe(req),
+      withDefaultApp: (req) => window.seashell.open.withDefaultApp(req),
+      revealInFinder: (req) => window.seashell.open.revealInFinder(req),
+      onOpenInViewer: props.onOpenInViewer,
+      onToast: props.onToast,
+    }),
+    [props.onOpenInViewer, props.onToast]
+  )
+
   const activate = useCallback(
     async (fullPath: string, isDir: boolean) => {
       if (isDir) {
         toggle(fullPath)
         return
       }
-      const probe = await window.seashell.fs.probe({ path: fullPath })
-      if (!probe.exists) {
-        props.onToast('File no longer exists')
-        return
-      }
-      switch (probe.route) {
-        case 'viewer':
-          props.onOpenInViewer(fullPath)
-          break
-        case 'os': {
-          const res = await window.seashell.open.withDefaultApp({ path: fullPath })
-          if (!res.ok && res.error === 'refused-executable') {
-            props.onToast('That file is executable — revealed in Finder instead')
-          } else if (!res.ok) {
-            props.onToast(`Could not open: ${res.error ?? 'unknown error'}`)
-          }
-          break
-        }
-        case 'too-large':
-          props.onToast('Too large to preview — opening with the default app')
-          await window.seashell.open.withDefaultApp({ path: fullPath })
-          break
-        case 'binary':
-        case 'reveal':
-          await window.seashell.open.revealInFinder({ path: fullPath })
-          break
-      }
+      await openPath(fullPath, openDeps)
     },
-    [toggle, props]
+    [toggle, openDeps]
   )
 
   const renderDir = (dir: string, depth: number): React.JSX.Element[] => {
@@ -347,7 +338,7 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
                 setMenu(null)
                 void window.seashell.open.withDefaultApp({ path: p }).then((res) => {
                   if (!res.ok && res.error === 'refused-executable') {
-                    props.onToast('That file is executable — revealed in Finder instead')
+                    props.onToast('That file is executable, revealed in Finder instead')
                   } else if (!res.ok) {
                     props.onToast(`Could not open: ${res.error ?? 'unknown error'}`)
                   }
