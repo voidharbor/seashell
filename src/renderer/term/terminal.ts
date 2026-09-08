@@ -274,6 +274,12 @@ export class PaneTerminal {
     this.opts.container.addEventListener('mousedown', this.handleMouseDown, true)
     this.opts.container.addEventListener('dblclick', this.handleDoubleClick, true)
     this.opts.container.addEventListener('wheel', this.handleWheel, { capture: true, passive: true })
+    // Leaving the pane ends the gesture. `focusout` on the host rather than a
+    // blur on xterm's textarea: the textarea is created by xterm and replaced
+    // when the renderer is swapped, and focusout bubbles from whichever one is
+    // current. Without this a pane left mid-flick is still at 8x when it is
+    // clicked back into, and the first scroll after that jumps the screen.
+    this.opts.container.addEventListener('focusout', this.handleFocusOut, true)
 
     this.warnOnBadFontResidual()
   }
@@ -772,6 +778,14 @@ export class PaneTerminal {
     this.applySensitivity(mult)
   }
 
+  /** Blur ends the ramp: the velocity average and the applied multiplier both
+   *  go back to where a first scroll would find them. */
+  private handleFocusOut = (): void => {
+    if (this.disposed) return
+    this.ramp.reset()
+    this.applySensitivity(1)
+  }
+
   private applySensitivity(mult: number): void {
     const changed = mult === 1 ? this.appliedSensitivity !== 1 : Math.abs(mult - this.appliedSensitivity) >= 0.25
     if (!changed) return
@@ -804,6 +818,7 @@ export class PaneTerminal {
     this.opts.container.removeEventListener('mousedown', this.handleMouseDown, true)
     this.opts.container.removeEventListener('dblclick', this.handleDoubleClick, true)
     this.opts.container.removeEventListener('wheel', this.handleWheel, true)
+    this.opts.container.removeEventListener('focusout', this.handleFocusOut, true)
     this.applySensitivity(1)
     this.disableWebgl()
     this.term.dispose()

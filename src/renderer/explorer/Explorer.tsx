@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FsDirEntry } from '../../shared/ipc.js'
 import type { RevealTarget } from '../store.js'
 import { expandChain } from './chain.js'
+import { isIgnoredDir } from './ignored.js'
 import { openPath, type OpenDeps } from './open.js'
 import { FileIcon, FolderIcon } from './icons.js'
 
@@ -138,11 +139,29 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
    * survive an unrelated expand elsewhere in the tree. Every member is also
    * touched on each diff, so the pool's eviction order tracks what the user is
    * actually looking at rather than subscribe order.
+   *
+   * A gitignored directory is expandable but never watched (spec section 8).
+   * A build output directory is the case: `dist` or `target` rewrites itself
+   * on every compile, and a watch there spends a pool slot and a re-list on
+   * churn nobody asked to see. The flag comes from the parent's listing, so a
+   * directory expanded before that listing arrives is subscribed and then
+   * dropped by the diff below when it does.
    */
   const subscribedRef = useRef<Set<string>>(new Set())
+  /**
+   * Joined on NUL, which is the one byte a path cannot contain, so the effect
+   * below re-runs when the watchable set changes and not merely when some
+   * directory re-listed. Every watch event re-lists a directory, and depending
+   * on `dirs` directly would re-touch every subscription each time one did.
+   */
+  const watchKey = useMemo(
+    () => [...expanded].filter((dir) => !isIgnoredDir(dirs, dir)).sort().join('\0'),
+    [expanded, dirs]
+  )
   useEffect(() => {
     const subscribed = subscribedRef.current
-    for (const dir of expanded) {
+    const watchable = new Set(watchKey === '' ? [] : watchKey.split('\0'))
+    for (const dir of watchable) {
       if (!subscribed.has(dir)) {
         window.seashell.watch.subscribe({ dir })
         subscribed.add(dir)
@@ -150,12 +169,12 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
       window.seashell.watch.touch({ dir })
     }
     for (const dir of [...subscribed]) {
-      if (!expanded.has(dir)) {
+      if (!watchable.has(dir)) {
         window.seashell.watch.unsubscribe({ dir })
         subscribed.delete(dir)
       }
     }
-  }, [expanded])
+  }, [watchKey])
 
   // Unmount only: every subscription this instance ever made must go with it.
   useEffect(() => {
