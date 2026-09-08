@@ -93,6 +93,10 @@ export async function resolvePathClick(input: ResolveInput, deps: ResolveDeps): 
       // wider one would only add copies of it from other checkouts.
       if (found.paths.length > 0) break
     }
+    // A single hit is revealed even when the walk was truncated, which is a
+    // deliberate trade: a walk of the home directory trips its budget most
+    // times it runs, and refusing the one file it did find would make the
+    // feature useless exactly where it is needed.
     if (found.paths.length === 1) return { kind: 'hit', hit: { resolved: found.paths[0]!, isDir: false } }
     if (found.paths.length === 0) {
       // A truncated search that found nothing did not prove there is nothing:

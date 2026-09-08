@@ -26,10 +26,19 @@ export async function findBySuffix(
   const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }]
   const paths: string[] = []
   let visited = 0
+  /**
+   * readDir caps a single listing at 5,000 entries and says so. A listing that
+   * stopped early is not evidence about what it did not list, so one anywhere
+   * in the walk makes the whole answer truncated: without this, a flat
+   * directory of 20,000 files reports a confident "nothing ends in that", or a
+   * single match as if it were the only one.
+   */
+  let budgetHit = false
   while (queue.length > 0) {
     const { dir, depth } = queue.shift()!
     const res = await readDirFn({ path: dir, respectGitignore: true })
     if (!res.ok) continue
+    if (res.truncated) budgetHit = true
     for (const e of res.entries) {
       visited += 1
       if (visited > MAX_VISITED) return { paths, truncated: true }
@@ -45,5 +54,5 @@ export async function findBySuffix(
       if (e.isDir && !e.ignored && depth < MAX_DEPTH) queue.push({ dir: full, depth: depth + 1 })
     }
   }
-  return { paths, truncated: false }
+  return { paths, truncated: budgetHit }
 }

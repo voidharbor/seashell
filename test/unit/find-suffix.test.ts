@@ -46,6 +46,30 @@ describe('findBySuffix', () => {
     expect(r.paths).toEqual(['/g/src/app.tsx'])
   })
 
+  it('reports a truncated listing as a truncated search', async () => {
+    const flat: Record<string, Array<{ name: string; isDir: boolean }>> = {
+      '/t': [
+        { name: 'big', isDir: true },
+        { name: 'app.tsx', isDir: false },
+      ],
+      // readDir stopped listing this one at its own 5,000-entry cap, so
+      // "nothing here ends in .tsx" is a claim the walk cannot make.
+      '/t/big': [{ name: 'one.ts', isDir: false }],
+    }
+    const readDir = async (req: FsReadDirRequest): Promise<FsReadDirResponse> => {
+      const entries = flat[req.path]
+      if (!entries) return { ok: false, code: 'ENOENT', message: 'no' } as FsReadDirResponse
+      return {
+        ok: true,
+        entries: entries.map((e) => ({ ...e, size: 0 })),
+        truncated: req.path === '/t/big',
+      } as FsReadDirResponse
+    }
+    const r = await findBySuffix({ root: '/t', suffix: '/app.tsx', limit: 10 }, readDir)
+    expect(r.paths).toEqual(['/t/app.tsx'])
+    expect(r.truncated).toBe(true)
+  })
+
   it('stops at the limit and says so', async () => {
     const r = await findBySuffix({ root: '/r', suffix: '/app.tsx', limit: 2 }, fakeReadDir)
     expect(r.paths).toHaveLength(2)
