@@ -17,13 +17,14 @@ export const MAX_VISITED = 50_000
 /**
  * Breadth-first over the explorer's own directory reader, so gitignored and
  * always-hidden directories are skipped exactly as the tree skips them.
+ * Children are joined with path.posix so the walk stays "/"-separated on
+ * every platform, matching the "/"-anchored suffix the renderer sends.
  */
 export async function findBySuffix(
   req: FindBySuffixRequest,
   readDirFn: (r: FsReadDirRequest) => Promise<FsReadDirResponse> = realReadDir
 ): Promise<FindBySuffixResponse> {
-  const root = path.resolve(req.root)
-  const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }]
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: req.root, depth: 0 }]
   const paths: string[] = []
   let visited = 0
   /**
@@ -42,7 +43,7 @@ export async function findBySuffix(
     for (const e of res.entries) {
       visited += 1
       if (visited > MAX_VISITED) return { paths, truncated: true }
-      const full = path.join(dir, e.name)
+      const full = path.posix.join(dir, e.name)
       if (full.endsWith(req.suffix)) {
         paths.push(full)
         if (paths.length >= req.limit) return { paths, truncated: true }
