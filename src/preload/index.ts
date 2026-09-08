@@ -13,6 +13,8 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import {
   CH,
   type AppPaths,
+  type FindBySuffixRequest,
+  type FindBySuffixResponse,
   type FsProbeRequest,
   type LinksEnsureRequest,
   type LinksEnsureResponse,
@@ -83,6 +85,8 @@ const api: SeashellApi = {
       ipcRenderer.invoke(CH.fsReadDir, req),
     statBatch: (req: FsStatBatchRequest): Promise<FsStatBatchResponse> =>
       ipcRenderer.invoke(CH.fsStatBatch, req),
+    findBySuffix: (req: FindBySuffixRequest): Promise<FindBySuffixResponse> =>
+      ipcRenderer.invoke(CH.fsFindBySuffix, req),
     probe: (req: FsProbeRequest): Promise<FsProbeResponse> => ipcRenderer.invoke(CH.fsProbe, req),
     readTextFile: (req: FsReadTextFileRequest): Promise<FsReadTextFileResponse> =>
       ipcRenderer.invoke(CH.fsReadTextFile, req),

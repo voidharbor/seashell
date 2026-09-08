@@ -16,6 +16,7 @@ import { readDir } from './fs/tree.js'
 import { readTextFile } from './fs/read.js'
 import { writeTextFile } from './fs/write.js'
 import { statBatch } from './fs/stat-batch.js'
+import { findBySuffix } from './fs/find-suffix.js'
 import { decideRoute, VIEWER_MAX_BYTES } from './fs/route.js'
 import { denyOpenPath, extOf } from './fs/path-guard.js'
 import { statForOpen, type OpenTarget } from './fs/open-target.js'
@@ -59,6 +60,14 @@ const ReadDirReq = z.object({ path: AbsPath, respectGitignore: z.boolean() })
 const StatBatchReq = z.object({
   cwd: AbsPath,
   candidates: z.array(z.string().max(4096)).max(512),
+})
+const FindSuffixReq = z.object({
+  root: AbsPath,
+  // Segment-anchored by contract, and the walk only ever compares it with
+  // endsWith, so a suffix that does not start with '/' is refused rather than
+  // quietly matched against the middle of a name.
+  suffix: z.string().min(2).max(512).regex(/^\//),
+  limit: z.number().int().min(1).max(50),
 })
 const ProbeReq = z.object({ path: AbsPath })
 const ReadTextReq = z.object({
@@ -145,6 +154,12 @@ export function registerIpc(ptyManager: PtyManager): void {
     const parsed = StatBatchReq.safeParse(raw)
     if (!parsed.success) return { results: [] }
     return statBatch(parsed.data)
+  })
+
+  ipcMain.handle(CH.fsFindBySuffix, async (_e, raw) => {
+    const parsed = FindSuffixReq.safeParse(raw)
+    if (!parsed.success) return { paths: [], truncated: false }
+    return findBySuffix(parsed.data)
   })
 
   ipcMain.handle(CH.fsProbe, async (_e, raw): Promise<FsProbeResponse> => {

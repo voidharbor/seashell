@@ -23,6 +23,7 @@ export const CH = {
 
   fsReadDir: 'fs:readDir',
   fsStatBatch: 'fs:statBatch',
+  fsFindBySuffix: 'fs:findBySuffix',
   fsProbe: 'fs:probe',
   fsReadTextFile: 'fs:readTextFile',
   fsWriteTextFile: 'fs:writeTextFile',
@@ -155,6 +156,27 @@ export interface FsStatBatchResult {
 
 export interface FsStatBatchResponse {
   results: FsStatBatchResult[]
+}
+
+/**
+ * Find the files under `root` whose path ends in `suffix`.
+ *
+ * The other half of a double-clicked path: an agent that shortened a path to
+ * `…/renderer/app.tsx` has thrown away everything `statBatch` needs, so the
+ * only way back to the file is to search for the tail that survived.
+ */
+export interface FindBySuffixRequest {
+  root: string
+  /** Segment-anchored: starts with '/', so `/app.tsx` never matches `myapp.tsx`. */
+  suffix: string
+  /** Hard-capped at 50 by the main-side validator. */
+  limit: number
+}
+
+export interface FindBySuffixResponse {
+  paths: string[]
+  /** The walk stopped early (limit or budget), so `paths` is not the whole answer. */
+  truncated: boolean
 }
 
 /**
@@ -416,6 +438,7 @@ export interface SeashellApi {
   fs: {
     readDir(req: FsReadDirRequest): Promise<FsReadDirResponse>
     statBatch(req: FsStatBatchRequest): Promise<FsStatBatchResponse>
+    findBySuffix(req: FindBySuffixRequest): Promise<FindBySuffixResponse>
     probe(req: FsProbeRequest): Promise<FsProbeResponse>
     readTextFile(req: FsReadTextFileRequest): Promise<FsReadTextFileResponse>
     writeTextFile(req: FsWriteTextFileRequest): Promise<FsWriteTextFileResponse>
