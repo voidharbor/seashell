@@ -6,6 +6,7 @@ import { net } from 'electron'
 import type { UpdateState } from '../../shared/ipc.js'
 import { isNewer, parseRelease, RELEASE_ORIGIN, type ReleaseInfo } from './check.js'
 import { buildInstallScript } from './install-script.js'
+import { shouldEmitProgress, type ProgressPoint } from './progress.js'
 
 export interface UpdaterDeps {
   currentVersion: string
@@ -18,6 +19,12 @@ export interface UpdaterDeps {
   /** The app's own pid, for the install script's wait. */
   pid: number
   quit: () => void
+  /**
+   * Injected only by the tests. Production leaves it unset and gets Electron's
+   * `net.fetch`, which goes through the app's own network stack, proxy
+   * settings and certificate store rather than Node's.
+   */
+  fetch?: (url: string, init?: RequestInit) => Promise<Response>
 }
 
 /**
@@ -44,13 +51,17 @@ export class Updater {
     this.d.send(s)
   }
 
+  private fetch(url: string, init?: RequestInit): Promise<Response> {
+    return this.d.fetch ? this.d.fetch(url, init) : net.fetch(url, init)
+  }
+
   /** One check per launch. Silent on every failure: an updater must never nag. */
   async start(): Promise<void> {
     if (!this.d.isPackaged || process.env.SEASHELL_NO_UPDATE_CHECK) return
     try {
       const ctl = new AbortController()
       const t = setTimeout(() => ctl.abort(), TIMEOUT_MS)
-      const res = await net.fetch(API, {
+      const res = await this.fetch(API, {
         headers: { accept: 'application/vnd.github+json' },
         signal: ctl.signal,
       })
@@ -84,17 +95,24 @@ export class Updater {
     const target = path.join(dir, `SeaShell-${info.version}-universal.zip`)
     try {
       await fsp.mkdir(dir, { recursive: true })
-      const res = await net.fetch(info.zipUrl)
+      const res = await this.fetch(info.zipUrl)
       if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`)
       const out = fs.createWriteStream(target)
       const reader = res.body.getReader()
       let received = 0
+      // The state above is the first point on the curve, so the throttle is
+      // measured from it rather than from the first chunk.
+      let sent: ProgressPoint = { received: 0, total: info.zipBytes, at: Date.now() }
       for (;;) {
         const { done, value } = await reader.read()
         if (done) break
         received += value.byteLength
         if (!out.write(value)) await new Promise<void>((r) => out.once('drain', () => r()))
-        this.set({ phase: 'downloading', version: info.version, received, total: info.zipBytes })
+        const point: ProgressPoint = { received, total: info.zipBytes, at: Date.now() }
+        if (shouldEmitProgress(sent, point)) {
+          sent = point
+          this.set({ phase: 'downloading', version: info.version, received, total: info.zipBytes })
+        }
       }
       await new Promise<void>((r, j) => out.end((e?: Error | null) => (e ? j(e) : r())))
       // The size the release advertised is the only thing this can check

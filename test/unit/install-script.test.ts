@@ -26,6 +26,29 @@ describe('buildInstallScript', () => {
     expect(s).toContain('xattr -dr com.apple.quarantine "$APP"')
     expect(s).toContain('open -a "$APP"')
   })
+  it('defines a fail() that restores the old bundle and relaunches', () => {
+    expect(s).toContain('fail()')
+    const fail = s.split('\n').find((l) => l.startsWith('fail()'))!
+    expect(fail).toContain('mv "$OLD" "$APP"')
+    expect(fail).toContain('open -a "$APP"')
+    expect(fail).toContain('exit 1')
+  })
+  it('routes every failure branch through fail(), so nothing exits without relaunching', () => {
+    expect(s).toContain('fail "version mismatch: $V"')
+    expect(s).toContain('fail "unzip failed"')
+    expect(s).toContain('fail "app did not exit"')
+    expect(s).toContain('fail "could not move old app"')
+    expect(s).toContain('fail "could not move new app"')
+    // Only fail() may exit non-zero: a bare `exit 1` is a path that leaves the
+    // user with no app running and no reason on screen.
+    const bare = s
+      .split('\n')
+      .filter((l) => l.includes('exit 1') && !l.startsWith('fail()'))
+    expect(bare).toEqual([])
+  })
+  it('logs that it is done before it reopens the app', () => {
+    expect(s.indexOf('echo "install done')).toBeLessThan(s.lastIndexOf('open -a "$APP"'))
+  })
   it('quotes every path', () => {
     for (const p of [input.zipPath, input.stagingDir, input.appPath, input.logPath]) expect(s).toContain(`"${p}"`)
   })
