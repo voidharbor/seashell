@@ -1288,6 +1288,46 @@ body.dragging .web__view {
   line-height: 1.45;
 }
 
+/* -------------------------------------------------- restore last session */
+
+/* Not an overlay. The card is the whole window at this point, because the
+   window it is offering to fill has not been built yet. */
+.restore {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--chrome);
+}
+
+.restore__card {
+  width: min(460px, 84%);
+  padding: calc(20px * var(--ui-scale));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--cardBg);
+  box-shadow: 0 20px 60px #000c;
+}
+
+.restore__title {
+  font-size: calc(15px * var(--ui-scale));
+  font-weight: 600;
+  color: var(--text);
+}
+
+.restore__detail {
+  margin-top: calc(8px * var(--ui-scale));
+  color: var(--dim);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
+
+.restore__buttons {
+  display: flex;
+  gap: calc(8px * var(--ui-scale));
+  margin-top: calc(16px * var(--ui-scale));
+}
+
 /* -------------------------------------------------------------- tutorial */
 
 .tut {

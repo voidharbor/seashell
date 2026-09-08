@@ -45,14 +45,22 @@ import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
 import { ProjectsPanel, type SaveScope } from './projects/ProjectsPanel.js'
 import { stateToTabs, tabToSaved, tabsFromSaved } from './projects/serialize.js'
-import type { Project } from '../shared/ipc.js'
+import { shouldOfferRestore } from './session/offer.js'
+import { RestoreCard } from './session/RestoreCard.js'
+import type { LastSession, Project } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 import { dirtyPreviewPanes } from './viewer/FilePreview.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
 
+/** How often the window writes itself to the last-session file. Frequent enough
+ *  that a crash loses little, rare enough to be free. */
+const SNAPSHOT_INTERVAL_MS = 30_000
+
 export function App(): React.JSX.Element {
   const [ready, setReady] = useState(false)
+  /** The snapshot found at launch, while the user decides what to do with it. */
+  const [pendingRestore, setPendingRestore] = useState<LastSession | null>(null)
   const [home, setHome] = useState('')
   const [state, dispatch] = useReducer(reducer, null, (): AppState => ({
     tabs: [],
@@ -286,12 +294,27 @@ export function App(): React.JSX.Element {
       // terminal, started once — see term/dpr.ts.
       watchDevicePixelRatio({ onChange: refitVisibleTerminals })
       dispatch({ type: 'explorer.setRoot', root: paths.home })
-      dispatch({
-        type: 'tab.new',
-        cwd: paths.home,
-        home: paths.home,
-        autoColor: autoColorRef.current,
-      })
+
+      // What the window looked like last time, if it was worth offering back.
+      // Nothing is restored without being asked: a snapshot is a layout that
+      // spawns shells and types resume commands, and doing that unbidden on
+      // every launch would be a worse default than an empty window.
+      let last: LastSession | null = null
+      try {
+        last = await window.seashell.session.load()
+      } catch {
+        last = null // no snapshot is simply a fresh start
+      }
+      if (last && shouldOfferRestore(last.tabs)) {
+        setPendingRestore(last)
+      } else {
+        dispatch({
+          type: 'tab.new',
+          cwd: paths.home,
+          home: paths.home,
+          autoColor: autoColorRef.current,
+        })
+      }
       setReady(true)
     })()
   }, [])
@@ -452,6 +475,84 @@ export function App(): React.JSX.Element {
     },
     [state, activeTab, refreshProjects]
   )
+
+  /**
+   * The last written snapshot, so an unchanged window is not rewritten every
+   * thirty seconds. The comparison is on the serialized tabs rather than on
+   * `state`, because `state` changes on every metrics tick and none of that
+   * reaches the file.
+   */
+  const lastSnapshotRef = useRef('')
+
+  /**
+   * Writes the window to the last-session file, or clears it.
+   *
+   * A project saved by name and this snapshot are the same shape captured the
+   * same way, so this is `saveProject` with the name and the toast removed. A
+   * window not worth offering back clears the file instead of writing it: the
+   * offer on next launch is only as trustworthy as its absence when there is
+   * nothing to restore.
+   *
+   * `force` is the quit path. It skips the unchanged check so main always gets
+   * an answer to its snapshot request instead of waiting out the timeout.
+   */
+  const snapshotSession = useCallback(
+    async (force = false) => {
+      const livePanes = state.tabs.flatMap((t) =>
+        Object.values(t.panes)
+          .filter((p) => p.kind === 'term')
+          .map((p) => ({ paneId: p.id, cwd: p.cwd }))
+      )
+      let sessionIds: ReadonlyMap<string, string> | undefined
+      try {
+        const res = await window.seashell.projects.sessionIds({ panes: livePanes.slice(0, 64) })
+        sessionIds = new Map(Object.entries(res.ids))
+      } catch {
+        sessionIds = undefined // registry unavailable: panes save as plain claude
+      }
+
+      const tabs = stateToTabs(state, sessionIds)
+      try {
+        if (!shouldOfferRestore(tabs)) {
+          if (force || lastSnapshotRef.current !== '') {
+            lastSnapshotRef.current = ''
+            await window.seashell.session.clear()
+          }
+          return
+        }
+
+        const encoded = JSON.stringify(tabs)
+        if (!force && encoded === lastSnapshotRef.current) return
+        await window.seashell.session.save({ tabs })
+        lastSnapshotRef.current = encoded
+      } catch {
+        // Nothing to tell the user and nothing to retry: this fires on a timer
+        // and at quit, and there is no state a failed write leaves behind that
+        // the next attempt does not simply overwrite.
+      }
+    },
+    [state]
+  )
+
+  /**
+   * Held in a ref so the timer below can depend on nothing that changes. A
+   * metrics tick replaces `state` once a second, and an interval re-armed once
+   * a second is an interval that never fires.
+   */
+  const snapshotRef = useRef(snapshotSession)
+  snapshotRef.current = snapshotSession
+
+  useEffect(() => {
+    // Not while the restore card is up: the window has no tabs yet, and a
+    // snapshot of no tabs would clear the very file the card is offering.
+    if (!ready || pendingRestore) return
+    const id = setInterval(() => void snapshotRef.current(), SNAPSHOT_INTERVAL_MS)
+    const off = window.seashell.session.onRequestSnapshot(() => void snapshotRef.current(true))
+    return () => {
+      clearInterval(id)
+      off()
+    }
+  }, [ready, pendingRestore])
 
   /**
    * Opening a project replaces the window, so every pane currently open has to
@@ -964,7 +1065,12 @@ export function App(): React.JSX.Element {
     ro.observe(el)
     setGridSize({ width: el.clientWidth, height: el.clientHeight })
     return () => ro.disconnect()
-  }, [ready])
+    // Both, because both gate whether the grid is on the page at all. `ready`
+    // alone was enough until the restore card started standing in for the whole
+    // window: the grid then first mounts when the card is dismissed, long after
+    // `ready` last changed, and an observer that never re-attached left the
+    // window measuring 0x0 and rendering no panes.
+  }, [ready, pendingRestore])
 
   /**
    * Geometry depends on the *shape* of the active tab, never on its numbers.
@@ -1141,6 +1247,42 @@ export function App(): React.JSX.Element {
   )
 
   if (!ready) return <div className="empty">Starting SeaShell…</div>
+
+  // The card stands in for the whole window rather than sitting over it. There
+  // is nothing behind it yet, and a modal over an empty window would only be a
+  // more elaborate way of saying the same thing.
+  if (pendingRestore) {
+    const paneCount = pendingRestore.tabs.reduce((n, t) => n + Object.keys(t.panes).length, 0)
+    return (
+      <RestoreCard
+        tabCount={pendingRestore.tabs.length}
+        paneCount={paneCount}
+        savedAt={pendingRestore.savedAt}
+        onRestore={() => {
+          const snap = pendingRestore
+          setPendingRestore(null)
+          void restoreProjectTabs({
+            id: 'last-session',
+            name: 'Last session',
+            savedAt: snap.savedAt,
+            tabs: snap.tabs,
+          }).then((restored) => {
+            // No live panes to reap: this is boot, and the window is empty.
+            if (restored.length === 0) {
+              dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current })
+              return
+            }
+            dispatch({ type: 'tabs.replace', tabs: restored })
+          })
+        }}
+        onFresh={() => {
+          setPendingRestore(null)
+          void window.seashell.session.clear()
+          dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current })
+        }}
+      />
+    )
+  }
 
   const order = activeTab ? dfsPaneOrder(activeTab.tree) : []
 
