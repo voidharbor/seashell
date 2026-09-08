@@ -27,9 +27,9 @@ export interface UpdaterDeps {
  * the only thing that ever happens in a real launch.
  */
 const API =
-  process.env.SEASHELL_UPDATE_API ?? 'https://api.github.com/repos/voidharbor/seashell/releases/latest'
-const ORIGIN = process.env.SEASHELL_UPDATE_ORIGIN ?? RELEASE_ORIGIN
-const INSTALLED_APP = process.env.SEASHELL_UPDATE_APP_PATH ?? '/Applications/SeaShell.app'
+  process.env.SEASHELL_UPDATE_API || 'https://api.github.com/repos/voidharbor/seashell/releases/latest'
+const ORIGIN = process.env.SEASHELL_UPDATE_ORIGIN || RELEASE_ORIGIN
+const INSTALLED_APP = process.env.SEASHELL_UPDATE_APP_PATH || '/Applications/SeaShell.app'
 const TIMEOUT_MS = 5000
 
 export class Updater {
@@ -72,9 +72,11 @@ export class Updater {
     }
   }
 
+  /** From `available`, and from `error` again: a download that failed on a
+   *  blip is worth another click, not the loss of the release. */
   async download(): Promise<void> {
     const info = this.release
-    if (!info || this.state.phase !== 'available') return
+    if (!info || (this.state.phase !== 'available' && this.state.phase !== 'error')) return
     // Claimed before the first await, so two fast clicks cannot both pass the
     // guard above and write the same file at once.
     this.set({ phase: 'downloading', version: info.version, received: 0, total: info.zipBytes })
@@ -118,22 +120,33 @@ export class Updater {
     if (!info || !this.zipPath || this.state.phase !== 'ready') return
     const dir = path.join(this.d.userData, 'updates')
     const script = path.join(dir, 'install.sh')
-    await fsp.writeFile(
-      script,
-      buildInstallScript({
-        pid: this.d.pid,
-        zipPath: this.zipPath,
-        stagingDir: path.join(dir, 'staging'),
-        appPath: INSTALLED_APP,
-        expectedVersion: info.version,
-        logPath: path.join(dir, 'install.log'),
-      }),
-      { mode: 0o755 }
-    )
-    // Detached and unref'd on purpose: it has to outlive this process, since
-    // the first thing it does is wait for this pid to go away.
-    const child = spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' })
-    child.unref()
+    try {
+      await fsp.writeFile(
+        script,
+        buildInstallScript({
+          pid: this.d.pid,
+          zipPath: this.zipPath,
+          stagingDir: path.join(dir, 'staging'),
+          appPath: INSTALLED_APP,
+          expectedVersion: info.version,
+          logPath: path.join(dir, 'install.log'),
+        }),
+        { mode: 0o755 }
+      )
+      // Detached and unref'd on purpose: it has to outlive this process, since
+      // the first thing it does is wait for this pid to go away.
+      const child = spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' })
+      child.unref()
+    } catch (e) {
+      // Nothing has been swapped at this point, so the app stays where it is
+      // and the banner says why rather than quitting into nothing.
+      this.set({
+        phase: 'error',
+        version: info.version,
+        message: e instanceof Error ? e.message : String(e),
+      })
+      return
+    }
     this.d.quit()
   }
 }

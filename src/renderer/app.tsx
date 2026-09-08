@@ -1665,10 +1665,15 @@ export function App(): React.JSX.Element {
         onLater={() => {
           if (updateState.phase !== 'idle') {
             setDismissedUpdate(updateState.version)
-            try {
-              localStorage.setItem('seashell.updateDismissed', updateState.version)
-            } catch {
-              /* storage can be unavailable; the banner still hides for now */
+            // A failure is not a refusal. Dismissing an error hides the banner
+            // for this session only, so the next launch offers the same
+            // release again rather than losing it to one bad download.
+            if (updateState.phase !== 'error') {
+              try {
+                localStorage.setItem('seashell.updateDismissed', updateState.version)
+              } catch {
+                /* storage can be unavailable; the banner still hides for now */
+              }
             }
           }
           setUpdateState({ phase: 'idle' })

@@ -67,6 +67,10 @@ export function UpdateBanner(props: UpdateBannerProps): React.JSX.Element | null
           <span>
             Update {s.version} failed: {s.message}
           </span>
+          {/* A failure is usually a blip, so the first button is another go. */}
+          <button className="btn btn--primary" onClick={props.onDownload}>
+            Try again
+          </button>
           <button className="btn" onClick={props.onLater}>
             Dismiss
           </button>
