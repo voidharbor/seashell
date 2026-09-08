@@ -89,13 +89,13 @@ const STEPS: Step[] = [
   {
     title: 'Panes tell you when they want you',
     body:
-      'A pane breathes its border when its program rings the bell for you, which Claude Code does ' +
-      'when it needs a permission or has finished and sits waiting, and pulses when a job finishes, ' +
-      'never the pane you are already looking at. ' +
+      'A pane breathes its border when its program rings the bell for you, which Claude Code ' +
+      'does about a minute after it has finished and is sitting there waiting for you, and ' +
+      'pulses when a job finishes, never the pane you are already looking at. ' +
       'Panes also name themselves from whatever the running program is doing, so ' +
       'six agents read as six pieces of work rather than six panes called claude. ' +
       'Click the dot in a title bar to colour a pane, or double-click a tab to ' +
-      'rename it. When you want none of it, hit the moon at the top right — that ' +
+      'rename it. When you want none of it, hit the moon at the top right. That ' +
       'is sleep, and panes stop asking for you until you wake it. All of it is ' +
       'switchable in Settings.',
     keys: [

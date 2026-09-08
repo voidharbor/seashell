@@ -229,6 +229,10 @@ npm run dist:mac       # universal .dmg for distribution
 beside the installed one, with its own userData so the single-instance lock does not exit it.
 `node scripts/cdp.mjs 9333 "<expr>"` evaluates `<expr>` in that instance's renderer over CDP.
 
+Run `npm run build` first, every time. Electron's entry point is `out/main/index.js`, which is
+build output and not in the repo, so `npx electron .` on a clean checkout, or after any source
+change, starts the previous build or nothing at all.
+
 A universal build works from an Intel host with no cross-compiling. `node-pty` 1.1.0 is
 Node-API and already ships prebuilds for both `darwin-x64` and `darwin-arm64`, so nothing needs
 recompiling — the loader picks the right one at runtime.

@@ -3,7 +3,7 @@
  * at its input box), 'selector' (a picker where typed text + Enter, or even a
  * lone digit, confirms an option), or null (can't tell).
  *
- * [pure] — a raw pty output tail in, a verdict out. It reads the raw stream
+ * [pure]. A raw pty output tail in, a verdict out. It reads the raw stream
  * main already has, matching ANSI-stripped stream segments rather than
  * xterm's rendered buffer, since main must judge a pane's screen without
  * waiting on the renderer.

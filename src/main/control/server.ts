@@ -1,6 +1,6 @@
 /**
  * The control socket: one Unix domain socket, one command (`type`), one
- * request per connection — see
+ * request per connection. See
  * docs/superpowers/specs/2026-07-31-pane-delivery-design.md.
  *
  * Everything with a decision in it is injected (`ControlServerDeps`), so tests
