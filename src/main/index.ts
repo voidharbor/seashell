@@ -2,7 +2,7 @@ import { app, BrowserWindow, net, protocol, shell } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 import { buildMenu } from './menu.js'
-import { registerIpc } from './ipc-router.js'
+import { awaitSnapshot, registerIpc } from './ipc-router.js'
 import { PtyManager } from './pty/manager.js'
 import { MetricsMonitor } from './monitor/monitor.js'
 import { startControlServer, type ControlServer } from './control/server.js'
@@ -253,6 +253,10 @@ app.on('window-all-closed', () => {
  * unquittable. Losing the ladder is bad; an app you cannot quit is worse.
  */
 const QUIT_DRAIN_TIMEOUT_MS = 8000
+
+/** How long quit will wait for the renderer's parting snapshot of the layout. */
+const SNAPSHOT_TIMEOUT_MS = 1000
+
 let draining = false
 
 app.on('before-quit', (e) => {
@@ -262,6 +266,17 @@ app.on('before-quit', (e) => {
   metrics?.stop()
 
   void (async () => {
+    // The last thing asked of the renderer, and the first thing done here:
+    // once killAll starts, panes begin dying and the layout being snapshotted
+    // is no longer the one the user quit. One second is a generous ceiling for
+    // a JSON.stringify and a single file write, and it is capped rather than
+    // awaited outright because quit is not allowed to depend on the renderer.
+    try {
+      if (mainWindow) await awaitSnapshot(mainWindow, SNAPSHOT_TIMEOUT_MS)
+    } catch {
+      /* no snapshot is a lost nicety, never a reason to stay open */
+    }
+
     try {
       await Promise.race([
         Promise.all([

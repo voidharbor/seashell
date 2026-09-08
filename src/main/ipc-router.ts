@@ -1,4 +1,4 @@
-import { app, ipcMain, shell } from 'electron'
+import { app, ipcMain, shell, type BrowserWindow } from 'electron'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -7,6 +7,7 @@ import {
   CH,
   type AppPaths,
   type Project,
+  type SavedTab,
   type FsProbeResponse,
   type OpenPathResponse,
   type LinksEnsureResponse,
@@ -29,6 +30,7 @@ import {
   saveProjects,
   upsertProject,
 } from './state/store.js'
+import { clearLastSession, loadLastSession, saveLastSession } from './state/last-session.js'
 import { sessionIdsForPanes } from './state/session-lookup.js'
 import { resumeModesForPanes } from './state/resume-mode.js'
 
@@ -88,11 +90,17 @@ const LinkReq = z.object({ linkId: z.string().min(1).max(64) })
  * re-validates and remaps it on restore, and duplicating that structural walk in
  * two places is how the two copies drift apart.
  */
+const SavedTabs = z.array(z.unknown()).min(1).max(64)
+
 const ProjectSaveReq = z.object({
   id: z.string().min(1).max(128).optional(),
   name: z.string().min(1).max(MAX_NAME_LENGTH),
-  tabs: z.array(z.unknown()).min(1).max(64),
+  tabs: SavedTabs,
 })
+
+/** The last-session snapshot is a project without a name, so its tabs are held
+ *  to exactly the same rule rather than a second, drifting copy of one. */
+const SessionSaveReq = z.object({ tabs: SavedTabs })
 const HttpReq = z.object({ url: z.string().max(4096) })
 
 /** Extension -> mime, for the image preview. Fixed table; never sniffed. */
@@ -116,6 +124,47 @@ const IMAGE_MIME: Record<string, string> = {
 /** Base64 inflates by 4/3 and the payload crosses IPC as a string, so this
  *  ceiling is about renderer memory, not disk. */
 const IMAGE_MAX_BYTES = 16 * 1024 * 1024
+
+/**
+ * The one thing quit waits on before it starts reaping.
+ *
+ * Only the renderer knows the current layout, so main cannot write the
+ * last-session file itself; it has to ask and then wait. The slot below is the
+ * resolver for that wait, and it is deliberately a single slot: there is one
+ * window and one quit, and a queue of pending snapshot requests would only ever
+ * describe a bug.
+ */
+let pendingSnapshot: (() => void) | null = null
+
+/**
+ * Asks the renderer for a snapshot and resolves when it answers, or when
+ * `timeoutMs` passes, whichever comes first. The timeout is the load-bearing
+ * half: a renderer that is wedged, crashed or mid-reload must never be able to
+ * make the app unquittable.
+ */
+export function awaitSnapshot(win: BrowserWindow, timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let done = false
+    const finish = (): void => {
+      if (done) return
+      done = true
+      if (pendingSnapshot === finish) pendingSnapshot = null
+      if (timer) clearTimeout(timer)
+      resolve()
+    }
+
+    pendingSnapshot = finish
+    timer = setTimeout(finish, timeoutMs)
+
+    try {
+      if (win.isDestroyed()) finish()
+      else win.webContents.send(CH.sessionRequestSnapshot)
+    } catch {
+      finish() // nobody to ask; quit proceeds
+    }
+  })
+}
 
 export function registerIpc(ptyManager: PtyManager): void {
   ipcMain.handle(CH.ptySpawn, (_e, raw) => {
@@ -391,6 +440,40 @@ export function registerIpc(ptyManager: PtyManager): void {
       return { ok: false }
     }
     return { ok: true }
+  })
+
+  // ------------------------------------------------------- last session
+  /**
+   * A failed snapshot write is never reported to the renderer. This runs on the
+   * quit path, and there is no useful thing a user can do about a full disk in
+   * the half-second before the window closes; losing the offer to restore is
+   * strictly better than delaying or blocking the quit to say so.
+   */
+  ipcMain.handle(CH.sessionSave, async (_e, raw) => {
+    const parsed = SessionSaveReq.safeParse(raw)
+    if (parsed.success) {
+      try {
+        await saveLastSession(parsed.data.tabs as SavedTab[], app.getPath('userData'))
+      } catch {
+        /* the snapshot is a nicety; quit must not hang on it */
+      }
+    }
+    pendingSnapshot?.()
+  })
+
+  ipcMain.handle(CH.sessionLoad, () => loadLastSession(app.getPath('userData')))
+
+  ipcMain.handle(CH.sessionClear, async () => {
+    try {
+      await clearLastSession(app.getPath('userData'))
+    } catch {
+      /* an unremovable snapshot is re-validated on load anyway */
+    }
+    // A clear is as much an answer to a snapshot request as a save is: the
+    // renderer looked and decided there was nothing worth keeping. Waiting out
+    // the full timeout for that would put a visible pause on every quit of a
+    // window holding one plain shell.
+    pendingSnapshot?.()
   })
 
   ipcMain.handle(CH.appGetPaths, (): AppPaths => {

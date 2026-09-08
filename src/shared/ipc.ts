@@ -44,6 +44,11 @@ export const CH = {
   projectsResumeModes: 'projects:resumeModes',
   projectsSave: 'projects:save',
   projectsDelete: 'projects:delete',
+  sessionSave: 'session:save',
+  sessionLoad: 'session:load',
+  sessionClear: 'session:clear',
+  /** Main to renderer: write a snapshot now. Sent once, at quit. */
+  sessionRequestSnapshot: 'session:requestSnapshot',
   uiCommand: 'ui:command',
 } as const
 
@@ -423,6 +428,25 @@ export interface ProjectsResumeModesResponse {
 export type ProjectsDeleteResponse = { ok: boolean }
 
 // ---------------------------------------------------------------------------
+// Last session, the unnamed project the app keeps for you
+// ---------------------------------------------------------------------------
+
+/**
+ * The window as it last stood. Same tab shape as a project, and for the same
+ * reason: what survives a quit is a layout, never a session. It is written on a
+ * timer and once more at quit, and offered back on the next launch.
+ */
+export interface LastSession {
+  schemaVersion: 1
+  savedAt: string
+  tabs: SavedTab[]
+}
+
+export interface SessionSaveRequest {
+  tabs: SavedTab[]
+}
+
+// ---------------------------------------------------------------------------
 // The preload surface, as seen by the renderer on `window.seashell`
 // ---------------------------------------------------------------------------
 
@@ -463,6 +487,13 @@ export interface SeashellApi {
     resumeModes(req: ProjectsResumeModesRequest): Promise<ProjectsResumeModesResponse>
     save(req: ProjectsSaveRequest): Promise<ProjectsSaveResponse>
     remove(req: ProjectsDeleteRequest): Promise<ProjectsDeleteResponse>
+  }
+  session: {
+    save(req: SessionSaveRequest): Promise<void>
+    load(): Promise<LastSession | null>
+    clear(): Promise<void>
+    /** Main asking for a snapshot now, because the app is about to quit. */
+    onRequestSnapshot(cb: () => void): () => void
   }
   app: {
     getPaths(): Promise<AppPaths>

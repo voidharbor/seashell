@@ -50,6 +50,8 @@ import {
   type ProjectsSaveRequest,
   type ProjectsSaveResponse,
   type PtyWriteRequest,
+  type LastSession,
+  type SessionSaveRequest,
   type SeashellApi,
   type UiCommandEvent,
 } from '../shared/ipc.js'
@@ -116,6 +118,12 @@ const api: SeashellApi = {
       ipcRenderer.invoke(CH.projectsSave, req),
     remove: (req: ProjectsDeleteRequest): Promise<ProjectsDeleteResponse> =>
       ipcRenderer.invoke(CH.projectsDelete, req),
+  },
+  session: {
+    save: (req: SessionSaveRequest): Promise<void> => ipcRenderer.invoke(CH.sessionSave, req),
+    load: (): Promise<LastSession | null> => ipcRenderer.invoke(CH.sessionLoad),
+    clear: (): Promise<void> => ipcRenderer.invoke(CH.sessionClear),
+    onRequestSnapshot: (cb: () => void) => subscribe<void>(CH.sessionRequestSnapshot, cb),
   },
   app: {
     getPaths: (): Promise<AppPaths> => ipcRenderer.invoke(CH.appGetPaths),
