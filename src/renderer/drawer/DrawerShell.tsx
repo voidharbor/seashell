@@ -107,9 +107,11 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
       onDoubleClick: (x, y) => {
         const candidate = pathAtPoint(t.term, x, y)
         if (!candidate) return
-        const cwd = cwdRef.current || props.focusCwd
+        // Named apart from the `cwd` state above, which this used to shadow.
+        // The ref is the live one; the state exists only to render the header.
+        const resolveCwd = cwdRef.current || props.focusCwd
         void window.seashell.fs
-          .statBatch({ cwd, candidates: [candidate] })
+          .statBatch({ cwd: resolveCwd, candidates: [candidate] })
           .then((res) => {
             const hit = res.results[0]
             if (hit) {
@@ -118,7 +120,9 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
             }
             // Same reason as the pane: a silent miss is indistinguishable from
             // a broken feature, and the drawer misses for the same reasons.
-            toastRef.current(`No file at ${candidate} from ${cwd || 'an unknown directory'}`)
+            toastRef.current(
+              `No file at ${candidate} from ${resolveCwd || 'an unknown directory'}`
+            )
           })
       },
     })

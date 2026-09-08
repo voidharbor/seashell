@@ -24,11 +24,23 @@ class FakeTerminal {
   setFontSize = vi.fn()
   markExited = vi.fn()
   term = { cols: 80, rows: 24, focus: vi.fn() }
-  constructor(public readonly opts: { paneId: string }) {
+  /** `onDoubleClick` is kept because it is the only way in: the real gesture
+   *  needs a live xterm to hit-test, so a test drives the callback directly. */
+  constructor(public readonly opts: { paneId: string; onDoubleClick: (x: number, y: number) => void }) {
     built.push(this)
   }
 }
 const built: FakeTerminal[] = []
+
+/**
+ * What the drawer believes is under the cursor.
+ *
+ * The real `pathAtPoint` reads `term.element.getBoundingClientRect()` and the
+ * xterm buffer, neither of which a fake terminal has, so it would return null
+ * before the handler under test ever ran. Stubbing it is what makes the
+ * resolve-and-report half reachable.
+ */
+const pathAtPoint = vi.fn<(term: unknown, x: number, y: number) => string | null>(() => null)
 
 vi.mock('../../src/renderer/term/terminal.js', () => ({
   PaneTerminal: FakeTerminal,
@@ -39,6 +51,9 @@ vi.mock('../../src/renderer/panes/PaneView.js', () => ({
   terminals: new Map(),
   currentHostname: () => 'testhost',
 }))
+vi.mock('../../src/renderer/panes/pathclick.js', () => ({
+  pathAtPoint: (term: unknown, x: number, y: number) => pathAtPoint(term, x, y),
+}))
 
 const { DrawerShell } = await import('../../src/renderer/drawer/DrawerShell.js')
 const { terminals } = await import('../../src/renderer/panes/PaneView.js')
@@ -46,26 +61,45 @@ type DrawerProps = Parameters<typeof DrawerShell>[0]
 
 let spawns: Array<{ paneId: string; cwd: string }> = []
 
+/**
+ * Typed, not asserted.
+ *
+ * This used to be one object literal ending in `as DrawerProps`, and the
+ * assertion silently absorbed a newly required prop: `onToast` was missing here
+ * and TS2741 never fired. Declaring the defaults as a checked `DrawerProps`
+ * puts that back, so the next required prop breaks this file loudly. The
+ * assertion survives only on the merge, where spreading a Partial widens every
+ * field to `| undefined`.
+ *
+ * The default `onToast` throws rather than being a silent no-op: a toast is a
+ * user-visible claim that something failed, and a test that provokes one
+ * without meaning to should say so.
+ */
+const defaults: DrawerProps = {
+  paneId: 'p1',
+  paneLabel: 'zsh',
+  open: true,
+  height: 240,
+  fontSize: 13,
+  focusCwd: '/Users/test/one',
+  gridWidth: 800,
+  onReveal: () => {},
+  onToast: (message: string) => {
+    throw new Error(`unexpected toast: ${message}`)
+  },
+  onClose: () => {},
+  onDragStart: () => {},
+}
+
 function props(over: Partial<DrawerProps> = {}): DrawerProps {
-  return {
-    paneId: 'p1',
-    paneLabel: 'zsh',
-    open: true,
-    height: 240,
-    fontSize: 13,
-    focusCwd: '/Users/test/one',
-    gridWidth: 800,
-    onReveal: () => {},
-    onClose: () => {},
-    onDragStart: () => {},
-    ...over,
-  } as DrawerProps
+  return { ...defaults, ...over } as DrawerProps
 }
 
 beforeEach(() => {
   built.length = 0
   spawns = []
   terminals.clear()
+  pathAtPoint.mockReturnValue(null)
   ;(window as unknown as Record<string, unknown>).seashell = {
     pty: {
       spawn: vi.fn(async (req: { paneId: string; cwd: string }) => {
@@ -129,5 +163,44 @@ describe('the drawer is per pane', () => {
     expect(built[0]!.enableWebgl).toHaveBeenCalled()
     rerender(<DrawerShell {...props({ open: false })} />)
     expect(built[0]!.disableWebgl).toHaveBeenCalled()
+  })
+})
+
+/**
+ * A double-clicked path that resolves nowhere used to end in silence here, the
+ * same way it did in a pane: `statBatch` omits everything that does not exist,
+ * so `results[0]` was undefined and the handler just returned. Silence is
+ * indistinguishable from a dead feature, which is exactly how it was reported.
+ */
+describe('a path that resolves nowhere', () => {
+  it('names the candidate and the directory it was resolved against', async () => {
+    const onToast = vi.fn()
+    const onReveal = vi.fn()
+    render(<DrawerShell {...props({ onToast, onReveal, focusCwd: '/Users/test/one' })} />)
+
+    // No OSC 7 has arrived, so the pane's own directory is what it resolves
+    // against, which is the case a fresh drawer is always in.
+    pathAtPoint.mockReturnValue('notafile/x.ts')
+    built[0]!.opts.onDoubleClick(40, 40)
+
+    await vi.waitFor(() => expect(onToast).toHaveBeenCalledTimes(1))
+    expect(onToast).toHaveBeenCalledWith('No file at notafile/x.ts from /Users/test/one')
+    expect(onReveal).not.toHaveBeenCalled()
+  })
+
+  it('reveals instead of toasting when the path is real', async () => {
+    const onToast = vi.fn()
+    const onReveal = vi.fn()
+    ;(window as unknown as { seashell: { fs: { statBatch: unknown } } }).seashell.fs.statBatch =
+      vi.fn(async () => ({
+        results: [{ i: 0, resolved: '/Users/test/one/real.ts', kind: 'file', size: 1, exec: false }],
+      }))
+    render(<DrawerShell {...props({ onToast, onReveal })} />)
+
+    pathAtPoint.mockReturnValue('real.ts')
+    built[0]!.opts.onDoubleClick(40, 40)
+
+    await vi.waitFor(() => expect(onReveal).toHaveBeenCalledWith('/Users/test/one/real.ts', false))
+    expect(onToast).not.toHaveBeenCalled()
   })
 })
