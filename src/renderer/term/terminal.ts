@@ -38,6 +38,9 @@ export interface PaneTerminalOptions {
   theme?: ITheme
   /** OSC 0/2 title, as set by the running program. */
   onTitle?: (title: string) => void
+  /** BEL (0x07). Claude Code rings it on a permission prompt and on an idle
+   *  prompt after a turn, once its notification channel is the terminal bell. */
+  onBell?: () => void
   /** OSC 7 working directory, as reported by the shell on every prompt. */
   onCwd?: (cwd: string) => void
   /** This machine's hostname, so a remote shell's OSC 7 can be told apart from
@@ -256,6 +259,7 @@ export class PaneTerminal {
 
     this.term.onData((d) => this.opts.onInput(d))
     this.term.onTitleChange((t) => this.opts.onTitle?.(t))
+    this.term.onBell(() => this.opts.onBell?.())
     this.term.onResize(({ cols, rows }) => {
       // A resize moves the viewport without the user having scrolled, and it is
       // one of the two things that makes the search addon re-run itself. Without

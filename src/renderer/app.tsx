@@ -1409,6 +1409,7 @@ export function App(): React.JSX.Element {
                   }}
                   glow={settings.attentionGlow}
                   onToast={(m) => dispatch({ type: 'toast', message: m })}
+                  onBell={() => dispatch({ type: 'pane.bell', paneId: r.paneId, at: Date.now() })}
                 />
               )
             })

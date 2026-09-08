@@ -73,7 +73,7 @@ const GROUPS: Array<{ heading: string; rows: Row[] }> = [
         key: 'attentionGlow',
         title: 'Glow when a pane needs you',
         detail:
-          'A pane breathes its border while its program sits waiting for input, and pulses briefly when a job finishes. Never the pane you are focused on.',
+          'A pane breathes its border when its program rings the terminal bell to ask for you, and pulses briefly when a job finishes. Claude Code rings it once preferredNotifChannel is terminal_bell.',
       },
       {
         key: 'attentionSound',

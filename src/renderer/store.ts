@@ -79,12 +79,6 @@ export interface PaneState {
   /** When `attention` became 'done', so the pulse can stop asking. */
   attentionAt?: number
   /**
-   * When this pane's current unbroken run of stillness began. Undefined the
-   * moment it does anything. Stillness only counts as a request for attention
-   * once it has lasted; see attention.ts.
-   */
-  waitingSince?: number
-  /**
    * Incremented on every restart. A restarted pane deliberately keeps its id —
    * so it holds its position, label and place in the layout tree — which means
    * the id alone cannot tell "restart this pane" apart from "this pane already
@@ -284,6 +278,7 @@ export type Action =
   | { type: 'pane.label'; paneId: string; label: string }
   | { type: 'pane.autoTitle'; paneId: string; title: string }
   | { type: 'pane.cwd'; paneId: string; cwd: string; home: string }
+  | { type: 'pane.bell'; paneId: string; at: number }
   | { type: 'layout.setTree'; tree: RowNode; pristine?: boolean }
   | { type: 'layout.rebalance' }
   | { type: 'explorer.toggle' }
@@ -660,6 +655,21 @@ export function reducer(state: AppState, action: Action): AppState {
         label: p.labelIsCustom ? p.label : baseLabel(action.cwd, action.home),
       }))
 
+    case 'pane.bell': {
+      const tab = state.tabs.find((t) => t.panes[action.paneId] !== undefined)
+      if (!tab) return state
+      const p = tab.panes[action.paneId]!
+      const focused = tab.id === state.activeTabId && tab.focusedPaneId === p.id
+      // A bell from a bare shell (tab-completion beep) or from a pane the
+      // monitor has not classified yet is not a request for attention.
+      if (focused || !p.metrics || p.metrics.state === 'PROMPT') return state
+      if (p.attention === 'waiting') return state
+      return replaceTab(state, tab.id, (t) => ({
+        ...t,
+        panes: { ...t.panes, [p.id]: { ...p, attention: 'waiting', attentionAt: action.at } },
+      }))
+    }
+
     case 'layout.setTree': {
       const tab = activeTab(state)
       if (!tab) return state
@@ -715,16 +725,13 @@ export function reducer(state: AppState, action: Action): AppState {
           }
 
           const focused = t.id === state.activeTabId && t.focusedPaneId === id
-          const outcome = nextAttention({
+          let attention = nextAttention({
             previous: p.metrics?.state,
             next: m.state,
             current: p.attention ?? null,
             focused,
-            waitingSince: p.waitingSince,
-            now,
           })
 
-          let attention = outcome.attention
           // A finished pulse stops asking after a while; a waiting one does
           // not, because the pane is still waiting.
           if (attention === 'done' && p.attention === 'done' && doneExpired(p.attentionAt, now)) {
@@ -735,12 +742,7 @@ export function reducer(state: AppState, action: Action): AppState {
           const attentionAt =
             attention === 'done' && changed ? now : attention === null ? undefined : p.attentionAt
 
-          if (
-            !changed &&
-            attentionAt === p.attentionAt &&
-            outcome.waitingSince === p.waitingSince &&
-            sameMetrics(p.metrics, m)
-          ) {
+          if (!changed && attentionAt === p.attentionAt && sameMetrics(p.metrics, m)) {
             panes[id] = p
             continue
           }
@@ -751,7 +753,6 @@ export function reducer(state: AppState, action: Action): AppState {
             metrics: m,
             ...(attention === null ? { attention: undefined } : { attention }),
             attentionAt,
-            waitingSince: outcome.waitingSince,
           }
         }
 

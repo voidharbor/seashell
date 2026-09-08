@@ -93,11 +93,12 @@ Running agents is not the same as running commands. An agent session lasts hours
 that time either thinking or waiting on you, and prints paths you immediately want to look at.
 These exist because of that:
 
-- **Panes tell you when they want you.** A pane breathes its border while its program sits waiting
-  for input, and pulses briefly when a job finishes — never the pane you are already looking at.
-  The distinction matters: an agent showing a spinner is emitting bytes constantly while doing
-  nothing, so idle detection keys on what the foreground process is actually doing, not on output.
-  An optional ping sounds the moment a pane starts asking.
+- **Panes tell you when they want you.** A pane breathes its border when its program rings the
+  terminal bell to ask for you, and pulses briefly when a job finishes, never the pane you are
+  already looking at. An optional ping sounds the moment a pane starts asking.
+
+  To get the glow from Claude Code, set `"preferredNotifChannel": "terminal_bell"` in
+  `~/.claude/settings.json`.
 - **Sleep.** One click in the tab bar stops every pane asking, glow and ping together, for when you
   need to concentrate on one of them.
 - **Panes name themselves.** A pane takes the title the running program sets — Claude Code

@@ -124,6 +124,9 @@ export interface PaneViewProps {
   /** Whether the attention pulse is enabled in settings. */
   glow: boolean
   onToast: (message: string) => void
+  /** BEL from the pane's program. The reducer decides whether it counts as a
+   *  request for attention. */
+  onBell: () => void
 }
 
 export function PaneView(props: PaneViewProps): React.JSX.Element {
@@ -287,6 +290,8 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
   toastRef.current = props.onToast
   const openRef = useRef(props.onOpen)
   openRef.current = props.onOpen
+  const bellRef = useRef(props.onBell)
+  bellRef.current = props.onBell
   const searchRootRef = useRef(props.searchRoot)
   searchRootRef.current = props.searchRoot
   const spawnedRef = useRef(props.onSpawned)
@@ -322,6 +327,7 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
       onResize: (cols, rows) => window.seashell.pty.resize({ paneId: pane.id, cols, rows }),
       onHttpLink: (url) => void window.seashell.open.externalHttp({ url }),
       onTitle: (title) => titleRef.current(title),
+      onBell: () => bellRef.current(),
       hostname: hostname,
       onCwd: (cwd) => {
         // Keep the ref hot for the very next double-click, and push it into
