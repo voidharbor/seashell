@@ -54,6 +54,11 @@ struct Row {
 class GridStore {
 public:
   static constexpr size_t kDecodeSlots = 128;
+  // Interned clusters are never freed, so their number is capped: Unicode has
+  // a few thousand emoji sequences, while random combining marks (zalgo text)
+  // would otherwise grow the table without bound. Past the cap a long cluster
+  // keeps its first two codepoints (and its width).
+  static constexpr size_t kMaxClusters = 16384;
 
   explicit GridStore(size_t maxScrollback = 20000) : maxScrollback_(maxScrollback) {}
   void setSize(int cols, int rows);

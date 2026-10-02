@@ -72,6 +72,9 @@ int GridStore::chars(const Cell& c, uint32_t* out, int max) const {
 }
 
 void GridStore::setChars(Cell& c, const uint32_t* cps, int n) {
+  if (n > 2 && clusters_.size() >= kMaxClusters &&
+      clusterIds_.find(std::u32string(cps, cps + n)) == clusterIds_.end())
+    n = 2;
   if (n <= 2) {
     c.nchars = (uint8_t)std::max(0, n);
     c.chars[0] = n > 0 ? cps[0] : 0;
