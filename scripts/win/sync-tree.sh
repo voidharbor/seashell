@@ -9,8 +9,9 @@ mkdir -p "$DST"
 # One sync at a time: two rsyncs with --delete race on each other's temp files.
 exec 9>/tmp/seashell-1002-sync.lock
 flock 9
+# Anchored with a leading slash: a bare "bakeoff" would also drop scripts/bakeoff.
 rsync -a --delete \
-  --exclude node_modules --exclude out --exclude release --exclude .git \
-  --exclude host-build --exclude bakeoff --exclude scratch \
+  --exclude /node_modules --exclude /out --exclude /release --exclude /.git \
+  --exclude /host-build --exclude /bakeoff --exclude /scratch \
   "$SRC/" "$DST/"
 echo "synced $SRC -> $DST"
