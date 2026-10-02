@@ -32,7 +32,22 @@ typedef struct
   unsigned int protected_cell : 1;
   unsigned int dwl            : 1; /* on a DECDWL or DECDHL line */
   unsigned int dhl            : 2; /* on a DECDHL line (1=top 2=bottom) */
+
+  /* SeaShell: the OSC 8 link this cell belongs to, 0 = none (PATCHES.md).
+   * Only putglyph stamps it; screen->pen.uri_id stays 0. */
+  uint16_t uri_id;
 } ScreenPen;
+
+/* SeaShell: one interned OSC 8 target. `id` is the id= parameter ("" when
+ * absent); a link with the same id and uri reuses the entry. */
+typedef struct
+{
+  char *id;
+  char *uri;
+} ScreenUri;
+
+#define SCREEN_MAX_URIS 65535
+#define SCREEN_MAX_OSC8 8192
 
 /* Internal representation of a screen cell */
 typedef struct
@@ -72,6 +87,20 @@ struct VTermScreen
   VTermScreenCell *sb_buffer;
 
   ScreenPen pen;
+
+  /* SeaShell OSC 8 state: the link putglyph stamps, the interned targets
+   * (uris[0] is unused so id 0 means none), and the OSC being collected. */
+  uint16_t cur_uri_id;
+  ScreenUri *uris;
+  int uris_len, uris_cap;
+  char *osc8_buf;
+  size_t osc8_len;
+  int osc8_overflow;
+
+  /* The fallbacks set through vterm_screen_set_unrecognised_fallbacks; the
+   * state's fallbacks point at screen_fallbacks, which forward here. */
+  const VTermStateFallbacks *user_fallbacks;
+  void *user_fbdata;
 };
 
 static inline void clearcell(const VTermScreen *screen, ScreenCell *cell)
@@ -186,6 +215,7 @@ static int putglyph(VTermGlyphInfo *info, VTermPos pos, void *user)
   }
   if(i < VTERM_MAX_CHARS_PER_CELL)
     cell->chars[i] = 0;
+  cell->pen.uri_id = screen->cur_uri_id;
 
   for(int col = 1; col < info->width; col++)
     getcell(screen, pos.row, pos.col + col)->chars[0] = (uint32_t)-1;
@@ -719,6 +749,7 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
 
         dst->pen.fg = src->fg;
         dst->pen.bg = src->bg;
+        dst->pen.uri_id = src->uri_id;
 
         if(src->width == 2 && pos.col < (new_cols-1))
           (dst + 1)->chars[0] = (uint32_t) -1;
@@ -852,6 +883,188 @@ static int sb_clear(void *user) {
   return 0;
 }
 
+/* SeaShell OSC 8 (PATCHES.md) */
+
+static char *screen_strndup(VTerm *vt, const char *s, size_t n)
+{
+  char *out = vterm_allocator_malloc(vt, n + 1);
+  memcpy(out, s, n);
+  out[n] = 0;
+  return out;
+}
+
+/* The entry for (id, uri), added when new; 0 once the table is full. */
+static uint16_t intern_uri(VTermScreen *screen, const char *id, size_t idlen, const char *uri, size_t urilen)
+{
+  for(int i = 1; i < screen->uris_len; i++) {
+    ScreenUri *u = &screen->uris[i];
+    if(strlen(u->id) == idlen && strlen(u->uri) == urilen &&
+       memcmp(u->id, id, idlen) == 0 && memcmp(u->uri, uri, urilen) == 0)
+      return (uint16_t)i;
+  }
+
+  if(screen->uris_len >= SCREEN_MAX_URIS + 1)
+    return 0;
+
+  if(screen->uris_len == screen->uris_cap) {
+    int cap = screen->uris_cap ? screen->uris_cap * 2 : 16;
+    ScreenUri *grown = vterm_allocator_malloc(screen->vt, sizeof(ScreenUri) * cap);
+    if(screen->uris) {
+      memcpy(grown, screen->uris, sizeof(ScreenUri) * screen->uris_len);
+      vterm_allocator_free(screen->vt, screen->uris);
+    }
+    screen->uris = grown;
+    screen->uris_cap = cap;
+    if(screen->uris_len == 0) {
+      screen->uris[0].id = NULL;
+      screen->uris[0].uri = NULL;
+      screen->uris_len = 1;
+    }
+  }
+
+  ScreenUri *u = &screen->uris[screen->uris_len];
+  u->id = screen_strndup(screen->vt, id, idlen);
+  u->uri = screen_strndup(screen->vt, uri, urilen);
+  return (uint16_t)screen->uris_len++;
+}
+
+/* "<params>;<uri>": params are colon separated key=value pairs, of which only
+ * id= matters. An empty uri ends the link. */
+static void apply_osc8(VTermScreen *screen, const char *s, size_t len)
+{
+  const char *semi = memchr(s, ';', len);
+  if(!semi) {
+    screen->cur_uri_id = 0;
+    return;
+  }
+
+  const char *uri = semi + 1;
+  size_t urilen = len - (size_t)(uri - s);
+  if(urilen == 0) {
+    screen->cur_uri_id = 0;
+    return;
+  }
+
+  const char *id = "";
+  size_t idlen = 0;
+  const char *p = s;
+  while(p < semi) {
+    const char *end = memchr(p, ':', (size_t)(semi - p));
+    if(!end)
+      end = semi;
+    if(end - p >= 3 && memcmp(p, "id=", 3) == 0) {
+      id = p + 3;
+      idlen = (size_t)(end - p - 3);
+    }
+    p = end + 1;
+  }
+
+  screen->cur_uri_id = intern_uri(screen, id, idlen, uri, urilen);
+}
+
+static int screen_osc(int command, VTermStringFragment frag, void *user)
+{
+  VTermScreen *screen = user;
+
+  if(command == 8) {
+    if(frag.initial) {
+      screen->osc8_len = 0;
+      screen->osc8_overflow = 0;
+    }
+    if(!screen->osc8_buf)
+      screen->osc8_buf = vterm_allocator_malloc(screen->vt, SCREEN_MAX_OSC8);
+    if(screen->osc8_len + frag.len > SCREEN_MAX_OSC8)
+      screen->osc8_overflow = 1;
+    else {
+      memcpy(screen->osc8_buf + screen->osc8_len, frag.str, frag.len);
+      screen->osc8_len += frag.len;
+    }
+    if(frag.final) {
+      /* A target too long to keep ends any link rather than half-parsing one */
+      if(screen->osc8_overflow)
+        screen->cur_uri_id = 0;
+      else
+        apply_osc8(screen, screen->osc8_buf, screen->osc8_len);
+    }
+    return 1;
+  }
+
+  if(screen->user_fallbacks && screen->user_fallbacks->osc)
+    return (*screen->user_fallbacks->osc)(command, frag, screen->user_fbdata);
+  return 0;
+}
+
+static int screen_fb_control(unsigned char control, void *user)
+{
+  VTermScreen *screen = user;
+  if(screen->user_fallbacks && screen->user_fallbacks->control)
+    return (*screen->user_fallbacks->control)(control, screen->user_fbdata);
+  return 0;
+}
+
+static int screen_fb_csi(const char *leader, const long args[], int argcount, const char *intermed, char command, void *user)
+{
+  VTermScreen *screen = user;
+  if(screen->user_fallbacks && screen->user_fallbacks->csi)
+    return (*screen->user_fallbacks->csi)(leader, args, argcount, intermed, command, screen->user_fbdata);
+  return 0;
+}
+
+static int screen_fb_dcs(const char *command, size_t commandlen, VTermStringFragment frag, void *user)
+{
+  VTermScreen *screen = user;
+  if(screen->user_fallbacks && screen->user_fallbacks->dcs)
+    return (*screen->user_fallbacks->dcs)(command, commandlen, frag, screen->user_fbdata);
+  return 0;
+}
+
+static int screen_fb_apc(VTermStringFragment frag, void *user)
+{
+  VTermScreen *screen = user;
+  if(screen->user_fallbacks && screen->user_fallbacks->apc)
+    return (*screen->user_fallbacks->apc)(frag, screen->user_fbdata);
+  return 0;
+}
+
+static int screen_fb_pm(VTermStringFragment frag, void *user)
+{
+  VTermScreen *screen = user;
+  if(screen->user_fallbacks && screen->user_fallbacks->pm)
+    return (*screen->user_fallbacks->pm)(frag, screen->user_fbdata);
+  return 0;
+}
+
+static int screen_fb_sos(VTermStringFragment frag, void *user)
+{
+  VTermScreen *screen = user;
+  if(screen->user_fallbacks && screen->user_fallbacks->sos)
+    return (*screen->user_fallbacks->sos)(frag, screen->user_fbdata);
+  return 0;
+}
+
+static const VTermStateFallbacks screen_fallbacks = {
+  .control = &screen_fb_control,
+  .csi     = &screen_fb_csi,
+  .osc     = &screen_osc,
+  .dcs     = &screen_fb_dcs,
+  .apc     = &screen_fb_apc,
+  .pm      = &screen_fb_pm,
+  .sos     = &screen_fb_sos,
+};
+
+const char *vterm_screen_get_uri(const VTermScreen *screen, uint16_t id)
+{
+  if(id == 0 || id >= screen->uris_len)
+    return NULL;
+  return screen->uris[id].uri;
+}
+
+/* SeaShell: whether DECSET 2004 is on, for the shell's paste path */
+int vterm_screen_get_bracketpaste(const VTermScreen *screen)
+{
+  return screen->state->mode.bracketpaste;
+}
+
 static VTermStateCallbacks state_cbs = {
   .putglyph    = &putglyph,
   .movecursor  = &movecursor,
@@ -900,8 +1113,18 @@ static VTermScreen *screen_new(VTerm *vt)
 
   screen->sb_buffer = vterm_allocator_malloc(screen->vt, sizeof(VTermScreenCell) * cols);
 
+  screen->cur_uri_id = 0;
+  screen->uris = NULL;
+  screen->uris_len = screen->uris_cap = 0;
+  screen->osc8_buf = NULL;
+  screen->osc8_len = 0;
+  screen->osc8_overflow = 0;
+  screen->user_fallbacks = NULL;
+  screen->user_fbdata = NULL;
+
   vterm_state_set_callbacks(screen->state, &state_cbs, screen);
   vterm_state_callbacks_has_premove(screen->state);
+  vterm_state_set_unrecognised_fallbacks(screen->state, &screen_fallbacks, screen);
 
   return screen;
 }
@@ -914,6 +1137,15 @@ INTERNAL void vterm_screen_free(VTermScreen *screen)
 
   vterm_allocator_free(screen->vt, screen->sb_buffer);
 
+  for(int i = 1; i < screen->uris_len; i++) {
+    vterm_allocator_free(screen->vt, screen->uris[i].id);
+    vterm_allocator_free(screen->vt, screen->uris[i].uri);
+  }
+  if(screen->uris)
+    vterm_allocator_free(screen->vt, screen->uris);
+  if(screen->osc8_buf)
+    vterm_allocator_free(screen->vt, screen->osc8_buf);
+
   vterm_allocator_free(screen->vt, screen);
 }
 
@@ -921,6 +1153,7 @@ void vterm_screen_reset(VTermScreen *screen, int hard)
 {
   screen->damaged.start_row = -1;
   screen->pending_scrollrect.start_row = -1;
+  screen->cur_uri_id = 0;
   vterm_state_reset(screen->state, hard);
   vterm_screen_flush_damage(screen);
 }
@@ -1014,6 +1247,7 @@ int vterm_screen_get_cell(const VTermScreen *screen, VTermPos pos, VTermScreenCe
 
   cell->fg = intcell->pen.fg;
   cell->bg = intcell->pen.bg;
+  cell->uri_id = intcell->pen.uri_id;
 
   if(pos.col < (screen->cols - 1) &&
      getcell(screen, pos.row, pos.col + 1)->chars[0] == (uint32_t)-1)
@@ -1086,12 +1320,14 @@ void vterm_screen_callbacks_has_pushline4(VTermScreen *screen)
 
 void vterm_screen_set_unrecognised_fallbacks(VTermScreen *screen, const VTermStateFallbacks *fallbacks, void *user)
 {
-  vterm_state_set_unrecognised_fallbacks(screen->state, fallbacks, user);
+  /* SeaShell: the state keeps screen_fallbacks so OSC 8 is seen first */
+  screen->user_fallbacks = fallbacks;
+  screen->user_fbdata = fallbacks ? user : NULL;
 }
 
 void *vterm_screen_get_unrecognised_fbdata(VTermScreen *screen)
 {
-  return vterm_state_get_unrecognised_fbdata(screen->state);
+  return screen->user_fbdata;
 }
 
 void vterm_screen_flush_damage(VTermScreen *screen)

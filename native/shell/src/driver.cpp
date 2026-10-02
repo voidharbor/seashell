@@ -283,6 +283,24 @@ json Driver::handle(const json& req) {
       Sleep(50);
     }
   }
+  if (cmd == "waitText") {
+    std::string want = strArg(req, "contains");
+    json gridReq = { { "cmd", "grid" }, { "paneId", strArg(req, "paneId") } };
+    int timeoutMs = req.contains("timeoutMs") && req["timeoutMs"].is_number() ? req["timeoutMs"].get<int>() : 10000;
+    ULONGLONG end = GetTickCount64() + (ULONGLONG)std::max(0, timeoutMs);
+    json last;
+    for (;;) {
+      json g = onUi(gridReq);
+      if (g.value("ok", false)) {
+        last = g["text"];
+        std::string all;
+        for (const json& row : g["text"]) { all += row.get<std::string>(); all += '\n'; }
+        if (all.find(want) != std::string::npos) return { { "ok", true }, { "paneId", g["paneId"] } };
+      }
+      if (GetTickCount64() >= end) return { { "ok", false }, { "code", "ETIMEOUT" }, { "text", last } };
+      Sleep(50);
+    }
+  }
   return onUi(req);
 }
 
@@ -333,9 +351,10 @@ json Driver::execute(const json& req) {
   if (cmd == "dblclick") return click(req, "dblclick");
   if (cmd == "stats") return stats();
   if (cmd == "coreKill") return coreKill();
-  // grid and waitText arrive with the grids (Task 11), width with libvterm
-  // (Task 10), drag and click by point with the hit rects (Task 15).
-  if (cmd == "grid" || cmd == "waitText" || cmd == "width" || cmd == "drag") return fail("ENOTYET");
+  if (cmd == "grid") return grid(strArg(req, "paneId"));
+  // width arrives with libvterm's driver hook, drag and click by point with
+  // the hit rects (Task 15).
+  if (cmd == "width" || cmd == "drag") return fail("ENOTYET");
   return fail("EUNKNOWN");
 }
 
@@ -424,6 +443,26 @@ json Driver::stats() {
   double wsMB = GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc) ? pmc.WorkingSetSize / (1024.0 * 1024.0) : 0;
   return { { "frameMs", { { "p50", percentile(ms, 0.5) }, { "p95", percentile(ms, 0.95) } } },
            { "framesLast5s", ms.size() }, { "ptyBytesLast5s", (long long)bytes }, { "shellWsMB", std::round(wsMB * 10) / 10 } };
+}
+
+// The visible rows of a pane's grid (the focused pane when paneId is empty),
+// trailing spaces trimmed, as the viewport shows them.
+json Driver::grid(const std::string& paneIdArg) {
+  App& a = App::instance();
+  std::string id = paneIdArg.empty() ? a.defaultPaneId() : paneIdArg;
+  Grid* g = id.empty() ? nullptr : a.grid(id);
+  if (!g) return fail("ENOGRID");
+  const GridStore& s = g->store();
+  json text = json::array();
+  for (long r = g->viewTop(); r < g->viewTop() + s.rows(); r++) {
+    std::string t = s.text(r);
+    while (!t.empty() && t.back() == ' ') t.pop_back();
+    text.push_back(t);
+  }
+  return { { "ok", true }, { "paneId", id }, { "text", text },
+           { "cursor", { { "row", g->cursor().row }, { "col", g->cursor().col } } },
+           { "scrollback", s.scrollbackLen() }, { "cols", s.cols() }, { "rows", s.rows() },
+           { "viewTop", g->viewTop() }, { "storeBytes", s.bytes() } };
 }
 
 // TerminateProcess on wsl.exe, the shell's own child, exactly as a crash looks

@@ -1,0 +1,68 @@
+[0m[01;34m7zip[0m               [01;34mgit-core[0m             [01;34mpm-utils[0m
+[01;34mX11[0m                [01;34mgnupg[0m                [01;34mpolicykit-1[0m
+[01;34mapparmor[0m           [01;34mgnupg2[0m               [01;34mpolkit-1[0m
+[01;34mapt[0m                [01;34mgold-ld[0m              [01;34mpython3[0m
+[01;34mbfd-plugins[0m        [01;34mgroff[0m                [01;34mpython3.12[0m
+[01;34mbinfmt.d[0m           [01;34minit[0m                 [01;34mpython3.14[0m
+[01;34mbyobu[0m              [01;34mjvm[0m                  [01;34mrsyslog[0m
+[01;34mcargo[0m              [01;34mkernel[0m               [01;34msasl2[0m
+[01;34mcloud-init[0m         [01;34mlandscape[0m            [01;36msftp-server[0m
+[01;32mcnf-update-db[0m      [01;36mlibspnav.so.0[0m        [01;34msnapd[0m
+[01;32mcommand-not-found[0m  libspnav.so.0.3      [01;34msoftware-properties[0m
+[01;34mcompat-ld[0m          [01;34mlocale[0m               [01;34mssl[0m
+[01;34mconsole-setup[0m      [01;34mlsb[0m                  [01;34msysctl.d[0m
+[01;36mcpp[0m                [01;34mman-db[0m               [01;34msystemd[0m
+[01;34mdbus-1.0[0m           [01;34mmime[0m                 [01;34msysusers.d[0m
+[01;34mdebug[0m              [01;34mmodprobe.d[0m           [01;34mtmpfiles.d[0m
+[01;34mdhcpcd[0m             [01;34mmodules[0m              [01;34mubuntu-advantage[0m
+[01;34mdpkg[0m               [01;34mnetplan[0m              [01;34mubuntu-release-upgrader[0m
+[01;34mdracut[0m             [01;34mnetworkd-dispatcher[0m  [01;34mudev[0m
+[01;34menvironment.d[0m      [01;34mnode_modules[0m         [01;34mvalgrind[0m
+[01;34mfile[0m               [01;34mopenssh[0m              [01;34mwsl[0m
+[01;34mfirmware[0m           os-release           [01;34mx86_64-linux-gnu[0m
+[01;34mgcc[0m                [01;34mpam.d[0m                [01;34mxorg[0m
+[01;34mgirepository-1.0[0m   [01;34mpcrlock.d[0m
+total 376
+drwxr-xr-x  2 root root  4096 Sep 30 12:19 [0m[01;34m7zip[0m
+drwxr-xr-x  2 root root  4096 Apr  8  2024 [01;34mX11[0m
+drwxr-xr-x  2 root root  4096 Sep  7 20:14 [01;34mapparmor[0m
+drwxr-xr-x  5 root root  4096 Sep  7 20:13 [01;34mapt[0m
+drwxr-xr-x  2 root root  4096 Sep 24 00:23 [01;34mbfd-plugins[0m
+drwxr-xr-x  2 root root  4096 Sep 24 00:23 [01;34mbinfmt.d[0m
+drwxr-xr-x  3 root root  4096 Sep  7 20:14 [01;34mbyobu[0m
+drwxr-xr-x  3 root root  4096 Sep 24 00:24 [01;34mcargo[0m
+drwxr-xr-x  2 root root  4096 Sep  7 20:14 [01;34mcloud-init[0m
+-rwxr-xr-x  1 root root  1075 Jan 20  2023 [01;32mcnf-update-db[0m
+-rwxr-xr-x  1 root root  3565 Jan 20  2023 [01;32mcommand-not-found[0m
+drwxr-xr-x  2 root root  4096 Sep  7 20:14 [01;34mcompat-ld[0m
+drwxr-xr-x  2 root root  4096 Sep  7 20:13 [01;34mconsole-setup[0m
+lrwxrwxrwx  1 root root    21 Jan 31  2024 [01;36mcpp[0m -> [01;32m/etc/alternatives/cpp[0m
+drwxr-xr-x  2 root root  4096 Sep  7 20:13 [01;34mdbus-1.0[0m
+drwxr-xr-x  3 root root  4096 Sep 24 00:24 [01;34mdebug[0m
+drwxr-xr-x  3 root root  4096 Sep  7 20:14 [01;34mdhcpcd[0m
+drwxr-xr-x  3 root root  4096 Sep  7 20:13 [01;34mdpkg[0m
+drwxr-xr-x  3 root root  4096 Sep  7 20:14 [01;34mdracut[0m
+drwxr-xr-x  2 root root  4096 Sep  7 20:14 [01;34menvironment.d[0m
+drwxr-xr-x  2 root root  4096 Sep  7 20:14 [01;34mfile[0m
+drwxr-xr-x  2 root root  4096 Sep 24 00:23 [01;34mfirmware[0m
+drwxr-xr-x  3 root root  4096 Sep 24 00:23 [01;34mgcc[0m
+drwxr-xr-x  2 root root  4096 Sep  7 20:14 [01;34mgirepository-1.0[0m
+7[r8[?25h[?25l[?2004h[?2031h[?1004h
+[38;5;220m────────────────────────────────────────────────────────────────────────────────[39m
+[2G[38;5;220m[1mAccessing[12Gworkspace:[22m[39m
+
+[2G[1m/tmp/t11-claude[22m
+
+[2GQuick[8Gsafety[15Gcheck:[22GIs[25Gthis[30Ga[32Gproject[40Gyou[44Gcreated[52Gor[55Gone[59Gyou[63Gtrust?[70G(Like[76Gyour
+[2Gown[6Gcode,[12Ga[14Gwell-known[25Gopen[30Gsource[37Gproject,[46Gor[49Gwork[54Gfrom[59Gyour[64Gteam).[71GIf[74Gnot,
+[2Gtake[7Ga[9Gmoment[16Gto[19Greview[26Gwhat's[33Gin[36Gthis[41Gfolder[48Gfirst.
+
+[2GClaude[9GCode'll[17Gbe[20Gable[25Gto[28Gread,[34Gedit,[40Gand[44Gexecute[52Gfiles[58Ghere.
+
+[2G[38;5;246mSecurity[11Gguide[39m
+
+[2G[38;5;153m❯[4GNo,[8Gexit[39m
+[4GYes,[9GI[11Gtrust[17Gthis[22Gfolder
+
+[2G[38;5;246mEnter[8Gto[11Gconfirm[19G·[21GEsc[25Gto[28Gcancel[39m
+[1C[4A[>0q[?u[c

@@ -3,8 +3,11 @@
 // UI off the hooks below.
 #pragma once
 #include <windows.h>
+#include <map>
+#include <memory>
 #include <string>
 #include "core_proc.h"
+#include "grid.h"
 #include "model.h"
 #include "wire.h"
 
@@ -23,6 +26,8 @@ public:
   bool coreDead() const { return coreDead_; }        // Task 15 paints every pane's exit overlay
   bool coreAlive() const { return core_.alive(); }
   DWORD corePid() const { return core_.pid(); }      // wsl.exe, the shell's own child (the driver's coreKill)
+  Grid* grid(const std::string& paneId);             // nullptr when the core never created it
+  std::string defaultPaneId() const;                 // the focused pane, else the first grid (the driver's default)
 
   // Hooks the window calls.
   void onResized();                                // Task 8: shell:geometry
@@ -38,6 +43,9 @@ private:
   bool startCore();
   void onCoreExit(DWORD code, LPARAM gen);
   static void CALLBACK quitTimeout(HWND, UINT, UINT_PTR, DWORD);
+  void onGridCmd(const nlohmann::json& cmd);
+  void onPtyData(const std::string& paneId, const std::string& bytes);
+  void drainFeed();                                // WM_APP_PTY_FEED
 
   HINSTANCE hinst_ = nullptr;
   bool testMode_ = false;
@@ -52,4 +60,7 @@ private:
   bool firstModel_ = false;                        // this core run has sent its first ui:model
   bool quitting_ = false;                          // app:beforeQuit sent, waiting for the core to exit
   UINT_PTR quitTimer_ = 0;
+  std::map<std::string, std::unique_ptr<Grid>> grids_;   // by pane id, from grid:cmd create
+  std::map<std::string, std::string> feed_;        // pty bytes waiting for the next WM_APP_PTY_FEED
+  bool feedPosted_ = false;
 };

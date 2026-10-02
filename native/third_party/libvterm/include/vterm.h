@@ -533,6 +533,7 @@ typedef struct {
   char     width;
   VTermScreenCellAttrs attrs;
   VTermColor fg, bg;
+  uint16_t uri_id; /* SeaShell: OSC 8 link, 0 = none; vterm_screen_get_uri */
 } VTermScreenCell;
 
 typedef struct {
@@ -604,6 +605,13 @@ typedef enum {
 int vterm_screen_get_attrs_extent(const VTermScreen *screen, VTermRect *extent, VTermPos pos, VTermAttrMask attrs);
 
 int vterm_screen_get_cell(const VTermScreen *screen, VTermPos pos, VTermScreenCell *cell);
+
+/* SeaShell: the target of an OSC 8 link id from VTermScreenCell.uri_id; NULL
+ * for 0 or an unknown id. Valid for the screen's lifetime. */
+const char *vterm_screen_get_uri(const VTermScreen *screen, uint16_t id);
+
+/* SeaShell: 1 while bracketed paste (DECSET 2004) is on. */
+int vterm_screen_get_bracketpaste(const VTermScreen *screen);
 
 int vterm_screen_is_eol(const VTermScreen *screen, VTermPos pos);
 

@@ -20,6 +20,8 @@ const char* kSecondInstance = "{\"k\":\"send\",\"ch\":\"app:secondInstance\",\"p
 const UINT kQuitGraceMs = 5000;
 // A core that dies this soon after starting gets one relaunch (spec 4.5).
 const ULONGLONG kEarlyDeathMs = 5000;
+// Bytes kept for a pane whose grid:cmd create has not arrived yet.
+const size_t kMaxEarlyBytes = 4u << 20;
 }
 
 App& App::instance() { static App a; return a; }
@@ -124,8 +126,81 @@ LRESULT App::onAppMessage(UINT msg, WPARAM w, LPARAM l) {
     onCoreExit((DWORD)w, l);
   } else if (msg == Window::WM_APP_DRIVER) {
     Driver::instance().onCall(reinterpret_cast<DriverCall*>(l));
+  } else if (msg == Window::WM_APP_PTY_FEED) {
+    drainFeed();
   }
   return 0;
+}
+
+Grid* App::grid(const std::string& paneId) {
+  auto it = grids_.find(paneId);
+  return it == grids_.end() ? nullptr : it->second.get();
+}
+
+std::string App::defaultPaneId() const {
+  for (const PaneModel& p : model_.panes)
+    if (p.focused && grids_.count(p.id)) return p.id;
+  return grids_.empty() ? std::string() : grids_.begin()->first;
+}
+
+void App::onGridCmd(const nlohmann::json& cmd) {
+  std::string op = cmd.value("op", "");
+  std::string id = cmd.value("paneId", "");
+  if (id.empty()) { log("error: grid:cmd %s without a paneId", op.c_str()); return; }
+  auto num = [&](const char* k, int d) { return cmd.contains(k) && cmd[k].is_number() ? cmd[k].get<int>() : d; };
+  if (op == "create") {
+    // A second create for the same pane (a relaunched core) starts it afresh.
+    auto g = std::make_unique<Grid>(id, num("cols", 80), num("rows", 24), num("scrollback", 20000));
+    g->setOutput([this, id](const std::string& bytes) { wire_.ptyWrite(id, bytes); });
+    g->onTitle = [this, id](const std::string& t) { wire_.sendTerm({ { "type", "title" }, { "paneId", id }, { "title", t } }); };
+    g->onCwd = [this, id](const std::string& uri) { wire_.sendTerm({ { "type", "cwd" }, { "paneId", id }, { "cwd", uri } }); };
+    g->onBell = [this, id] { wire_.sendTerm({ { "type", "bell" }, { "paneId", id } }); };
+    log("grid create %s %dx%d", id.c_str(), g->store().cols(), g->store().rows());
+    grids_[id] = std::move(g);
+    if (feed_.count(id) && !feedPosted_) { feedPosted_ = true; Window::instance().post(Window::WM_APP_PTY_FEED); }
+  } else if (op == "dispose") {
+    grids_.erase(id);
+    feed_.erase(id);
+    log("grid dispose %s", id.c_str());
+  } else if (op == "resize") {
+    Grid* g = grid(id);
+    if (!g) { log("error: grid:cmd resize for unknown pane %s", id.c_str()); return; }
+    g->resize(num("cols", g->store().cols()), num("rows", g->store().rows()));
+  } else {
+    // focus, clear, find, paste, copy, exited: the input and UI tasks take these.
+    log("on grid:cmd %s %s", op.c_str(), id.c_str());
+    return;
+  }
+  Window::instance().invalidateBody();
+}
+
+// Bytes queue per pane; one WM_APP_PTY_FEED is in flight at a time, so a burst
+// of pty:data lines is written into libvterm once.
+void App::onPtyData(const std::string& paneId, const std::string& bytes) {
+  Driver::instance().notePtyBytes(bytes.size());
+  std::string& q = feed_[paneId];
+  if (!grids_.count(paneId) && q.size() + bytes.size() > kMaxEarlyBytes) {
+    log("error: pty:data for pane %s before its grid; %zu bytes dropped", paneId.c_str(), bytes.size());
+    return;
+  }
+  q += bytes;
+  if (!feedPosted_) {
+    feedPosted_ = true;
+    Window::instance().post(Window::WM_APP_PTY_FEED);
+  }
+}
+
+void App::drainFeed() {
+  feedPosted_ = false;
+  bool dirty = false;
+  for (auto it = feed_.begin(); it != feed_.end();) {
+    Grid* g = grid(it->first);
+    if (!g) { ++it; continue; }   // its create is still on the way
+    g->feed(it->second.data(), it->second.size());
+    if (!g->takeDamage().empty()) dirty = true;   // Task 12 paints the rects; until then the whole body
+    it = feed_.erase(it);
+  }
+  if (dirty) Window::instance().invalidateBody();
 }
 
 // A second launch hands over app:secondInstance; nothing else is relayed.
@@ -214,14 +289,8 @@ int App::main(HINSTANCE hinst) {
       wire_.sendGeometry();
     }
   };
-  // Task 11 feeds the grids; until then the byte counts prove the wire.
-  wire_.onPtyData = [](const std::string& paneId, const std::string& bytes) {
-    Driver::instance().notePtyBytes(bytes.size());
-    log("on pty:data pane %s bytes %zu", paneId.c_str(), bytes.size());
-  };
-  wire_.onGridCmd = [](const nlohmann::json& cmd) {
-    log("on grid:cmd %s %s", cmd.value("op", "?").c_str(), cmd.value("paneId", "?").c_str());
-  };
+  wire_.onPtyData = [this](const std::string& paneId, const std::string& bytes) { onPtyData(paneId, bytes); };
+  wire_.onGridCmd = [this](const nlohmann::json& cmd) { onGridCmd(cmd); };
   startCore();
 
   MSG msg;

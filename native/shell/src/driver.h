@@ -48,6 +48,7 @@ private:
   nlohmann::json text(const std::string& s);
   nlohmann::json click(const nlohmann::json& req, const char* type);
   nlohmann::json stats();
+  nlohmann::json grid(const std::string& paneId);
   nlohmann::json coreKill();
 
   SOCKET listen_ = INVALID_SOCKET;
