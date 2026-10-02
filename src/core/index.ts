@@ -49,6 +49,7 @@ startStdio(shim)
  * The shell owns the core: once its pipe closes (the shell exited or crashed)
  * nobody can draw these panes, so quit through main's drain, which snapshots
  * the session and reaps every pane, instead of lingering beside the next core.
+ * A termination signal takes the same path.
  */
 function shellGone(why: string): void {
   if (!pipeOpen) return
@@ -58,6 +59,9 @@ function shellGone(why: string): void {
 }
 process.stdin.on('end', () => shellGone('the shell closed stdin'))
 process.stdout.on('error', (err: Error) => shellGone(`stdout failed: ${err.message}`))
+// Electron quits through before-quit on these; plain node would just die and
+// skip the drain that reaps nohup'd and disowned pane processes.
+for (const sig of ['SIGTERM', 'SIGHUP', 'SIGINT'] as const) process.on(sig, () => shellGone(sig))
 
 function route(ch: string, p: unknown): void {
   const c = controller!
