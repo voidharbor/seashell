@@ -36,9 +36,11 @@ const EXTRA_KEYS = new Set(['SEASHELL_PIDFILE', 'SEASHELL_APP_ID', 'TERM_PROGRAM
 export function createWslhost(io: WslhostIo): Platform {
   let shimDir: string | null = null
   const home = io.home.replace(/\/+$/, '')
+  const appId = appInstanceId('win32', io.hostPid)
   return {
     ...linux,
     controlTransport: 'tcp',
+    paneAppId: appId,
     terminalFontPath: () => null,
 
     installShellIntegration(): string | null {
@@ -74,7 +76,7 @@ export function createWslhost(io: WslhostIo): Platform {
         shimDir: null,
         userZdotdir: null,
         pidFile: null,
-        appId: appInstanceId('win32', io.hostPid),
+        appId,
       })
       const out = vars.filter(([k]) => EXTRA_KEYS.has(k))
       if (shimDir !== null) out.unshift(['SEASHELL_PIDFILE', pidFileFor(home, io.hostPid, paneId)])

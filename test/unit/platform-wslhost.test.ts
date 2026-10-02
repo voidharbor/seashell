@@ -41,6 +41,10 @@ describe('wslhost platform', () => {
     expect(extras).toMatchObject({ SEASHELL_APP_ID: 'win32-777', SEASHELL_PIDFILE: '/Users/joshwald/.cache/seashell-win/pids/777/pane-pane-9.pid', TERM_PROGRAM: 'SeaShell', TERM_PROGRAM_VERSION: '0.6.0' })
     expect(extras).not.toHaveProperty('ZDOTDIR')
   })
+  it('names the pane app id so session lookup accepts the registry entries its panes write', () => {
+    const p = createWslhost(io().io)
+    expect(p.paneAppId).toBe('win32-777')
+  })
   it('a pane spawned from a pane keeps the real ZDOTDIR (Review Focus 3)', () => {
     const shim = '/Users/joshwald/.cache/seashell-win/zdotdir'
     const env = buildEnv({ baseEnv: { HOME: '/Users/joshwald', ZDOTDIR: shim, SEASHELL_USER_ZDOTDIR: '/Users/joshwald' }, paneId: 'p', appVersion: '0.6.0', zdotdirShimPath: shim })

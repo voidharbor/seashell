@@ -90,6 +90,9 @@ export interface Platform {
   /** Extra pane environment, applied after buildEnv. The wslhost platform stamps the Windows pane identity here. */
   paneEnvExtras?(paneId: string): Array<[string, string]>
 
+  /** The SEASHELL_APP_ID this platform stamps on its panes itself, so session lookup matches the registry entries they write (wslhost). */
+  readonly paneAppId?: string
+
   /**
    * Optional: the whole spawn for a pane, cwd validation included. Absent
    * means the default (`loginShell()` in the requested cwd). win32 uses it to

@@ -452,8 +452,9 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
       startTokens: (pids) => platform.processStartTokens(pids),
       claudeHome,
       // win32 panes carry SEASHELL_APP_ID (wsl-shell.ts), and the registry is
-      // shared with any Linux SeaShell in the same distro.
-      appId: platform.id === 'win32' ? appInstanceId('win32', process.pid) : undefined,
+      // shared with any Linux SeaShell in the same distro. wslhost panes carry
+      // the native shell's id, which the platform names itself.
+      appId: platform.paneAppId ?? (platform.id === 'win32' ? appInstanceId('win32', process.pid) : undefined),
       livePids:
         platform.id === 'win32'
           ? async () => {
