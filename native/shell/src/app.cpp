@@ -1,4 +1,5 @@
 #include "app.h"
+#include "driver.h"
 #include "gfx.h"
 #include "log.h"
 #include "paths.h"
@@ -118,6 +119,8 @@ LRESULT App::onAppMessage(UINT msg, WPARAM w, LPARAM l) {
     wire_.onCoreLine(std::move(*line));
   } else if (msg == Window::WM_APP_CORE_EXIT) {
     onCoreExit((DWORD)w, l);
+  } else if (msg == Window::WM_APP_DRIVER) {
+    Driver::instance().onCall(reinterpret_cast<DriverCall*>(l));
   }
   return 0;
 }
@@ -196,6 +199,7 @@ int App::main(HINSTANCE hinst) {
   if (!Gfx::instance().init()) return 1;
   if (!Window::instance().create(hinst, testMode_)) return 1;
   publishWindow(inst);
+  if (testMode_) Driver::instance().start();   // a failed listener is logged; the shell still runs
 
   wire_.write = [this](const std::string& line) { core_.send(line); };
   wire_.onModel = [this](const UiModel& m) {
@@ -209,6 +213,7 @@ int App::main(HINSTANCE hinst) {
   };
   // Task 11 feeds the grids; until then the byte counts prove the wire.
   wire_.onPtyData = [](const std::string& paneId, const std::string& bytes) {
+    Driver::instance().notePtyBytes(bytes.size());
     log("on pty:data pane %s bytes %zu", paneId.c_str(), bytes.size());
   };
   wire_.onGridCmd = [](const nlohmann::json& cmd) {
@@ -221,6 +226,7 @@ int App::main(HINSTANCE hinst) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
+  Driver::instance().stop();
   core_.stop(2000);   // a no-op once the drain above let it exit
   log("shell exit %d", exitCode_);
   CoUninitialize();

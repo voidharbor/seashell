@@ -28,9 +28,11 @@ public:
   std::function<void(const nlohmann::json& cmd)> onGridCmd;
   std::function<void(const std::string& line)> write;       // CoreProc::send
   void reset();                                             // a new core: forget the pending invokes
+  const nlohmann::json& lastModelJson() const { return lastModel_; }   // the last ui:model p as sent (the driver's model)
 
 private:
   void writeEnvelope(const nlohmann::json& e);
   std::map<int, std::function<void(const nlohmann::json&)>> pending_;
   int nextId_ = 1;
+  nlohmann::json lastModel_;
 };

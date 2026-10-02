@@ -1,5 +1,6 @@
 #include "window.h"
 #include "app.h"
+#include "driver.h"
 #include "gfx.h"
 #include <dwmapi.h>
 #include <windowsx.h>
@@ -184,9 +185,14 @@ void Window::paintBody() {
   PAINTSTRUCT ps;
   BeginPaint(body_, &ps);
   if (ID2D1HwndRenderTarget* rt = Gfx::instance().bodyTarget()) {
+    LARGE_INTEGER t0, t1, freq;
+    QueryPerformanceCounter(&t0);
     rt->BeginDraw();
     rt->Clear(D2D1::ColorF(0, 0, 0, 1));   // opaque black until Tasks 12 and 15 draw the panes
     if (rt->EndDraw() == D2DERR_RECREATE_TARGET) Gfx::instance().discardBodyTarget();
+    QueryPerformanceCounter(&t1);
+    QueryPerformanceFrequency(&freq);
+    Driver::instance().noteFrame((t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart);   // the driver's stats
   }
   EndPaint(body_, &ps);
 }

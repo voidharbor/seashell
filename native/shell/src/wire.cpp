@@ -112,6 +112,7 @@ void Wire::onCoreLine(std::string line) {
     if (k == "on") {
       if (ch == "ui:model") {
         UiModel m = UiModel::parse(p);
+        lastModel_ = p;
         App::log("on ui:model seq=%.0f tabs=%zu panes=%zu", m.seq, m.tabs.size(), m.panes.size());
         if (onModel) onModel(m);
       } else if (ch == "pty:data") {

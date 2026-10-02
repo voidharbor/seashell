@@ -21,6 +21,8 @@ public:
   Wire& wire() { return wire_; }
   const UiModel& model() const { return model_; }
   bool coreDead() const { return coreDead_; }        // Task 15 paints every pane's exit overlay
+  bool coreAlive() const { return core_.alive(); }
+  DWORD corePid() const { return core_.pid(); }      // wsl.exe, the shell's own child (the driver's coreKill)
 
   // Hooks the window calls.
   void onResized();                                // Task 8: shell:geometry
