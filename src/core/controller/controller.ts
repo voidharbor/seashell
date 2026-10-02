@@ -1232,7 +1232,8 @@ export class Controller {
       exit:
         p.status === 'exited' && p.exit
           ? {
-              text: p.exit.signal !== null ? `killed · signal ${p.exit.signal}` : `exited · code ${p.exit.code}`,
+              // Truthy, as PaneView.tsx:558: node-pty reports signal 0 for a plain exit.
+              text: p.exit.signal ? `killed · signal ${p.exit.signal}` : `exited · code ${p.exit.code}`,
               failed: p.exit.code !== 0,
             }
           : null,

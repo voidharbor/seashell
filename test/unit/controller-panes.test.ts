@@ -21,6 +21,16 @@ describe('controller: panes over time', () => {
     expect(creates()).toBe(before + 1)
     expect(c.model().panes[0]!.status).not.toBe('exited')
   })
+  it('a plain exit with signal 0 reads as exited, a real signal as killed', async () => {
+    const f = fakeDeps()
+    const c = new Controller(f.deps, { home: '/Users/joshwald', version: '0.6.0', chords: [] })
+    await c.boot(GEO)
+    const id = c.model().panes[0]!.id
+    c.push('pty:exit', { paneId: id, exitCode: 0, signal: 0, ranMs: 10 })
+    expect(c.model().panes[0]!.exit).toEqual({ text: 'exited · code 0', failed: false })
+    c.push('pty:exit', { paneId: id, exitCode: 0, signal: 9, ranMs: 10 })
+    expect(c.model().panes[0]!.exit!.text).toBe('killed · signal 9')
+  })
   it('metrics drive the badge, the memory badge and the status bar', async () => {
     const f = fakeDeps()
     const c = new Controller(f.deps, { home: '/Users/joshwald', version: '0.6.0', chords: [] })
