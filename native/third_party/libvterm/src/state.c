@@ -330,11 +330,23 @@ static int on_text(const char bytes[], size_t len, void *user)
 
   int i = 0;
 
+  /* SeaShell: a write that starts inside a cluster (a ZWJ sequence or a flag
+   * split across two pty reads) sees the saved glyph's last codepoint as prev,
+   * and the first codepoint is asked about once. */
+  int combine_here = state->pos.row == state->combine_pos.row && state->pos.col == state->combine_pos.col + state->combine_width;
+  uint32_t prev0 = 0;
+  if(combine_here && state->combine_chars[0]) {
+    int last = 0;
+    while(state->combine_chars[last + 1])
+      last++;
+    prev0 = state->combine_chars[last];
+  }
+
   /* This is a combining char. that needs to be merged with the previous
    * glyph output */
-  if(vterm_unicode_is_combining(codepoints[i], i > 0 ? codepoints[i - 1] : 0)) {
+  if(vterm_unicode_is_combining(codepoints[i], prev0)) {
     /* See if the cursor has moved since */
-    if(state->pos.row == state->combine_pos.row && state->pos.col == state->combine_pos.col + state->combine_width) {
+    if(combine_here) {
 #ifdef DEBUG_GLYPH_COMBINE
       int printpos;
       printf("DEBUG: COMBINING SPLIT GLYPH of chars {");
@@ -349,7 +361,7 @@ static int on_text(const char bytes[], size_t len, void *user)
         saved_i++;
 
       /* Add extra ones */
-      while(i < npoints && vterm_unicode_is_combining(codepoints[i], i > 0 ? codepoints[i - 1] : 0)) {
+      while(i < npoints && (i == 0 || vterm_unicode_is_combining(codepoints[i], codepoints[i - 1]))) {
         if(saved_i >= state->combine_chars_size)
           grow_combine_buffer(state);
         state->combine_chars[saved_i++] = codepoints[i++];
@@ -365,6 +377,23 @@ static int on_text(const char bytes[], size_t len, void *user)
 #endif
 
       /* Now render it */
+      /* SeaShell: the joined cluster can be wider than its first part (a
+       * flag's second regional indicator, a late U+FE0F): measure it again
+       * and move the cursor past the wider glyph when it fits. */
+      if(vterm_glyph_width_hook) {
+        int w = vterm_glyph_width_hook(state->combine_chars, saved_i);
+        if(w > state->combine_width && state->combine_pos.col + w <= THISROWWIDTH(state)) {
+          state->combine_width = w;
+          if(state->combine_pos.col + w >= THISROWWIDTH(state)) {
+            state->pos.col = state->combine_pos.col;
+            if(state->mode.autowrap)
+              state->at_phantom = 1;
+          }
+          else
+            state->pos.col = state->combine_pos.col + w;
+        }
+      }
+
       putglyph(state, state->combine_chars, state->combine_width, state->combine_pos);
     }
     else {
