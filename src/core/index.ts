@@ -16,9 +16,17 @@ if (!userData || !userData.startsWith('/')) {
   process.exit(2)
 }
 const version = process.env.SEASHELL_CORE_VERSION ?? '0.0.0'
+/** False once the shell's end of the pipe is gone; later writes are dropped. */
+let pipeOpen = true
 const write = (line: string): void => {
-  process.stdout.write(line + '\n')
+  if (pipeOpen) process.stdout.write(line + '\n')
 }
+
+// Electron's main process logs an unhandled rejection and keeps going; src/main
+// was written against that, so the core does the same rather than dying.
+process.on('unhandledRejection', (err: unknown) => {
+  process.stderr.write(`[core] unhandled rejection: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`)
+})
 
 let controller: Controller | null = null
 let booted = false
@@ -37,10 +45,25 @@ const shim = createShim({
 ;(globalThis as Record<string, unknown>).__seashellCore = shim
 startStdio(shim)
 
+/**
+ * The shell owns the core: once its pipe closes (the shell exited or crashed)
+ * nobody can draw these panes, so quit through main's drain, which snapshots
+ * the session and reaps every pane, instead of lingering beside the next core.
+ */
+function shellGone(why: string): void {
+  if (!pipeOpen) return
+  pipeOpen = false
+  process.stderr.write(`[core] ${why}; quitting\n`)
+  shim.app.quit()
+}
+process.stdin.on('end', () => shellGone('the shell closed stdin'))
+process.stdout.on('error', (err: Error) => shellGone(`stdout failed: ${err.message}`))
+
 function route(ch: string, p: unknown): void {
   const c = controller!
   if (ch === 'ui:event') c.event(p as never)
-  else if (ch === 'ui:command') c.command((p as { command: string }).command)
+  // push, not command: edit.paste carries the shell's clipboard text with it.
+  else if (ch === 'ui:command') c.push(ch, p)
   else if (ch === 'term:event') c.term(p as never)
   else if (ch === 'shell:geometry') {
     if (!booted) {
@@ -81,7 +104,13 @@ async function start(): Promise<void> {
     },
     { home: process.env.HOME ?? '/', version, chords: chordTableFromMenu(menu, 'win32') }
   )
-  for (const [ch, p] of queued.splice(0)) route(ch, p)
+  for (const [ch, p] of queued.splice(0)) {
+    try {
+      route(ch, p)
+    } catch (err) {
+      process.stderr.write(`[core] queued ${ch} failed: ${String(err)}\n`)
+    }
+  }
 }
 
 start().catch((err: unknown) => {
