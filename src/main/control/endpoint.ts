@@ -23,12 +23,18 @@ export const CONTROL_HOST = '127.0.0.1'
 export const CONTROL_JSON = 'control.json'
 export const TOKEN_BYTES = 32
 
-/** What `control.json` holds. `pid` lets a reader tell a stale file from a live one. */
+/**
+ * What `control.json` holds. `pid` lets a reader tell a stale file from a live
+ * one. `corePid` is the process actually serving: the same as `pid` except
+ * under the native Windows shell, where `pid` is the shell's Windows pid and
+ * `corePid` the Linux pid of main running in WSL.
+ */
 export interface ControlEndpointInfo {
   host: typeof CONTROL_HOST
   port: number
   token: string
   pid: number
+  corePid: number
 }
 
 /** 32 random bytes as 64 lowercase hex characters. */
@@ -42,8 +48,8 @@ export function controlJsonPath(userData: string): string {
   return path.join(userData, CONTROL_JSON)
 }
 
-export function endpointInfo(port: number, token: string, pid: number): ControlEndpointInfo {
-  return { host: CONTROL_HOST, port, token, pid }
+export function endpointInfo(port: number, token: string, pid: number, corePid: number = process.pid): ControlEndpointInfo {
+  return { host: CONTROL_HOST, port, token, pid, corePid }
 }
 
 export function serializeEndpointInfo(info: ControlEndpointInfo): string {

@@ -347,11 +347,14 @@ app.whenReady().then(warmUpPlatform).then(() => importLinuxState(app.getPath('us
   }
   // Windows has no AF_UNIX listen: there the same protocol runs on 127.0.0.1
   // with a token, published in <userData>/control.json (control/endpoint.ts).
+  // The native Windows shell asks for TCP too: its clients live on Windows, and
+  // `pid` there is the shell's Windows pid (control.json also carries corePid).
   void (
-    process.platform === 'win32'
+    platform.controlTransport === 'tcp' || process.platform === 'win32'
       ? startTcpControlServer({
           ...controlDeps,
           infoPath: controlJsonPath(app.getPath('userData')),
+          pid: Number(process.env.SEASHELL_HOST_PID) || process.pid,
         })
       : startControlServer({
           ...controlDeps,

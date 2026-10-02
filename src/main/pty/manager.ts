@@ -157,6 +157,7 @@ export class PtyManager {
       appVersion: app.getVersion(),
       zdotdirShimPath: this.zdotdir ?? '',
     })
+    for (const [k, v] of platform.paneEnvExtras?.(req.paneId) ?? []) env[k] = v
 
     let file: string
     let args: string[]

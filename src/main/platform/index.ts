@@ -1,6 +1,7 @@
 import { darwin } from './darwin.js'
 import { linux } from './linux.js'
 import { win32 } from './win32.js'
+import { wslhost } from './wslhost.js'
 import type { Platform } from './types.js'
 
 export type { Platform, PlatformCapabilities, ShellSpec, KillRequest, KillResult } from './types.js'
@@ -13,8 +14,13 @@ export type { Platform, PlatformCapabilities, ShellSpec, KillRequest, KillResult
  * "mostly works" instead of "refuses to start". Linux gets its own entry
  * because the one thing darwin hardcodes — `/bin/zsh -l` — is reliably absent
  * on Linux, which would have made every pane dead on arrival.
+ *
+ * SEASHELL_HOST=native-win wins over process.platform (platform/wslhost.ts).
  */
 function select(): Platform {
+  // The native Windows shell runs main inside WSL: Linux by process.platform,
+  // Windows by the identity its panes carry.
+  if (process.env.SEASHELL_HOST === 'native-win') return wslhost
   switch (process.platform) {
     case 'win32':
       return win32

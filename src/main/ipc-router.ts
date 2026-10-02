@@ -585,6 +585,7 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
       userData: app.getPath('userData'),
       defaultShell: platform.loginShell().file,
       cwdOfLaunch: rendererHome(),
+      host: process.env.SEASHELL_HOST === 'native-win' ? 'native' : 'electron',
     }
   })
 

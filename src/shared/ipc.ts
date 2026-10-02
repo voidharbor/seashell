@@ -383,6 +383,8 @@ export interface AppPaths {
   userData: string
   defaultShell: string
   cwdOfLaunch: string
+  /** Which shell hosts the renderer: the native Windows shell or Electron. */
+  host?: 'native' | 'electron'
 }
 
 /** Menu accelerators are delivered here — they fire regardless of DOM focus. */

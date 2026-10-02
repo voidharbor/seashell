@@ -49,12 +49,21 @@ describe('control endpoint: token', () => {
 })
 
 describe('control endpoint: control.json', () => {
-  it('lives in userData and carries host, port, token, pid', () => {
+  it('lives in userData and carries host, port, token, pid, corePid', () => {
     expect(controlJsonPath('/u/seashell')).toBe(path.join('/u/seashell', 'control.json'))
     const info = endpointInfo(51234, TOKEN, 999)
-    expect(info).toEqual({ host: '127.0.0.1', port: 51234, token: TOKEN, pid: 999 })
+    expect(info).toEqual({ host: '127.0.0.1', port: 51234, token: TOKEN, pid: 999, corePid: process.pid })
     expect(JSON.parse(serializeEndpointInfo(info))).toEqual(info)
     expect(CONTROL_HOST).toBe('127.0.0.1')
+  })
+})
+
+describe('control endpoint: corePid', () => {
+  it('names the serving process apart from the host pid under the native shell', () => {
+    const info = endpointInfo(51234, TOKEN, 4512, 3101)
+    expect(info.pid).toBe(4512)
+    expect(info.corePid).toBe(3101)
+    expect(JSON.parse(serializeEndpointInfo(info))).toEqual(info)
   })
 })
 
@@ -157,6 +166,7 @@ describe('control endpoint: TCP transport', () => {
       port: server.port,
       token: server.token,
       pid: process.pid,
+      corePid: process.pid,
     })
     expect(server.port).toBeGreaterThan(0)
     expect(server.token).toMatch(/^[0-9a-f]{64}$/)

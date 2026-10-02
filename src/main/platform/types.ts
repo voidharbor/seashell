@@ -84,6 +84,12 @@ export interface Platform {
   readonly id: NodeJS.Platform
   readonly capabilities: PlatformCapabilities
 
+  /** 'tcp' selects the loopback-plus-token control endpoint on any OS (the native Windows shell runs main inside WSL). */
+  readonly controlTransport?: 'tcp' | 'unix'
+
+  /** Extra pane environment, applied after buildEnv. The wslhost platform stamps the Windows pane identity here. */
+  paneEnvExtras?(paneId: string): Array<[string, string]>
+
   /**
    * Optional: the whole spawn for a pane, cwd validation included. Absent
    * means the default (`loginShell()` in the requested cwd). win32 uses it to
