@@ -4,6 +4,8 @@
 #include "window.h"
 #include "version.h"
 #include <shlobj.h>
+#include <condition_variable>
+#include <deque>
 #include <thread>
 #include <vector>
 
@@ -49,6 +51,8 @@ bool postToWindow(UINT msg, WPARAM w, LPARAM l) {
 // the shell: past this cap the reader waits, the pipe fills and the core's
 // writes (and the pty reads behind them) are throttled.
 const size_t kMaxQueuedLineBytes = 16u << 20;
+// What send() queues for a core that is not reading its stdin before it drops.
+const size_t kMaxOutboxBytes = 16u << 20;
 std::atomic<size_t> g_queuedLineBytes{ 0 };
 
 bool postLine(std::string* line) {
@@ -74,6 +78,18 @@ struct CoreProc::Run {
   HANDLE readerDone = nullptr;
   DWORD pid = 0;
   LPARAM gen = 0;
+  // send() queues here and returns; the writer thread alone writes stdinW, so
+  // the UI thread never blocks on a core whose stdin pipe is full (it may be
+  // stuck writing its stdout to a reader that waits on the UI thread).
+  std::mutex outMu;
+  std::condition_variable outCv;
+  std::deque<std::string> outbox;
+  size_t outBytes = 0;
+  bool closing = false;   // the writer drains the outbox, closes stdinW and ends
+  void close() {
+    { std::lock_guard<std::mutex> lock(outMu); closing = true; }
+    outCv.notify_all();
+  }
   ~Run() { closeH(proc); closeH(stdinW); closeH(stdoutR); closeH(readerDone); }
 };
 
@@ -206,7 +222,38 @@ bool CoreProc::start() {
   }).detach();
 
   std::thread([run] {
+    for (;;) {
+      std::string chunk;
+      {
+        std::unique_lock<std::mutex> lock(run->outMu);
+        run->outCv.wait(lock, [&] { return !run->outbox.empty() || run->closing; });
+        if (run->outbox.empty()) break;   // closing and drained
+        chunk = std::move(run->outbox.front());
+        run->outbox.pop_front();
+        run->outBytes -= chunk.size();
+      }
+      const char* p = chunk.data();
+      size_t left = chunk.size();
+      while (left > 0) {
+        DWORD w = 0;
+        if (!WriteFile(run->stdinW, p, (DWORD)left, &w, nullptr)) {
+          App::log("error: core pipe write %lu; dropped %zu bytes", GetLastError(), left);
+          std::lock_guard<std::mutex> lock(run->outMu);
+          run->closing = true;
+          run->outbox.clear();
+          run->outBytes = 0;
+          break;
+        }
+        p += w;
+        left -= w;
+      }
+    }
+    closeH(run->stdinW);   // the core also quits through main's drain when its stdin closes
+  }).detach();
+
+  std::thread([run] {
     WaitForSingleObject(run->proc, INFINITE);
+    run->close();   // the writer has nobody to write to
     WaitForSingleObject(run->readerDone, 2000);   // the last lines land before the exit
     DWORD code = 0;
     GetExitCodeProcess(run->proc, &code);
@@ -218,24 +265,27 @@ bool CoreProc::start() {
 }
 
 void CoreProc::send(const std::string& line) {
-  std::lock_guard<std::mutex> lock(mu_);
-  if (!run_ || !run_->stdinW) {
+  std::shared_ptr<Run> run;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    run = run_;
+  }
+  if (!run) {
     App::log("core pipe gone; dropped %zu bytes", line.size());
     return;
   }
-  std::string out = line + "\n";
-  const char* p = out.data();
-  size_t left = out.size();
-  while (left > 0) {
-    DWORD w = 0;
-    if (!WriteFile(run_->stdinW, p, (DWORD)left, &w, nullptr)) {
-      App::log("error: core pipe write %lu; dropped %zu bytes", GetLastError(), left);
-      closeH(run_->stdinW);
-      return;
-    }
-    p += w;
-    left -= w;
+  std::lock_guard<std::mutex> lock(run->outMu);
+  if (run->closing) {
+    App::log("core pipe gone; dropped %zu bytes", line.size());
+    return;
   }
+  if (run->outBytes + line.size() + 1 > kMaxOutboxBytes) {
+    App::log("error: core is not reading its stdin; dropped %zu bytes", line.size());
+    return;
+  }
+  run->outbox.push_back(line + "\n");
+  run->outBytes += line.size() + 1;
+  run->outCv.notify_one();
 }
 
 void CoreProc::beginQuit() {
@@ -250,8 +300,8 @@ void CoreProc::stop(DWORD graceMs) {
   {
     std::lock_guard<std::mutex> lock(mu_);
     run = run_;
-    closeH(run->stdinW);   // the core also quits through main's drain when its stdin closes
   }
+  run->close();   // the writer sends app:beforeQuit, then closes the core's stdin
   if (WaitForSingleObject(run->proc, graceMs) == WAIT_TIMEOUT) {
     App::log("core pid %lu did not exit in %lu ms; terminating", run->pid, graceMs);
     TerminateProcess(run->proc, 1);
