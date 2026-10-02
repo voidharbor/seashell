@@ -276,12 +276,18 @@ Mac and Linux hosts (the renderer and sidecar are portable; a host per OS is the
 
 | Candidate | processes | WS median MB | private median MB | notes |
 |---|---|---|---|---|
-| A Electron 43 at W10 | not measured | not measured | not measured | Edge was open. Workload verified: 10 panes, 10 prompts, 9 tabs at 1440x900; tree of 54 processes at run time. `bakeoff\A-electron.png` |
-| B WebView2 renderer floor | not measured | not measured | not measured | Edge was open. Workload verified: 10 xterm instances, WebGL in all 10, live zsh prompt in terminal 0; tree of 12. `bakeoff\B-webview2.png` |
-| C Node sidecar floor | not measured | not measured | not measured | Edge was open. Workload verified: 10 of 10 panes printed a prompt; tree of 51 (node 1, wsl.exe 20, conhost 20, wslhost 10). No window |
-| D Native floor | not measured | not measured | not measured | Edge was open. Workload verified: prompt in grid 0, ten grids drawn; tree of 6. `bakeoff\D-native.png` |
-| B + C | | not measured | | the R1 number |
+| A Electron 43 at W10 | 54 | 948.6 | 471.7 | 10 panes, 10 prompts, 9 tabs at 1440x900. Top 3: the three Chromium processes, main 172, then 110 and 109. `bakeoff\A-electron.png` |
+| B WebView2 renderer floor | 12 | 482.7 | 333.7 | 10 xterm instances, WebGL in all 10, one live zsh in terminal 0 (one pane's plumbing only). Top 3: msedgewebview2 126, 115, 100. `bakeoff\B-webview2.png` |
+| C Node sidecar floor | 51 | 664.1 | 278.1 | node.exe 150 plus ten real panes: wsl.exe 12.7 each, two per pane. No window |
+| D Native floor | 6 | 91.9 | 66.2 | bakeoff-win32 40.5, one live zsh in grid 0, ten grids drawn (one pane's plumbing only). `bakeoff\D-native.png` |
+| B + C | | 1146.8 | | the R1 number |
 
-Rule applied: none. Chosen: none. `decide.mjs` has no B-webview2 or C-sidecar row to apply R1, R2 or R3 to, and the run does not pick a stack without the numbers (decision 1). Measured at: attempted 08:11 to 08:31 EDT 10/02; Edge closed: no (Microsoft Edge Startup Boost, `msedge.exe --no-startup-window` pid 13988 since 10/01 19:46, 7 msedge.exe processes, no window; the run did not start it and did not close it); display: MSI 1x. Process counts are tree sizes from `app-tree.ps1` at run time, not `measure-ram.ps1` medians. Written by: the run, stage 0, Task 6.
+Rule applied: R3 (B + C = 1146.8, B + 25 = 507.7, both over 200). Chosen: native. Measured at: 13:33 to 13:41 EDT 10/02, one candidate at a time; Edge closed: yes (0 msedge.exe, the Startup Boost processes were stopped at 13:29 on Josh's go); display: MSI 1x. Five samples per row, 10 s apart after a 60 s idle; the spread inside every row is under 4 percent. Written by: the run, stage 0, Task 6, resumed at 13:30 from the session that armed it.
 
-To fill this table: quit Edge fully (Startup Boost included, so `Get-Process msedge` returns nothing), then from WSL in `~/seashell-wt/redesign` run `scripts/win/sync-tree.sh` and, one at a time, `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\seashell-build\redesign\scripts\bakeoff\run-<electron|webview2|sidecar|native>.ps1`, then `node scripts/bakeoff/decide.mjs /mnt/c/seashell-build/redesign/bakeoff/results.jsonl`.
+What the rows say beyond the rule:
+
+- The per-pane plumbing dominates. C minus its node.exe is 514 MB WS (128 MB private) across 50 processes: each pane is two wsl.exe, two conhost.exe and one wslhost.exe, about 51 MB WS (13 MB private). Every stack that runs a pane as `wsl.exe -d Ubuntu-24.04` pays it, so under the section 2 counting rule no stack reaches 200 MB WS at W10. Even D with ten real panes would read about 41 + 514 = 555 MB WS (about 180 MB private).
+- App only, plumbing removed (one pane's worth for B and D, ten for A and C): Electron 435 MB WS, WebView2 432 MB WS, native 41 MB WS. WebView2 is not lighter than Electron; ten xterm.js panes with WebGL cost about 430 MB of Chromium whichever shell wraps them. Replacing Electron with WebView2 would not move Josh's number.
+- Private bytes, the more honest system cost (WS counts shared DLL pages once per process): app only, Electron 344, WebView2 321, native 53.
+
+Consequence (section 3, R3): the run stops at stage 0 and reports. Tasks 7 to 14 are not started, because the host they would build (WebView2 plus the Node sidecar) lands where today's app already is.
