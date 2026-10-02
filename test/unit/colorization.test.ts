@@ -22,7 +22,7 @@ describe('colorizationToTokens (Review Focus 5)', () => {
 })
 
 describe('shell:colorization fills model.tokens', () => {
-  it('derives the tokens, carries composition, and falls back on a bad payload', async () => {
+  it('derives the tokens, carries composition, and falls back to the opaque 6.2 strip on a bad payload', async () => {
     const f = fakeDeps()
     const c = new Controller(f.deps, { home: '/Users/joshwald', version: '0.6.0', chords: [] })
     await c.boot(GEO)
@@ -32,7 +32,12 @@ describe('shell:colorization fills model.tokens', () => {
     expect(c.model().tokens.composition).toBe('1')
     c.push('shell:colorization', { argb: '#C8107C10', opaque: false, composition: false })
     expect(c.model().tokens.composition).toBe('0')
+    // Review Focus 5: a missing or malformed colorization is the 6.2 table on the opaque strip.
     c.push('shell:colorization', null)
-    expect(c.model().tokens).toEqual({ ...colorizationToTokens(null), composition: '1' })
+    expect(c.model().tokens).toEqual({ ...colorizationToTokens(null), composition: '0' })
+    c.push('shell:colorization', { argb: 'purple', opaque: false, composition: true })
+    expect(c.model().tokens).toEqual({ ...colorizationToTokens(null), composition: '0' })
+    c.push('shell:colorization', { argb: '#C8881798', opaque: false, composition: true })
+    expect(c.model().tokens.composition).toBe('1')
   })
 })

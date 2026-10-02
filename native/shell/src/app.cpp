@@ -116,7 +116,9 @@ json App::dwmColorization() {
   }
   out["opaque"] = haveDwm && opaque != FALSE;
   // A failed query paints the opaque strip: readable whatever the frame does.
-  out["composition"] = SUCCEEDED(DwmIsCompositionEnabled(&comp)) && comp != FALSE;
+  // So does a DWM that has no colorization to give (off, a remote session),
+  // even with the registry value still there (Review Focus 5).
+  out["composition"] = haveDwm && SUCCEEDED(DwmIsCompositionEnabled(&comp)) && comp != FALSE;
   return out;
 }
 

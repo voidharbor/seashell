@@ -61,6 +61,11 @@ function parseRgb(argb: unknown): number | null {
   return m ? parseInt(m[1]!, 16) : null
 }
 
+/** True when `argb` is a color colorizationToTokens derives from (not the missing or malformed fallback). */
+export function isColorization(argb: unknown): boolean {
+  return parseRgb(argb) !== null
+}
+
 const ch = (rgb: number, shift: number): number => (rgb >> shift) & 0xff
 
 /** `rgb` at weight `w` over the grey `g` (0..255), floored like tokens.h's frame. */

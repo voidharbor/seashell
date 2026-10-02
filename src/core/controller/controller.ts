@@ -49,7 +49,7 @@ import { layOut, layOutZoomed, type LaidOut } from './layout.js'
 import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-state.js'
 import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
 import { mem, statusModel } from './status.js'
-import { colorizationToTokens } from './colorization.js'
+import { colorizationToTokens, isColorization } from './colorization.js'
 import type {
   ChordModel,
   FindModel,
@@ -505,7 +505,10 @@ export class Controller {
         // WM_DWMCOLORIZATIONCOLORCHANGED / WM_DWMCOMPOSITIONCHANGED.
         const c = p as { argb?: unknown; opaque?: unknown; composition?: unknown } | null
         const argb = typeof c?.argb === 'string' ? c.argb : null
-        this.tokens = { ...colorizationToTokens(argb, c?.opaque === true), composition: c?.composition === false ? '0' : '1' }
+        // A missing or malformed colorization (DWM off, a remote session) paints
+        // the opaque strip, as composition off does (Review Focus 5).
+        const glass = c?.composition !== false && isColorization(argb)
+        this.tokens = { ...colorizationToTokens(argb, c?.opaque === true), composition: glass ? '1' : '0' }
         this.emit()
         break
       }
