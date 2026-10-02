@@ -2,6 +2,7 @@
 #include "app.h"
 #include "hostapi.h"
 #include "paths.h"
+#include "ui/ui.h"
 #include "width.h"
 #include "window.h"
 #include <ws2tcpip.h>
@@ -285,6 +286,7 @@ json Driver::handle(const json& req) {
       Sleep(50);
     }
   }
+  if (cmd == "drag") return drag(req);
   if (cmd == "waitText") {
     std::string want = strArg(req, "contains");
     json gridReq = { { "cmd", "grid" }, { "paneId", strArg(req, "paneId") } };
@@ -340,7 +342,18 @@ json Driver::execute(const json& req) {
   std::string cmd = strArg(req, "cmd");
   if (cmd == "model") {
     const json& m = App::instance().wire().lastModelJson();
-    return m.is_object() ? m : fail("ENOMODEL");
+    if (!m.is_object()) return fail("ENOMODEL");
+    json out = m;
+    out["coreDead"] = App::instance().coreDead();   // the shell's own state, beside the core's last model
+    return out;
+  }
+  if (cmd == "dragStep") return dragStep(req);
+  if (cmd == "rect") {
+    // A target's hit rect in client DIPs, as the views registered it.
+    D2D1_RECT_F r{};
+    if (!Ui::instance().targetRect(strArg(req, "target"), &r)) return fail("ENOTARGET");
+    float s = Window::instance().dpi().scale();
+    return { { "ok", true }, { "x", r.left / s }, { "y", r.top / s }, { "w", (r.right - r.left) / s }, { "h", (r.bottom - r.top) / s } };
   }
   if (cmd == "shot") {
     std::string path = strArg(req, "path");
@@ -361,8 +374,6 @@ json Driver::execute(const json& req) {
     for (const json& s : req["strings"]) widths.push_back(s.is_string() ? seashell_cluster_widths(s.get<std::string>()) : std::vector<int>());
     return { { "ok", true }, { "widths", widths } };
   }
-  // drag and click by point arrive with the hit rects (Task 15).
-  if (cmd == "drag") return fail("ENOTYET");
   return fail("EUNKNOWN");
 }
 
@@ -413,10 +424,12 @@ json Driver::text(const std::string& s) {
   return { { "ok", true } };
 }
 
-// By target: the ui:event the view would send for a click on that target.
+// By target: what a click on that target does (Ui::targetClick: the shell's own
+// handling, such as Restart on a dead core, else the ui:event the view sends).
 // By point: x, y in client DIPs, or row, col (a viewport cell of paneId, the
 // focused pane by default), as the button messages a real click sends to the
-// body, so the grid input path (Task 13) sees exactly what a mouse would do.
+// window under that point (the strip's top-level window or the body), so the
+// hit rects and the grid input path see exactly what a mouse would do.
 json Driver::click(const json& req, const char* type) {
   std::string target = strArg(req, "target");
   int button = req.contains("button") && req["button"].is_number_integer() ? req["button"].get<int>() : 0;
@@ -426,7 +439,8 @@ json Driver::click(const json& req, const char* type) {
     for (const char* k : { "ctrl", "alt", "shift" })
       if (req["mods"].contains(k) && req["mods"][k].is_boolean()) mods[k] = req["mods"][k];
   if (!target.empty()) {
-    App::instance().wire().sendEvent({ { "type", type }, { "target", target }, { "x", 0 }, { "y", 0 }, { "button", button }, { "mods", mods } });
+    Ui::instance().targetClick(target, strcmp(type, "dblclick") == 0, button,
+                               Mods{ mods["ctrl"].get<bool>(), mods["alt"].get<bool>(), mods["shift"].get<bool>() });
     return { { "ok", true }, { "target", target } };
   }
   Window& win = Window::instance();
@@ -434,6 +448,7 @@ json Driver::click(const json& req, const char* type) {
   if (!body) return fail("ENOWINDOW");
   float scale = win.dpi().scale();
   float bx, by;
+  HWND to = body;
   if (req.contains("row") && req["row"].is_number() && req.contains("col") && req["col"].is_number()) {
     App& a = App::instance();
     std::string id = strArg(req, "paneId");
@@ -447,7 +462,10 @@ json Driver::click(const json& req, const char* type) {
   } else if (req.contains("x") && req["x"].is_number() && req.contains("y") && req["y"].is_number()) {
     bx = req["x"].get<float>() * scale;
     by = req["y"].get<float>() * scale - (float)win.bodyRect().top;
-    if (by < 0) return fail("ENOTYET");   // the strip's hit rects are Task 15's
+    if (by < 0) {   // the strip: the top-level window's client coordinates
+      to = win.hwnd();
+      by += (float)win.bodyRect().top;
+    }
   } else {
     return fail("ENOTARGET");
   }
@@ -460,15 +478,95 @@ json Driver::click(const json& req, const char* type) {
   WPARAM mk = kMk[button] | (heldMods_ & kModCtrl ? MK_CONTROL : 0) | (heldMods_ & kModShift ? MK_SHIFT : 0);
   WPARAM upMk = mk & ~kMk[button];
   LPARAM pt = MAKELPARAM((int)std::lround(bx), (int)std::lround(by));
-  SendMessageW(body, WM_MOUSEMOVE, upMk, pt);
-  SendMessageW(body, kDown[button], mk, pt);
-  SendMessageW(body, kUp[button], upMk, pt);
+  SendMessageW(to, WM_MOUSEMOVE, upMk, pt);
+  SendMessageW(to, kDown[button], mk, pt);
+  SendMessageW(to, kUp[button], upMk, pt);
   if (strcmp(type, "dblclick") == 0) {
-    SendMessageW(body, kDbl[button], mk, pt);
-    SendMessageW(body, kUp[button], upMk, pt);
+    SendMessageW(to, kDbl[button], mk, pt);
+    SendMessageW(to, kUp[button], upMk, pt);
   }
   heldMods_ = -1;
-  return { { "ok", true }, { "x", bx / scale }, { "y", (by + win.bodyRect().top) / scale } };
+  float yOut = to == body ? by + win.bodyRect().top : by;
+  return { { "ok", true }, { "x", bx / scale }, { "y", yOut / scale } };
+}
+
+// drag {target, dx, dy, steps}: a left-button press at the centre of the
+// target's hit rect, `steps` moves to dx, dy DIP away, each waited for the
+// ui:model it causes (up to stepTimeoutMs), then the release. ms is the wall
+// time of the whole drag, press to release (Task 18 divides it by steps).
+json Driver::drag(const json& req) {
+  auto num = [&](const char* k, double d) { return req.contains(k) && req[k].is_number() ? req[k].get<double>() : d; };
+  double dx = num("dx", 0), dy = num("dy", 0);
+  int steps = std::max(1, std::min(1000, (int)num("steps", 10)));
+  int stepTimeoutMs = std::max(1, (int)num("stepTimeoutMs", 2000));
+  LARGE_INTEGER t0, t1, freq;
+  QueryPerformanceFrequency(&freq);
+  QueryPerformanceCounter(&t0);
+  json down = onUi({ { "cmd", "dragStep" }, { "phase", "down" }, { "target", strArg(req, "target") } });
+  if (!down.value("ok", false)) return down;
+  int models = 0, timeouts = 0;
+  for (int i = 1; i <= steps; i++) {
+    json mv = onUi({ { "cmd", "dragStep" }, { "phase", "move" }, { "dx", dx * i / steps }, { "dy", dy * i / steps } });
+    if (!mv.value("ok", false)) return mv;
+    double before = mv.value("seq", 0.0);
+    ULONGLONG end = GetTickCount64() + (ULONGLONG)stepTimeoutMs;
+    bool got = false;
+    while (!got && GetTickCount64() < end) {
+      json q = onUi({ { "cmd", "dragStep" }, { "phase", "seq" } });
+      if (q.value("seq", 0.0) > before) got = true;
+      else Sleep(1);
+    }
+    if (got) models++; else timeouts++;
+  }
+  json up = onUi({ { "cmd", "dragStep" }, { "phase", "up" }, { "dx", dx }, { "dy", dy } });
+  QueryPerformanceCounter(&t1);
+  double ms = (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart;
+  return { { "ok", up.value("ok", false) }, { "ms", std::round(ms * 10) / 10 }, { "steps", steps }, { "models", models },
+           { "timeouts", timeouts }, { "target", strArg(req, "target") }, { "x", down["x"] }, { "y", down["y"] } };
+}
+
+// One part of a drag, on the UI thread: the press at the target's centre, a
+// move to dx, dy DIP from it (replying with the model seq before the move), the
+// model seq now, or the release.
+json Driver::dragStep(const json& req) {
+  Window& win = Window::instance();
+  std::string phase = strArg(req, "phase");
+  double seq = App::instance().model().seq;
+  if (phase == "seq") return { { "ok", true }, { "seq", seq } };
+  float scale = win.dpi().scale();
+  float top = (float)win.bodyRect().top;
+  auto at = [&](float cx, float cy, HWND* to) {
+    bool strip = cy < top;
+    *to = strip ? win.hwnd() : win.body();
+    return MAKELPARAM((int)std::lround(cx), (int)std::lround(strip ? cy : cy - top));
+  };
+  if (phase == "down") {
+    D2D1_RECT_F r{};
+    if (!Ui::instance().targetRect(strArg(req, "target"), &r)) return fail("ENOTARGET");
+    dragX_ = (r.left + r.right) / 2;
+    dragY_ = (r.top + r.bottom) / 2;
+    HWND to;
+    LPARAM pt = at(dragX_, dragY_, &to);
+    dragWin_ = to;
+    SendMessageW(to, WM_MOUSEMOVE, 0, pt);
+    SendMessageW(to, WM_LBUTTONDOWN, MK_LBUTTON, pt);
+    return { { "ok", true }, { "seq", seq }, { "x", dragX_ / scale }, { "y", dragY_ / scale } };
+  }
+  if (!dragWin_) return fail("ENODRAG");
+  auto num = [&](const char* k) { return req.contains(k) && req[k].is_number() ? req[k].get<float>() : 0.f; };
+  float cx = dragX_ + num("dx") * scale, cy = dragY_ + num("dy") * scale;
+  // The press's window keeps the gesture (it holds the capture), whatever is under the point.
+  LPARAM pt = MAKELPARAM((int)std::lround(cx), (int)std::lround(dragWin_ == win.body() ? cy - top : cy));
+  if (phase == "move") {
+    SendMessageW(dragWin_, WM_MOUSEMOVE, MK_LBUTTON, pt);
+    return { { "ok", true }, { "seq", seq } };
+  }
+  if (phase == "up") {
+    SendMessageW(dragWin_, WM_LBUTTONUP, 0, pt);
+    dragWin_ = nullptr;
+    return { { "ok", true }, { "seq", seq } };
+  }
+  return fail("EBADPHASE");
 }
 
 void Driver::noteFrame(double ms) {
@@ -500,7 +598,8 @@ json Driver::stats() {
   Grid* g = id.empty() ? nullptr : a.grid(id);
   return { { "frameMs", { { "p50", percentile(ms, 0.5) }, { "p95", percentile(ms, 0.95) } } },
            { "framesLast5s", ms.size() }, { "ptyBytesLast5s", (long long)bytes }, { "shellWsMB", std::round(wsMB * 10) / 10 },
-           { "paneId", id }, { "mouseMode", g ? g->mouseMode() : 0 }, { "selection", a.input().selectionText(id) } };
+           { "paneId", id }, { "mouseMode", g ? g->mouseMode() : 0 }, { "selection", a.input().selectionText(id) },
+           { "coreDead", a.coreDead() }, { "coreAlive", a.coreAlive() } };
 }
 
 // The visible rows of a pane's grid (the focused pane when paneId is empty),

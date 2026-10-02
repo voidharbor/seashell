@@ -14,7 +14,8 @@ public:
   HWND hwnd() const { return hwnd_; }              // the top-level window (glass strip lives here)
   HWND body() const { return body_; }              // the opaque child covering everything below the strip
   Dpi dpi() const { return Dpi{ (float)dpi_ }; }
-  int stripHeightPx() const;    // 38 DIP times scale, the IE9 tab row (DWM caption buttons sit in it)
+  int stripHeightPx() const;    // the model's tabStripH (38 DIP times uiScale) times scale, the IE9 tab row (DWM caption buttons sit in it)
+  void onStripHeightChanged();  // the model's tabStripH changed: the glass and the body follow
   RECT bodyRect() const;        // client rect minus the strip
   void invalidateStrip();
   void invalidateBody(const RECT* r = nullptr);

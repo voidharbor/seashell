@@ -3,9 +3,11 @@
 #include "gfx.h"
 #include "log.h"
 #include "paths.h"
+#include "ui/ui.h"
 #include "window.h"
 #include "version.h"
 #include <shobjidl.h>
+#include <windowsx.h>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdlib>
@@ -29,19 +31,6 @@ const size_t kMaxEarlyBytes = 4u << 20;
 const UINT kBlinkMs = 530;
 // The search addon re-runs the search this long after the last pty write.
 const UINT kFindRefreshMs = 200;
-
-// "#rrggbb" from the model's token table, else fallback (0x00RRGGBB).
-uint32_t tokenColor(const UiModel& m, const char* name, uint32_t fallback) {
-  auto it = m.tokens.find(name);
-  if (it == m.tokens.end() || it->second.size() != 7 || it->second[0] != '#') return fallback;
-  char* end = nullptr;
-  unsigned long v = strtoul(it->second.c_str() + 1, &end, 16);
-  return end && *end == 0 ? (uint32_t)v : fallback;
-}
-
-D2D1_COLOR_F colorF(uint32_t c) {
-  return D2D1::ColorF(((c >> 16) & 0xFF) / 255.f, ((c >> 8) & 0xFF) / 255.f, (c & 0xFF) / 255.f, 1.f);
-}
 }
 
 App& App::instance() { static App a; return a; }
@@ -94,6 +83,8 @@ bool App::startCore() {
   if (!core_.start()) {
     coreDead_ = true;
     log("coreDead: the core did not start");
+    Ui::instance().setCoreDead(true, 0);
+    Window::instance().invalidateBody();
     return false;
   }
   wire_.sendGeometry();   // the controller boots on the first geometry
@@ -119,9 +110,36 @@ void App::onCoreExit(DWORD code, LPARAM gen) {
     if (startCore()) return;
   }
   coreDead_ = true;
-  // Task 15 paints "core exited" on every pane and shows this as the toast.
+  // Every pane shows "core exited" with Restart, and this is the toast.
   log("coreDead: The SeaShell core stopped (code %lu). Restart a pane or quit.", code);
+  Ui::instance().setCoreDead(true, code);
   Window::instance().invalidateStrip();
+  Window::instance().invalidateBody();
+}
+
+// Restart on a dead core's pane: a new core run. Its panes arrive with fresh
+// grid:cmd creates, so the dead run's grids go now. A death after this one is
+// final again (coreDied_ stays set).
+void App::restartCore() {
+  if (!coreDead_ || quitting_) return;
+  log("core restart requested from a pane");
+  coreDead_ = false;
+  Ui::instance().setCoreDead(false, 0);
+  for (const auto& g : grids_) input_.dropPane(g.first);
+  views_.clear();
+  grids_.clear();
+  sbCap_.clear();
+  finders_.clear();
+  findRuns_.clear();
+  feed_.clear();
+  startCore();
+  Window::instance().invalidateStrip();
+  Window::instance().invalidateBody();
+}
+
+void App::onActivate(bool active) {
+  if (windowActive_ == active) return;
+  windowActive_ = active;
   Window::instance().invalidateBody();
 }
 
@@ -134,20 +152,30 @@ void App::onResized() {
   wire_.sendGeometry();
 }
 
-// Keys go to the focused pane's grid (chords run without one); mouse messages
-// to the grid under the pointer. The strip's own targets are Task 15's.
+// The chrome first (Ui: the edit widgets, the restore card, the strip and
+// title bar targets), then the focused pane's grid for keys (chords run
+// without one) and the grid under the pointer for the mouse.
 bool App::onInput(HWND from, UINT msg, WPARAM w, LPARAM l) {
   if (msg == WM_SETFOCUS || msg == WM_KILLFOCUS) {
     input_.focus(msg == WM_SETFOCUS);
     return false;
   }
+  Mods mods{ Driver::keyDown(VK_CONTROL), Driver::keyDown(VK_MENU), Driver::keyDown(VK_SHIFT) };
   if (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) {
-    if (findKey(msg, w, l)) return true;
+    if (Ui::instance().key(msg, w, l, mods)) return true;
     return input_.key(focusedGrid(), msg, w, l);
   }
   if (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) {
-    // Only the body's client coordinates map onto the grids; a wheel carries screen coordinates.
-    if (from != Window::instance().body() && msg != WM_MOUSEWHEEL) return false;
+    Window& win = Window::instance();
+    bool body = from == win.body();
+    // Ui takes client pixels of the top-level window; a wheel carries screen coordinates.
+    POINT pt{ GET_X_LPARAM(l), GET_Y_LPARAM(l) };
+    if (body && msg != WM_MOUSEWHEEL) pt.y += win.bodyRect().top;
+    int button = (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP || msg == WM_RBUTTONDBLCLK) ? 2
+               : (msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP || msg == WM_MBUTTONDBLCLK) ? 1 : 0;
+    if (Ui::instance().mouse(msg, pt, button, mods)) return true;
+    // Only the body's client coordinates map onto the grids.
+    if (!body && msg != WM_MOUSEWHEEL) return false;
     return input_.mouse(msg, w, l);
   }
   return false;
@@ -375,62 +403,8 @@ void CALLBACK App::findRefresh(HWND, UINT, UINT_PTR id, DWORD) {
   if (any) Window::instance().invalidateBody();
 }
 
-// The find bar's keys while it is open. Until Task 15 draws the bar and its
-// edit widget, the text lives here: typing and Backspace send the whole query
-// as `text` on find:query, Enter, Shift+Enter and Escape go as `key` events.
-// Chords still run; nothing else reaches the pty while the bar is open.
-bool App::findKey(UINT msg, WPARAM w, LPARAM l) {
-  if (!model_.find.open) { findSwallowChar_ = false; return false; }
-  bool ctrl = Driver::keyDown(VK_CONTROL), alt = Driver::keyDown(VK_MENU), shift = Driver::keyDown(VK_SHIFT);
-  nlohmann::json mods = { { "ctrl", ctrl }, { "alt", alt }, { "shift", shift } };
-  auto key = [&](const char* k) {
-    findSwallowChar_ = true;
-    wire_.sendEvent({ { "type", "key" }, { "target", "find:query" }, { "key", k }, { "mods", mods } });
-  };
-  if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
-    findSwallowChar_ = false;
-    if (w == VK_SHIFT || w == VK_CONTROL || w == VK_MENU || w == VK_LWIN || w == VK_RWIN) return false;
-    if (findChords_.command(chordFromMessage(w, l, ctrl, alt, shift))) return false;   // GridInput runs it
-    if (msg == WM_SYSKEYDOWN) return false;   // Alt+Space and the window menu
-    if (w == VK_RETURN) { key(shift ? "Shift+Enter" : "Enter"); return true; }
-    if (w == VK_ESCAPE) { key("Escape"); return true; }
-    if (w == VK_BACK) {
-      findSwallowChar_ = true;
-      if (!findQuery_.empty()) {
-        size_t n = findQuery_.size() - 1;
-        while (n > 0 && ((unsigned char)findQuery_[n] & 0xC0) == 0x80) n--;   // one whole code point
-        findQuery_.resize(n);
-        sendFindQuery();
-      }
-      return true;
-    }
-    return true;   // arrows, Delete, Ctrl+letter: the bar has no caret yet
-  }
-  if (msg == WM_CHAR) {
-    if (findSwallowChar_) { findSwallowChar_ = false; return true; }
-    wchar_t ch = (wchar_t)w;
-    if (ch < 0x20 || ch == 0x7F) return true;   // control characters type nothing
-    std::wstring units;
-    if (ch >= 0xD800 && ch <= 0xDBFF) { findHigh_ = ch; return true; }
-    if (ch >= 0xDC00 && ch <= 0xDFFF) {
-      if (!findHigh_) return true;
-      units.push_back(findHigh_);
-    }
-    findHigh_ = 0;
-    units.push_back(ch);
-    findQuery_ += toUtf8(units);
-    sendFindQuery();
-    return true;
-  }
-  return false;   // key ups and WM_SYSCHAR stay with GridInput
-}
-
-void App::sendFindQuery() {
-  wire_.sendEvent({ { "type", "text" }, { "target", "find:query" }, { "text", findQuery_ } });
-}
-
 // BeginDraw, the chrome background, every visible pane's grid at its model
-// rect, a plain title bar per pane until Task 15 draws the chrome, EndDraw.
+// rect, then the chrome over them (Ui::drawBody), EndDraw.
 void App::paintBody() {
   ID2D1HwndRenderTarget* rt = Gfx::instance().bodyTarget();
   if (!rt) return;
@@ -441,9 +415,12 @@ void App::paintBody() {
   float top = (float)win.bodyRect().top;   // model rects are in window client DIPs; the body starts below the strip
   rt->BeginDraw();
   rt->SetTransform(D2D1::Matrix3x2F::Identity());
-  rt->Clear(colorF(tokenColor(model_, "--chrome", 0xece2f0)));
-  ComPtr<ID2D1SolidColorBrush> title;
-  rt->CreateSolidColorBrush(colorF(tokenColor(model_, "--chromeAlt", 0xe1d3e8)), title.GetAddressOf());
+  Ui& ui = Ui::instance();
+  ui.drawBackground(rt);
+  // The focused pane draws a solid cursor only while this window has the
+  // keyboard (and no edit widget does). A test run never activates its window
+  // (SW_SHOWNOACTIVATE), so it counts as active.
+  bool keys = (windowActive_ || testMode_) && !ui.wantsBlink();
   auto dev = [&](const Rect& r) {
     return D2D1::RectF((float)(r.x * scale), (float)(r.y * scale) - top, (float)((r.x + r.w) * scale), (float)((r.y + r.h) * scale) - top);
   };
@@ -453,8 +430,7 @@ void App::paintBody() {
     auto it = views_.find(p.id);
     if (it == views_.end()) continue;
     GridView& v = *it->second;
-    D2D1_RECT_F pr = dev(p.rect), gr = dev(p.gridRect);
-    if (title && gr.top > pr.top) rt->FillRectangle(D2D1::RectF(pr.left, pr.top, pr.right, gr.top), title.Get());
+    D2D1_RECT_F gr = dev(p.gridRect);
     if (p.fontPx > 0) v.setFontPx((float)(p.fontPx * scale));
     v.setDpiScale(scale);
     v.setRect(gr);
@@ -462,8 +438,11 @@ void App::paintBody() {
     v.setBlinkPhase(blinkOn_);
     if (Grid* g = grid(p.id)) v.setAppScrollbar(g->altScreen() && g->mouseMode() != VTERM_PROP_MOUSE_NONE);
     auto f = finders_.find(p.id);
-    v.draw(rt, p.focused, input_.selection(p.id), f == finders_.end() ? nullptr : &f->second.decor(), 0);
+    rt->PushAxisAlignedClip(gr, D2D1_ANTIALIAS_MODE_ALIASED);
+    v.draw(rt, p.focused && keys, input_.selection(p.id), f == finders_.end() ? nullptr : &f->second.decor(), 0);
+    rt->PopAxisAlignedClip();
   }
+  ui.drawBody(rt);
   HRESULT hr = rt->EndDraw();
   QueryPerformanceCounter(&t1);
   QueryPerformanceFrequency(&freq);
@@ -481,8 +460,14 @@ void App::paintBody() {
 void CALLBACK App::blinkTick(HWND, UINT, UINT_PTR, DWORD) {
   App& a = instance();
   a.blinkOn_ = !a.blinkOn_;
+  Ui::instance().setCaretPhase(a.blinkOn_);
   HWND h = Window::instance().hwnd();
   if (!h || IsIconic(h)) return;
+  if (Ui::instance().wantsBlink()) {   // an edit widget's caret
+    Window::instance().invalidateStrip();
+    Window::instance().invalidateBody();
+    return;
+  }
   for (const PaneModel& p : a.model_.panes) {
     auto it = a.views_.find(p.id);
     if (it != a.views_.end() && it->second->wantsBlink(p.focused)) { Window::instance().invalidateBody(); return; }
@@ -568,14 +553,12 @@ int App::main(HINSTANCE hinst) {
   wire_.write = [this](const std::string& line) { core_.send(line); };
   wire_.onModel = [this](const UiModel& m) {
     double oldFont = model_.window.fontPx;
+    double oldStrip = model_.window.tabStripH;
     model_ = m;
     input_.setChords(m.chords);
-    findChords_.set(m.chords);
-    // The find bar opened: its text starts from the core's query (empty after a close).
-    if (m.find.open && !findWasOpen_) findQuery_ = m.find.query;
-    if (!m.find.open) { findQuery_.clear(); findHigh_ = 0; }
-    findWasOpen_ = m.find.open;
-    Window::instance().invalidateStrip();   // Task 15 draws it
+    Ui::instance().setModel(m);
+    if (m.window.tabStripH > 0 && m.window.tabStripH != oldStrip) Window::instance().onStripHeightChanged();
+    Window::instance().invalidateStrip();
     Window::instance().invalidateBody();
     if (!firstModel_) {
       firstModel_ = true;

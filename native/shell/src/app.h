@@ -26,7 +26,8 @@ public:
   HINSTANCE hinst() const { return hinst_; }
   Wire& wire() { return wire_; }
   const UiModel& model() const { return model_; }
-  bool coreDead() const { return coreDead_; }        // Task 15 paints every pane's exit overlay
+  bool coreDead() const { return coreDead_; }        // every pane shows "core exited" (Ui::setCoreDead)
+  void restartCore();                                // Restart on a dead core: a fresh core run, the grids dropped
   bool coreAlive() const { return core_.alive(); }
   DWORD corePid() const { return core_.pid(); }      // wsl.exe, the shell's own child (the driver's coreKill)
   Grid* grid(const std::string& paneId);             // nullptr when the core never created it
@@ -37,7 +38,8 @@ public:
 
   // Hooks the window calls.
   void onResized();                                // Task 8: shell:geometry
-  bool onInput(HWND from, UINT msg, WPARAM w, LPARAM l);   // Tasks 13 and 15; true when handled
+  bool onInput(HWND from, UINT msg, WPARAM w, LPARAM l);   // Ui first, then GridInput; true when handled
+  void onActivate(bool active);                    // WM_ACTIVATE: the cursor goes hollow in the background
   LRESULT onAppMessage(UINT msg, WPARAM w, LPARAM l);      // Window::WM_APP_*
   void onPeerEnvelope(const std::string& json);    // WM_COPYDATA from a second instance
   void onWindowDestroyed();
@@ -54,12 +56,10 @@ private:
   void onPtyData(const std::string& paneId, const std::string& bytes);
   void drainFeed();                                // WM_APP_PTY_FEED
   static void CALLBACK blinkTick(HWND, UINT, UINT_PTR, DWORD);
-  // Find (Task 14): grid:cmd find and findClear, the find query's keys until
-  // Task 15's edit widget takes them, and the re-search after output settles.
+  // Find (Task 14): grid:cmd find and findClear and the re-search after
+  // output settles. The query's keys are Ui's edit widget's.
   void runFind(const std::string& paneId, const nlohmann::json& cmd);
   void scrollToMatch(const std::string& paneId);
-  bool findKey(UINT msg, WPARAM w, LPARAM l);
-  void sendFindQuery();
   static void CALLBACK findRefresh(HWND, UINT, UINT_PTR, DWORD);
 
   HINSTANCE hinst_ = nullptr;
@@ -72,6 +72,7 @@ private:
   UiModel model_;
   bool coreDead_ = false;                          // died twice, or after its first 5 s: not restarted
   bool coreDied_ = false;                          // an unexpected exit happened (only the first may relaunch)
+  bool windowActive_ = false;                      // the top-level window is the active one
   bool firstModel_ = false;                        // this core run has sent its first ui:model
   bool quitting_ = false;                          // app:beforeQuit sent, waiting for the core to exit
   UINT_PTR quitTimer_ = 0;
@@ -86,9 +87,4 @@ private:
   std::map<std::string, Finder> finders_;          // per pane, while it has a find going
   std::map<std::string, FindRun> findRuns_;        // the pane's last search, re-run 200 ms after output stops
   UINT_PTR findTimer_ = 0;
-  std::string findQuery_;                          // the open find bar's text, edited here until Task 15
-  bool findWasOpen_ = false;
-  bool findSwallowChar_ = false;                   // the WM_CHAR of Enter, Escape or Backspace in the find bar
-  wchar_t findHigh_ = 0;                           // a high surrogate waiting for its low half
-  ChordTable findChords_;                          // the model's chords: which modified keys pass the find bar
 };

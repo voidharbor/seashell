@@ -2,6 +2,7 @@
 #include "app.h"
 #include "driver.h"
 #include "gfx.h"
+#include "ui/ui.h"
 #include <dwmapi.h>
 #include <windowsx.h>
 #include <cmath>
@@ -12,7 +13,17 @@ static const int kIdiApp = 101;   // IDI_APP in app.rc
 
 Window& Window::instance() { static Window w; return w; }
 
-int Window::stripHeightPx() const { return (int)std::lround(38 * dpi().scale()); }
+// The model's tabStripH (38 DIP times uiScale), 38 DIP before the first model.
+int Window::stripHeightPx() const {
+  double dip = App::instance().model().window.tabStripH;
+  return (int)std::lround((dip > 0 ? dip : 38) * dpi().scale());
+}
+
+void Window::onStripHeightChanged() {
+  if (!hwnd_) return;
+  extendFrame();
+  relayout();
+}
 int Window::borderPx() const { return (int)std::lround(8 * dpi().scale()); }
 
 RECT Window::bodyRect() const {
@@ -44,7 +55,7 @@ SavedBounds Window::bounds() const {
 bool Window::create(HINSTANCE hinst, bool noActivate) {
   HICON icon = LoadIconW(hinst, MAKEINTRESOURCEW(kIdiApp));
   WNDCLASSEXW wc{ sizeof wc };
-  wc.style = CS_HREDRAW | CS_VREDRAW;
+  wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;   // a double-click on a tab renames it
   wc.lpfnWndProc = hostProc;
   wc.hInstance = hinst;
   wc.hIcon = icon;
@@ -115,6 +126,7 @@ void Window::relayout() {
   if (!hwnd_ || !body_) return;
   RECT br = bodyRect();
   SetWindowPos(body_, nullptr, br.left, br.top, br.right - br.left, br.bottom - br.top, SWP_NOZORDER | SWP_NOACTIVATE);
+  Ui::instance().relayout();   // the strip's controls and the status bar follow the client size
   invalidateStrip();
   App::instance().onResized();   // shell:geometry (Task 8)
 }
@@ -134,8 +146,8 @@ LRESULT Window::hitTest(POINT screen) const {
     if (left) return HTLEFT;
     if (right) return HTRIGHT;
   }
-  // Task 15: HTCAPTION only where Ui::stripTargetAt(pt) is "strip:empty".
-  if (pt.y < stripHeightPx()) return HTCAPTION;
+  // The strip drags the window only where no control is.
+  if (pt.y < stripHeightPx()) return Ui::instance().stripTargetAt(pt) == "strip:empty" ? HTCAPTION : HTCLIENT;
   return HTCLIENT;
 }
 
@@ -173,7 +185,8 @@ void Window::paintStrip() {
       RECT sr{ 0, 0, w, h };
       if (ID2D1DCRenderTarget* rt = Gfx::instance().stripTarget(stripDc_, sr)) {
         rt->BeginDraw();
-        rt->Clear(D2D1::ColorF(0, 0, 0, 0));   // all glass until Task 15 draws the tab row
+        rt->Clear(D2D1::ColorF(0, 0, 0, 0));   // glass wherever the tab row draws nothing
+        Ui::instance().drawStrip(rt);
         if (rt->EndDraw() == D2DERR_RECREATE_TARGET) Gfx::instance().discardStripTarget();
       }
       BitBlt(dc, 0, 0, w, h, stripDc_, 0, 0, SRCCOPY);
@@ -227,9 +240,25 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       if (body_) SetFocus(body_);
       return 0;
     case WM_ACTIVATE:
+      App::instance().onActivate(LOWORD(w) != WA_INACTIVE);
+      extendFrame();
+      break;
     case WM_DWMCOMPOSITIONCHANGED:
       extendFrame();
       break;
+    case WM_NCLBUTTONDOWN:
+      if (w == HTCAPTION) Ui::instance().captionPress();
+      break;
+    case WM_NCLBUTTONDBLCLK:
+      // strip:empty's double-click is the core's new tab, not maximize.
+      if (w == HTCAPTION) { Ui::instance().captionDblClick(); return 0; }
+      break;
+    case WM_NCMOUSEMOVE:
+      Ui::instance().mouseLeave(true);
+      break;
+    case WM_MOUSELEAVE:
+      Ui::instance().mouseLeave(true);
+      return 0;
     case WM_DPICHANGED: {
       dpi_ = HIWORD(w);
       auto* r = reinterpret_cast<RECT*>(l);
@@ -264,6 +293,10 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       return 0;
     default:
       if (msg >= WM_APP_CORE_LINE && msg <= WM_APP_PTY_FEED) return App::instance().onAppMessage(msg, w, l);
+      if (msg == WM_MOUSEMOVE) {
+        TRACKMOUSEEVENT t{ sizeof t, TME_LEAVE, h, 0 };
+        TrackMouseEvent(&t);
+      }
       if ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || (msg >= WM_KEYFIRST && msg <= WM_KEYLAST)) {
         if (App::instance().onInput(h, msg, w, l)) return 0;
       }
@@ -303,7 +336,23 @@ LRESULT Window::onBody(HWND h, UINT msg, WPARAM w, LPARAM l) {
     case WM_CAPTURECHANGED:
       if ((HWND)l != h) App::instance().onInput(h, WM_KILLFOCUS, 0, 0);   // a lost drag ends like focus loss
       return 0;
+    case WM_SETCURSOR:
+      if (LOWORD(l) == HTCLIENT) {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(h, &pt);
+        SetCursor(LoadCursorW(nullptr, Ui::instance().cursorFor(pt)));
+        return TRUE;
+      }
+      break;
+    case WM_MOUSELEAVE:
+      Ui::instance().mouseLeave(false);
+      return 0;
     default:
+      if (msg == WM_MOUSEMOVE) {
+        TRACKMOUSEEVENT t{ sizeof t, TME_LEAVE, h, 0 };
+        TrackMouseEvent(&t);
+      }
       if ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || (msg >= WM_KEYFIRST && msg <= WM_KEYLAST)) {
         if (App::instance().onInput(h, msg, w, l)) return 0;
       }

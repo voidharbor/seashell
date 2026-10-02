@@ -47,6 +47,8 @@ private:
   nlohmann::json key(const std::string& chord);
   nlohmann::json text(const std::string& s);
   nlohmann::json click(const nlohmann::json& req, const char* type);
+  nlohmann::json drag(const nlohmann::json& req);            // connection thread: press, waited moves, release
+  nlohmann::json dragStep(const nlohmann::json& req);        // UI thread: one part of a drag
   nlohmann::json stats();
   nlohmann::json grid(const std::string& paneId);
   nlohmann::json coreKill();
@@ -59,4 +61,6 @@ private:
   struct Sample { ULONGLONG at; double v; };
   std::deque<Sample> frames_, ptyBytes_;   // the last 5 s, UI thread only
   int heldMods_ = -1;                      // -1, or the kMod* bits (driver.cpp) while dispatching a chord
+  HWND dragWin_ = nullptr;                 // the window a driver drag pressed in, UI thread only
+  float dragX_ = 0, dragY_ = 0;            // the press point, client pixels of the top-level window
 };
