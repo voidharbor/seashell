@@ -44,6 +44,12 @@ public:
   void onPeerEnvelope(const std::string& json);    // WM_COPYDATA from a second instance
   void onWindowDestroyed();
   void paintBody();                                // the body child's WM_PAINT: every visible pane's grid
+  // shell:colorization (Task 16): at start, on WM_DWMCOLORIZATIONCOLORCHANGED
+  // and WM_DWMCOMPOSITIONCHANGED, and from the driver's test overrides.
+  void sendColorization();                         // {argb, opaque, composition} to the core
+  void overrideColorization(const nlohmann::json& argb);   // a "#AARRGGBB" string is used instead of DWM's; null reads DWM again
+  void overrideComposition(bool on);               // false forces the composition-off branch; true reads DWM again
+  static nlohmann::json dwmColorization();         // the real DWM state, read now: {argb, opaque, composition}
 
 private:
   int main(HINSTANCE hinst);
@@ -87,4 +93,7 @@ private:
   std::map<std::string, Finder> finders_;          // per pane, while it has a find going
   std::map<std::string, FindRun> findRuns_;        // the pane's last search, re-run 200 ms after output stops
   UINT_PTR findTimer_ = 0;
+  bool argbForced_ = false;                        // the driver's colorization override (never DWM's own state)
+  std::string argbForce_;
+  bool compositionOff_ = false;                    // the driver's composition {on:false}
 };

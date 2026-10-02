@@ -245,6 +245,11 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       break;
     case WM_DWMCOMPOSITIONCHANGED:
       extendFrame();
+      App::instance().sendColorization();   // glass or the opaque strip (Task 16)
+      invalidateStrip();
+      break;
+    case WM_DWMCOLORIZATIONCOLORCHANGED:
+      App::instance().sendColorization();   // the chrome follows the desktop color
       break;
     case WM_NCLBUTTONDOWN:
       if (w == HTCAPTION) Ui::instance().captionPress();

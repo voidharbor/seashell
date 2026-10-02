@@ -19,6 +19,17 @@ void glassButton(Painter& p, D2D1_RECT_F r, bool hover, bool down) {
   if (!hover && !down) return;
   p.roundedRect(r, 3, 0xFFFFFF, down ? 0.55f : 0.35f, 0xFFFFFF, 0.7f);
 }
+
+// A chrome glyph in frameText. On glass it sits on the Win7 caption glow, as
+// the caption text does, so it reads over any wallpaper; the opaque strip
+// needs none.
+void stripGlyph(Painter& p, bool glass, D2D1_RECT_F r, uint32_t cp, uint32_t ink, float dip, float alpha = 1) {
+  if (glass && p.live()) {
+    float cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2, h = p.px(dip) * 0.5f;
+    p.glow(D2D1::RectF(cx - h, cy - h, cx + h, cy + h), 4, 0.85f * alpha);
+  }
+  p.glyph(r, cp, ink, dip, alpha);
+}
 }  // namespace
 
 void Ui::viewTabs(Painter& p) {
@@ -31,13 +42,14 @@ void Ui::viewTabs(Painter& p) {
   float tabTop = std::max(2.f * d, H - kTabHDip * s);
   float btnTop = tabTop + 2 * s, btnBottom = H - 3 * s;
   uint32_t ink = t_.frameText;
+  bool glass = onGlass();
 
   // The menu button (Phase 2 opens the menu; Phase 1 toasts).
   float x = 6 * s;
   D2D1_RECT_F menu = D2D1::RectF(x, btnTop, x + kBtnDip * s, btnBottom);
   hit(true, menu, "menu");
   glassButton(p, menu, hovered("menu"), pressed("menu"));
-  p.glyph(menu, 0x2261, ink, 14);
+  stripGlyph(p, glass, menu, 0x2261, ink, 14);
   x = menu.right + 6 * s;
 
   // Right to left from the caption buttons: settings, sleep, the zoom badge.
@@ -45,12 +57,12 @@ void Ui::viewTabs(Painter& p) {
   D2D1_RECT_F gear = D2D1::RectF(rx - kBtnDip * s, btnTop, rx, btnBottom);
   hit(true, gear, "settings");
   glassButton(p, gear, hovered("settings"), pressed("settings"));
-  p.glyph(gear, 0x2699, ink, 13);
+  stripGlyph(p, glass, gear, 0x2699, ink, 13);
   rx = gear.left - 2 * s;
   D2D1_RECT_F moon = D2D1::RectF(rx - kBtnDip * s, btnTop, rx, btnBottom);
   hit(true, moon, "sleep");
   glassButton(p, moon, hovered("sleep"), pressed("sleep"));
-  p.glyph(moon, m_.sleep ? 0x263E : 0x263D, ink, 13);
+  stripGlyph(p, glass, moon, m_.sleep ? 0x263E : 0x263D, ink, 13);
   rx = moon.left - 4 * s;
   if (m_.zoomBadge) {
     std::wstring z = fromUtf8(*m_.zoomBadge);
@@ -98,9 +110,9 @@ void Ui::viewTabs(Painter& p) {
   D2D1_RECT_F plus = D2D1::RectF(x + 2 * s, btnTop, x + 2 * s + kBtnDip * s, btnBottom);
   hit(true, plus, "tab:new");
   glassButton(p, plus, hovered("tab:new"), pressed("tab:new"));
-  p.glyph(plus, '+', ink, 16);
+  stripGlyph(p, glass, plus, '+', ink, 16);
   D2D1_RECT_F web = D2D1::RectF(plus.right + 2 * s, btnTop, plus.right + 2 * s + kBtnDip * s, btnBottom);
   hit(true, web, "web:new");
   glassButton(p, web, hovered("web:new") && !m_.tabFull, pressed("web:new") && !m_.tabFull);
-  p.glyph(web, 0x25CD, ink, 13, m_.tabFull ? 0.35f : 1.f);
+  stripGlyph(p, glass, web, 0x25CD, ink, 13, m_.tabFull ? 0.35f : 1.f);
 }

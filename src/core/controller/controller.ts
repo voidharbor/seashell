@@ -49,6 +49,7 @@ import { layOut, layOutZoomed, type LaidOut } from './layout.js'
 import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-state.js'
 import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
 import { mem, statusModel } from './status.js'
+import { colorizationToTokens } from './colorization.js'
 import type {
   ChordModel,
   FindModel,
@@ -174,6 +175,8 @@ export class Controller {
   private readonly closing = new Set<string>()
   private emitQueued = false
   private seq = 0
+  /** The Aero tokens from the shell's `shell:colorization`; the 6.2 table until it reports. */
+  private tokens: Record<string, string> = { ...colorizationToTokens(null), composition: '1' }
   private last: UiModel
 
   constructor(deps: ControllerDeps, opts: { home: string; version: string; chords: ChordModel[] }) {
@@ -495,6 +498,15 @@ export class Controller {
         if (!m || !Array.isArray(m.panes)) break
         this.dispatch({ type: 'metrics', panes: m.panes, system: m.system ?? null })
         this.armDoneExpiry()
+        break
+      }
+      case 'shell:colorization': {
+        // DwmGetColorizationColor and DwmIsCompositionEnabled, at start and on
+        // WM_DWMCOLORIZATIONCOLORCHANGED / WM_DWMCOMPOSITIONCHANGED.
+        const c = p as { argb?: unknown; opaque?: unknown; composition?: unknown } | null
+        const argb = typeof c?.argb === 'string' ? c.argb : null
+        this.tokens = { ...colorizationToTokens(argb, c?.opaque === true), composition: c?.composition === false ? '0' : '1' }
+        this.emit()
         break
       }
       case 'session:requestSnapshot':
@@ -1241,7 +1253,7 @@ export class Controller {
       toast: this.s.toast,
       status: statusModel(tab, this.s.system, this.deps.platform),
       chords: this.opts.chords,
-      tokens: {},
+      tokens: { ...this.tokens },
     }
   }
 

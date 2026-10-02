@@ -1,5 +1,6 @@
 #include "ui/painter.h"
 #include "gfx.h"
+#include <d2d1effects.h>
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -201,6 +202,32 @@ void Painter::text(D2D1_RECT_F r, const std::wstring& s, UiFont f, uint32_t rgb,
 
 void Painter::glyph(D2D1_RECT_F r, uint32_t codepoint, uint32_t rgb, float dip, float alpha) {
   text(r, utf16(codepoint), UiFont{ dip, false, true }, rgb, Align::Center, false, alpha);
+}
+
+void Painter::glow(D2D1_RECT_F r, float blurDip, float alpha) {
+  if (!rt_ || r.right <= r.left || r.bottom <= r.top) return;
+  float blur = px(blurDip);
+  ComPtr<ID2D1DeviceContext> dc;
+  if (SUCCEEDED(rt_->QueryInterface(IID_PPV_ARGS(dc.GetAddressOf())))) {
+    ComPtr<ID2D1Effect> flood, crop, gauss;
+    if (SUCCEEDED(dc->CreateEffect(CLSID_D2D1Flood, flood.GetAddressOf())) &&
+        SUCCEEDED(dc->CreateEffect(CLSID_D2D1Crop, crop.GetAddressOf())) &&
+        SUCCEEDED(dc->CreateEffect(CLSID_D2D1GaussianBlur, gauss.GetAddressOf()))) {
+      flood->SetValue(D2D1_FLOOD_PROP_COLOR, D2D1::Vector4F(1, 1, 1, alpha));
+      crop->SetInputEffect(0, flood.Get());
+      crop->SetValue(D2D1_CROP_PROP_RECT, D2D1::Vector4F(r.left, r.top, r.right, r.bottom));
+      gauss->SetInputEffect(0, crop.Get());
+      gauss->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, blur / 2);   // most of the falloff within blurDip
+      gauss->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_SOFT);
+      dc->DrawImage(gauss.Get());
+      return;
+    }
+  }
+  // No device context: four widening soft rects build roughly the same falloff.
+  for (int i = 4; i >= 1; i--) {
+    float g = blur * i / 4;
+    roundedRect(inset(r, -g, -g), (g + 2) / scale(), 0xFFFFFF, alpha / 4, 0xFFFFFF, 0);
+  }
 }
 
 float Painter::textWidth(const std::wstring& s, UiFont f) const {

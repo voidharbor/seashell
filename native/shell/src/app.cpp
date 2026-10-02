@@ -6,6 +6,7 @@
 #include "ui/ui.h"
 #include "window.h"
 #include "version.h"
+#include <dwmapi.h>
 #include <shobjidl.h>
 #include <windowsx.h>
 #include <cstdarg>
@@ -14,6 +15,7 @@
 #include <memory>
 
 using Microsoft::WRL::ComPtr;
+using json = nlohmann::json;
 
 namespace {
 // What the first instance publishes under Local\SeaShellHost-<instance>-hwnd so
@@ -88,7 +90,54 @@ bool App::startCore() {
     return false;
   }
   wire_.sendGeometry();   // the controller boots on the first geometry
+  sendColorization();
   return true;
+}
+
+// The colorization is HKCU\Software\Microsoft\Windows\DWM\ColorizationColor
+// (redesign spec 6.2; read only, never written): DwmGetColorizationColor
+// returns it already blended by the color balance (#881798 reads back as
+// #7C158A here), which would miss the 6.2 table. DWM's value is the fallback.
+json App::dwmColorization() {
+  DWORD argb = 0, size = sizeof argb;
+  BOOL opaque = FALSE, comp = FALSE;
+  json out = json::object();
+  DWORD dwmArgb = 0;
+  bool haveDwm = SUCCEEDED(DwmGetColorizationColor(&dwmArgb, &opaque));
+  bool haveReg = RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", L"ColorizationColor",
+                              RRF_RT_REG_DWORD, nullptr, &argb, &size) == ERROR_SUCCESS;
+  if (!haveReg && haveDwm) argb = dwmArgb;
+  if (haveReg || haveDwm) {
+    char hex[16];
+    snprintf(hex, sizeof hex, "#%08lX", (unsigned long)argb);
+    out["argb"] = hex;
+  } else {
+    out["argb"] = nullptr;   // the core falls back to the 6.2 table
+  }
+  out["opaque"] = haveDwm && opaque != FALSE;
+  // A failed query paints the opaque strip: readable whatever the frame does.
+  out["composition"] = SUCCEEDED(DwmIsCompositionEnabled(&comp)) && comp != FALSE;
+  return out;
+}
+
+void App::sendColorization() {
+  if (!core_.alive() || quitting_) return;
+  json p = dwmColorization();
+  if (argbForced_) p["argb"] = argbForce_;
+  if (compositionOff_) p["composition"] = false;
+  wire_.send("shell:colorization", p);
+  log("colorization sent %s", p.dump().c_str());
+}
+
+void App::overrideColorization(const json& argb) {
+  argbForced_ = argb.is_string();
+  argbForce_ = argbForced_ ? argb.get<std::string>() : std::string();
+  sendColorization();
+}
+
+void App::overrideComposition(bool on) {
+  compositionOff_ = !on;
+  sendColorization();
 }
 
 void App::onCoreExit(DWORD code, LPARAM gen) {

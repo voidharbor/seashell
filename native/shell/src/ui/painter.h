@@ -39,6 +39,9 @@ public:
   void win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor);
   void text(D2D1_RECT_F r, const std::wstring& s, UiFont f, uint32_t rgb, Align a = Align::Left, bool ellipsis = true, float alpha = 1);
   void glyph(D2D1_RECT_F r, uint32_t codepoint, uint32_t rgb, float dip = 12, float alpha = 1);
+  // The Win7 caption glow behind text on glass: a white rect blurred by
+  // blurDip through the D2D Gaussian blur (stacked soft rects without it).
+  void glow(D2D1_RECT_F r, float blurDip = 4, float alpha = 0.85f);
   float textWidth(const std::wstring& s, UiFont f) const;   // device pixels
   // The caret index (UTF-16) nearest to x within s laid out from x0.
   size_t hitIndex(const std::wstring& s, UiFont f, float x0, float x) const;

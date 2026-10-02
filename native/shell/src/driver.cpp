@@ -360,6 +360,19 @@ json Driver::execute(const json& req) {
     if (path.empty()) return fail("ENOPATH");
     return HostApi::handle("test:screenshot", { { "path", path } });   // PrintWindow with PW_RENDERFULLCONTENT to PNG
   }
+  if (cmd == "colorization") {
+    // The WM_DWMCOLORIZATIONCOLORCHANGED handler with a test value instead of
+    // DWM's: the desktop and the registry are never touched. {argb:null}
+    // reads DWM again.
+    App::instance().overrideColorization(req.contains("argb") ? req["argb"] : json(nullptr));
+    return { { "ok", true }, { "dwm", App::dwmColorization() } };
+  }
+  if (cmd == "composition") {
+    // The composition-off branch (the opaque strip) without turning DWM off.
+    bool on = !req.contains("on") || !req["on"].is_boolean() || req["on"].get<bool>();
+    App::instance().overrideComposition(on);
+    return { { "ok", true }, { "dwm", App::dwmColorization() } };
+  }
   if (cmd == "key") return key(strArg(req, "chord"));
   if (cmd == "text") return text(strArg(req, "s"));
   if (cmd == "click") return click(req, "click");

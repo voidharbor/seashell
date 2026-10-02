@@ -453,10 +453,20 @@ void Ui::drawStrip(ID2D1RenderTarget* rt) {
   rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
   RECT rc{};
   GetClientRect(Window::instance().hwnd(), &rc);
-  auto comp = m_.tokens.find("composition");
-  if (comp != m_.tokens.end() && comp->second == "0")
-    p.fillRect(D2D1::RectF(0, 0, (float)rc.right, (float)Window::instance().stripHeightPx()), t_.frame);   // no glass: the opaque frame
+  D2D1_RECT_F strip = D2D1::RectF(0, 0, (float)rc.right, (float)Window::instance().stripHeightPx());
+  if (onGlass()) p.fillRect(strip, t_.glassTint & 0xFFFFFF, 0.10f);   // the colorization's wash over the glass
+  else {
+    // No composition: the opaque frame. The DWM caption buttons sit under the
+    // client pixels, so their 138 DIP stay at alpha 0 or they would be covered.
+    strip.right = std::max(0.f, strip.right - 138 * dpi());
+    p.fillRect(strip, t_.frame);
+  }
   viewTabs(p);
+}
+
+bool Ui::onGlass() const {
+  auto comp = m_.tokens.find("composition");
+  return comp == m_.tokens.end() || comp->second != "0";
 }
 
 void Ui::drawBody(ID2D1RenderTarget* rt) {

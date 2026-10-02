@@ -74,6 +74,7 @@ private:
 
   // The views, one file each.
   void viewTabs(Painter& p);                     // tabs.cpp
+  bool onGlass() const;                          // tokens.composition is not '0': the strip is DWM glass
   void viewPanes(Painter& p);                    // panes.cpp
   void viewExitOverlay(Painter& p, const PaneModel& pm, D2D1_RECT_F grid);   // panes.cpp
   void viewDividers(Painter& p);                 // dividers.cpp

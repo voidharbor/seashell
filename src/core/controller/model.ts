@@ -106,7 +106,7 @@ export interface UiModel {
     hint: string
   }
   chords: ChordModel[]
-  /** The Aero token table. Task 16 fills it; empty until then. */
+  /** The Aero token table (colorization.ts) plus `composition`: '1' glass, '0' the opaque strip. */
   tokens: Record<string, string>
 }
 
