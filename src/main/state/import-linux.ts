@@ -15,7 +15,7 @@ import { win32 } from '../platform/win32.js'
  * Deliberately left behind:
  *  - window.json: its bounds were measured under WSLg's X screen, which does not
  *    match Windows' own monitor coordinates.
- *  - links/: empty on the machines this was written for.
+ *  - links/: per-machine link state, not worth carrying over.
  *
  * The Linux side is only ever read. Nothing here writes, renames or removes a
  * file under the source directory. On the target side a file that already
@@ -26,7 +26,6 @@ import { win32 } from '../platform/win32.js'
 
 export const IMPORT_FILES = ['projects.json', 'last-session.json'] as const
 export const MARKER_FILE = 'imported-from-linux.json'
-export const DEFAULT_DISTRO = DEFAULT_WSL_DISTRO
 
 export interface ImportInput {
   platform: NodeJS.Platform

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { KILL_LINE, inputLineSelection, shouldKillLine } from '../../src/renderer/term/inputline.js'
+import {
+  KILL_LINE,
+  inputLineSelection,
+  isAgentForeground,
+  shouldKillLine,
+  shouldSelectInputLine,
+} from '../../src/renderer/term/inputline.js'
 
 /** Rows listed here are wrapped continuations of the row above. */
 const wrapped = (...rows: number[]) => (row: number): boolean => rows.includes(row)
@@ -110,5 +116,47 @@ describe('KILL_LINE', () => {
     // (some programs open $EDITOR on it) and it would delete text past the
     // cursor that was never shown as selected.
     expect(KILL_LINE).toBe('\x15')
+  })
+})
+
+describe('shouldSelectInputLine (bare Ctrl+A in an agent prompt)', () => {
+  const ctrlA = { key: 'a', ctrlKey: true, shiftKey: false, altKey: false, metaKey: false }
+
+  it('selects the input line on Windows and Linux when an agent is in front', () => {
+    expect(shouldSelectInputLine({ ...ctrlA, platform: 'win32', agentForeground: true })).toBe(true)
+    expect(shouldSelectInputLine({ ...ctrlA, platform: 'linux', agentForeground: true })).toBe(true)
+  })
+
+  it('accepts the Caps Lock spelling of the key', () => {
+    expect(shouldSelectInputLine({ ...ctrlA, key: 'A', platform: 'win32', agentForeground: true })).toBe(true)
+  })
+
+  it('passes Ctrl+A through to a shell, where it is beginning-of-line', () => {
+    expect(shouldSelectInputLine({ ...ctrlA, platform: 'win32', agentForeground: false })).toBe(false)
+  })
+
+  it('never fires on the Mac, where Cmd+A owns select-all through the menu', () => {
+    expect(shouldSelectInputLine({ ...ctrlA, platform: 'darwin', agentForeground: true })).toBe(false)
+  })
+
+  it('leaves the menu chords and other modifiers alone', () => {
+    expect(shouldSelectInputLine({ ...ctrlA, shiftKey: true, platform: 'win32', agentForeground: true })).toBe(false)
+    expect(shouldSelectInputLine({ ...ctrlA, altKey: true, platform: 'win32', agentForeground: true })).toBe(false)
+    expect(shouldSelectInputLine({ ...ctrlA, metaKey: true, platform: 'linux', agentForeground: true })).toBe(false)
+    expect(shouldSelectInputLine({ ...ctrlA, key: 'b', platform: 'win32', agentForeground: true })).toBe(false)
+  })
+})
+
+describe('isAgentForeground', () => {
+  it('knows the agent CLIs by their foreground process name', () => {
+    for (const name of ['claude', 'codex', 'opencode', 'gemini', 'Claude']) {
+      expect(isAgentForeground(name)).toBe(true)
+    }
+  })
+
+  it('is false for shells, editors and nothing at all', () => {
+    for (const name of ['zsh', 'bash', 'vim', 'node', 'python3', '', undefined, null]) {
+      expect(isAgentForeground(name)).toBe(false)
+    }
   })
 })

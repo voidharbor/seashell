@@ -120,3 +120,41 @@ export function shouldKillLine(input: KillLineInput): boolean {
   if (input.modified) return false
   return input.key === 'Backspace' || input.key === 'Delete'
 }
+
+/**
+ * Whether a bare Ctrl+A should select the input line instead of reaching the
+ * pty.
+ *
+ * Off the Mac the menu's Select All is respelled to Ctrl+Shift+A, because a
+ * bare Ctrl+A is a real control code: beginning-of-line in zsh, the prefix in
+ * screen and tmux. In an agent's prompt it is nearly useless (Home does the
+ * same), and Ctrl+A is what every Windows and Linux user types for "select
+ * what I wrote". So when an agent owns the foreground, Ctrl+A selects the
+ * line being typed; in a shell or any other program it is passed through.
+ * The Mac keeps its Cmd+A through the menu, and Ctrl+A stays emacs there.
+ */
+export interface SelectInputChordInput {
+  key: string
+  ctrlKey: boolean
+  shiftKey: boolean
+  altKey: boolean
+  metaKey: boolean
+  platform: string
+  /** True when the pane's foreground process is an agent. */
+  agentForeground: boolean
+}
+
+export function shouldSelectInputLine(input: SelectInputChordInput): boolean {
+  if (input.platform === 'darwin') return false
+  if (!input.ctrlKey || input.shiftKey || input.altKey || input.metaKey) return false
+  if (input.key !== 'a' && input.key !== 'A') return false
+  return input.agentForeground
+}
+
+/** The agent CLIs whose prompt Ctrl+A selects. Matched against the monitor's
+ *  foreground process name, case-insensitively. */
+const AGENT_FOREGROUND = /claude|codex|opencode|gemini/i
+
+export function isAgentForeground(foregroundProcess: string | undefined | null): boolean {
+  return AGENT_FOREGROUND.test(foregroundProcess ?? '')
+}

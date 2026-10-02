@@ -6,7 +6,7 @@
 
 A terminal window manager. Run many shells side by side in one window — plain
 `zsh`, a dev server, or several AI coding agents — and keep a file explorer next to them.
-macOS is the reference platform; Windows and Linux builds are experimental.
+macOS is the reference platform; Windows (native, with WSL panes) and Linux builds are newer.
 
 <p align="center">
   <img src="docs/hero.png" alt="SeaShell: six terminal panes tiled in one window running a git log, a test suite, a process table and a diff, with the file explorer down the left side, in the Nautical theme.">
@@ -221,16 +221,30 @@ so no theme can resize your interface.
 
 Press ⌘/ for a short tutorial of the parts that aren't guessable.
 
-**Keys on Linux, and on Windows through WSLg.** There, Cmd is the Windows key and Windows keeps
-those chords for itself (Win+D shows the desktop), so every binding is respelled by one rule and
-the letter never changes: ⌘X is Ctrl+Shift+X, ⌘⇧X is Ctrl+Alt+X, ⌘⌥W is Ctrl+Alt+Shift+W,
-zoom is Ctrl+= / Ctrl+- / Ctrl+0, and Settings is Ctrl+,. Bare Ctrl+letter is never used, because
-the shell owns those. The menu and the tutorial show the spelling for the machine you are on.
+**Keys on Windows and Linux.** There, Cmd is the Windows key and Windows keeps those chords for
+itself (Win+D shows the desktop), so every binding is respelled by one rule and the letter never
+changes: ⌘X is Ctrl+Shift+X, ⌘⇧X is Ctrl+Alt+X, ⌘⌥W is Ctrl+Alt+Shift+W, zoom is
+Ctrl+= / Ctrl+- / Ctrl+0, and Settings is Ctrl+,. Bare Ctrl+letter goes to the shell, with one
+exception: in a pane whose foreground is an agent (Claude Code, Codex, OpenCode, Gemini), Ctrl+A
+selects the line you are typing, and Backspace then clears it. In a shell Ctrl+A stays
+beginning-of-line. The menu and the tutorial show the spelling for the machine you are on.
 
-**The window on Linux, and on Windows through WSLg.** SeaShell draws its own frame there: no
-title bar from the desktop, the tab bar is the title bar (drag it to move the window), and the
-three Windows-style buttons sit at its right-hand end. The menu strip is hidden; press Alt to show
-it, or click ≡ at the left of the tab bar. Emoji and the symbols Claude Code draws (the ⎿ tree
+**Windows.** The Windows build is a native app: Windows draws the title bar, so Aero Snap,
+snap layouts, Win+arrows, the taskbar and Alt+Tab all behave like any other window, and the
+window reopens on the monitor it was closed on. Every pane is a login shell inside your default
+WSL distro (or `SEASHELL_WSL_DISTRO`), started in your Linux home, with the working directory,
+the running program and Claude Code sessions tracked from inside WSL. The explorer shows Linux
+paths; dropping a Windows file into a pane types its Linux path. On first launch the app copies
+`projects.json` and `last-session.json` from `~/.config/seashell` in the distro, so a session
+saved by the Linux build can be restored. The build is an unpacked folder (`win-unpacked` in a
+release); put it anywhere and make a shortcut. Programs that send text to a pane find the app
+through `%APPDATA%\seashell\control.json` (a loopback port and a token) instead of a Unix socket;
+clients inside WSL can reach that port only with `networkingMode=mirrored` in `.wslconfig`.
+
+**The window on Linux (and on Windows through WSLg, the older way).** SeaShell draws its own
+frame there: no title bar from the desktop, the tab bar is the title bar (drag it to move the
+window), and the three Windows-style buttons sit at its right-hand end. The menu strip is hidden;
+press Alt to show it, or click ≡ at the left of the tab bar. Emoji and the symbols Claude Code draws (the ⎿ tree
 lines) come from the system's fonts, so install `fonts-noto-color-emoji` and `fonts-symbola`
 (Debian/Ubuntu) or a missing one renders as a box with a slash through it.
 
@@ -314,10 +328,11 @@ SeaShell deliberately does not do these things:
   data, and any other running process, which starts over as a fresh login shell in the saved
   directory.
 - **Treat Windows and Linux as first-class.** Both are built and published, but macOS is the
-  reference platform and the others are experimental. On Windows the kill ladder reports
+  reference platform and the others are newer. On Windows the kill ladder reports
   `verifiedKill: false`: the pseudoconsole terminates ordinary children, but a process that
   detached survives and nothing there can count it, which is the one guarantee this app exists
-  to make. Process metrics and working-directory reporting are absent there too. Treat that
+  to make. Windows panes live in WSL, so metrics and the working directory come from inside
+  the distro; what is still missing there is live file watching on the WSL share. Treat that
   build as something to test rather than something to rely on.
 - **An extension API.** No plugin system, no theme editor. Themes are a fixed
   built-in set (seven of them, with accent, terminal palette, pane frame and CRT

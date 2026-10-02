@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { win32 } from '../../src/main/platform/win32.js'
+import { createWin32, win32, type WslIo } from '../../src/main/platform/win32.js'
 
 /**
  * The Windows platform has never been executed — it was written on a Mac and
@@ -10,6 +10,25 @@ import { win32 } from '../../src/main/platform/win32.js'
  * Only `win32.ts` is exercised. `darwin.ts` reaches Electron through the
  * ZDOTDIR shim and cannot be imported into a bare node test.
  */
+/** An io that never reaches wsl.exe: these tests must not spawn the real one. */
+const dead: WslIo = {
+  wslExe: 'C:\\Windows\\System32\\wsl.exe',
+  run: async () => null,
+  runSync: () => null,
+  readFile: async () => {
+    throw new Error('ENOENT')
+  },
+  writeFileAtomic: () => {},
+  mkdirp: () => {},
+  isDir: () => false,
+  unlink: () => {},
+  readdir: () => [],
+  rmrf: () => {},
+  pidAlive: () => false,
+  appPid: 1,
+  windowsHome: 'C:\\Users\\u',
+}
+
 describe('the win32 platform states its own limits', () => {
   it('does not claim a kill it cannot verify', () => {
     // Windows has no signals and no process groups; the equivalent is a Job
@@ -26,7 +45,7 @@ describe('the win32 platform states its own limits', () => {
   })
 
   it('roots a pane at wsl.exe running the Linux login shell, never PowerShell', () => {
-    const shell = win32.loginShell()
+    const shell = createWin32(dead).loginShell()
     expect(shell.file.toLowerCase()).toContain('wsl.exe')
     expect(shell.file.toLowerCase()).not.toContain('powershell')
     // An argv array, never a command line.
@@ -37,8 +56,9 @@ describe('the win32 platform states its own limits', () => {
 
   it('reports no sample rather than inventing numbers', async () => {
     // The monitor already treats an empty sweep as "no data this tick", so
-    // panes keep working and the figures are simply absent.
-    await expect(win32.sweepMemory()).resolves.toBe('')
+    // panes keep working and the figures are simply absent. The real singleton
+    // would run wsl.exe where it exists, so the sweep is fed a dead io here.
+    await expect(createWin32(dead).sweepMemory()).resolves.toBe('')
   })
 
   it('refuses the process-group sweep loudly instead of reaping nothing', async () => {

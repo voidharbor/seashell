@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { dropText } from './drop'
 import { k, paneZoomIn, paneZoomOut, z } from '../platform.js'
 import { PaneTerminal } from '../term/terminal.js'
+import { isAgentForeground } from '../term/inputline.js'
 import { currentXtermTheme } from '../theme/live.js'
 import { pathAtPoint, rowContext } from './pathclick.js'
 import { resolvePathClick } from '../links/resolve.js'
@@ -314,6 +315,12 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
   const cwdRef = useRef(pane.cwd)
   cwdRef.current = pane.metrics?.cwd || pane.cwd
 
+  /** The monitor's foreground process, read per keystroke by the terminal so
+   *  Ctrl+A can tell an agent's prompt from a shell. A ref for the same reason
+   *  as cwdRef: the terminal is built once. */
+  const foregroundRef = useRef(pane.metrics?.foregroundProcess)
+  foregroundRef.current = pane.metrics?.foregroundProcess
+
   const generation = pane.generation ?? 0
 
   useEffect(() => {
@@ -331,6 +338,7 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
       onTitle: (title) => titleRef.current(title),
       onBell: () => bellRef.current(),
       hostname: hostname,
+      agentForeground: () => isAgentForeground(foregroundRef.current),
       onCwd: (cwd) => {
         // Keep the ref hot for the very next double-click, and push it into
         // pane state so the label and any project save see it too.

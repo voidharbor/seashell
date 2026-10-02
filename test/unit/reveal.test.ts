@@ -103,7 +103,10 @@ describe('explorer root boundary', () => {
  * Both had the same shape: the path was correct on screen and correct in the
  * user's head, and one layer in the middle quietly disagreed.
  */
-describe('tilde paths', () => {
+// On win32 statBatch answers a Linux cwd in Linux form, and the Windows home is
+// not a Linux path, so comparing against os.homedir() means nothing there;
+// win32-integration.test.ts covers the host-path translation.
+describe.skipIf(process.platform === 'win32')('tilde paths', () => {
   it('expands a leading ~, which nothing did before', async () => {
     const home = os.homedir()
     const res = await statBatch({ cwd: '/tmp', candidates: ['~'] })

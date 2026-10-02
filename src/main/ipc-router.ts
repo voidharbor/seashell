@@ -137,11 +137,6 @@ const IMAGE_MAX_BYTES = 16 * 1024 * 1024
 const snapshotGate = createSnapshotGate()
 
 /**
- * Asks the renderer for a snapshot and resolves when it answers, or when
- * `timeoutMs` passes, whichever comes first. The timing lives in the gate; all
- * this adds is the window to ask.
- */
-/**
  * The directory holding `.claude/` for the lookups: undefined for this
  * process's own home (macOS, Linux), the platform's answer where it keeps it
  * elsewhere (win32: the WSL home over UNC), and null when that platform cannot
@@ -161,6 +156,11 @@ async function lookupClaudeHome(): Promise<string | undefined | null> {
   return platform.claudeHome()
 }
 
+/**
+ * Asks the renderer for a snapshot and resolves when it answers, or when
+ * `timeoutMs` passes, whichever comes first. The timing lives in the gate; all
+ * this adds is the window to ask.
+ */
 export function awaitSnapshot(win: BrowserWindow, timeoutMs: number): Promise<void> {
   return snapshotGate.request(() => {
     // A destroyed window has nobody to answer. The gate reads the throw as

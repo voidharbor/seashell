@@ -4,7 +4,12 @@ import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { FALLBACK_FONT_SIZE, FONT_FAMILY, FONT_SIZE, TERMINAL_APP_PALETTE } from './palette.js'
-import { KILL_LINE, inputLineSelection, shouldKillLine } from './inputline.js'
+import {
+  KILL_LINE,
+  inputLineSelection,
+  shouldKillLine,
+  shouldSelectInputLine,
+} from './inputline.js'
 import { isLocalHost, parseOsc7 } from './osc7.js'
 import { targetScrollLine } from './find-scroll.js'
 import { anchorAction } from './find-anchor.js'
@@ -49,6 +54,9 @@ export interface PaneTerminalOptions {
   /** This machine's hostname, so a remote shell's OSC 7 can be told apart from
    *  a local one. The app:// origin's hostname is "seashell", not the machine. */
   hostname?: string
+  /** Whether an agent owns the pane's foreground right now, read per keystroke:
+   *  decides whether a bare Ctrl+A selects the input line (see inputline.ts). */
+  agentForeground?: () => boolean
 }
 
 /** How the find bar wants the next search run. */
@@ -350,6 +358,28 @@ export class PaneTerminal {
       // runs before the flag is cleared below, so Cmd+A can set it without
       // immediately clearing it.
       if (isAppChord(ev, platform)) return false
+
+      // Bare Ctrl+A in an agent's prompt: select what is being typed, the way
+      // ⌘A does on the Mac, instead of sending the agent a beginning-of-line.
+      // No preventDefault: the browser default is select-all on xterm's empty
+      // helper textarea, which is inert, and xterm's own keypress path drops
+      // Ctrl chords. Returning before the reset below keeps inputLineSelected
+      // armed for the Backspace that usually follows.
+      if (
+        ev.type === 'keydown' &&
+        shouldSelectInputLine({
+          key: ev.key,
+          ctrlKey: ev.ctrlKey,
+          shiftKey: ev.shiftKey,
+          altKey: ev.altKey,
+          metaKey: ev.metaKey,
+          platform,
+          agentForeground: this.opts.agentForeground?.() ?? false,
+        })
+      ) {
+        this.selectInputLine()
+        return false
+      }
 
       if (ev.type === 'keydown') {
         const kill = shouldKillLine({

@@ -11,15 +11,21 @@ const S1 = '11111111-1111-4111-8111-111111111111'
 const S2 = '22222222-2222-4222-8222-222222222222'
 let home: string
 let savedHome: string | undefined
+let savedProfile: string | undefined
 
 beforeEach(() => {
   savedHome = process.env.HOME
+  savedProfile = process.env.USERPROFILE
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'rf-home-'))
+  // os.homedir() reads HOME on posix and USERPROFILE on Windows.
   process.env.HOME = home
+  process.env.USERPROFILE = home
   fs.mkdirSync(path.join(home, '.claude', 'sessions'), { recursive: true })
 })
 afterEach(() => {
   process.env.HOME = savedHome
+  if (savedProfile === undefined) delete process.env.USERPROFILE
+  else process.env.USERPROFILE = savedProfile
   fs.rmSync(home, { recursive: true, force: true })
 })
 
