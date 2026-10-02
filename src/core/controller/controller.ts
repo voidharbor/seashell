@@ -10,6 +10,8 @@
  *
  * Handlers are ported from `app.tsx` and `PaneView.tsx`; each port names its
  * source. Behaviour that is not ported yet toasts "<name> arrives in phase 2".
+ * The session snapshot and restore live in `session.ts`, the status bar's
+ * strings in `status.ts`.
  */
 import path from 'node:path'
 import {
@@ -21,6 +23,7 @@ import {
   type AppState,
   type PaneState,
   type TabState,
+  uid,
 } from '../../renderer/store.js'
 import { MAX_PANES_PER_TAB, type CellSize, type RowNode } from '../../renderer/layout/types.js'
 import { dfsPaneOrder } from '../../renderer/layout/tree.js'
@@ -29,10 +32,21 @@ import { clampIndex, DEFAULT_ZOOM_INDEX, levelAt, zoomPercent } from '../../rend
 import { paneColorHex } from '../../renderer/panes/colors.js'
 import { shouldOfferRestore } from '../../renderer/session/offer.js'
 import { launchCommandText } from '../../renderer/projects/serialize.js'
+import { isLocalHost, parseOsc7 } from '../../renderer/term/osc7.js'
+import { DONE_ATTENTION_MS } from '../../renderer/panes/attention.js'
+import { dropText } from '../../renderer/panes/drop.js'
 import { chordLabel } from '../../shared/keys.js'
-import type { AppPaths, LastSession, PtyKillResponse, PtySpawnResponse } from '../../shared/ipc.js'
+import type {
+  AppPaths,
+  LastSession,
+  MetricsTickEvent,
+  PtyKillResponse,
+  PtySpawnResponse,
+} from '../../shared/ipc.js'
 import { layOut, layOutZoomed, type LaidOut } from './layout.js'
 import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-state.js'
+import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
+import { mem, statusModel } from './status.js'
 import type {
   ChordModel,
   FindModel,
@@ -67,6 +81,9 @@ const TOAST_MS = 3200
 
 /** How long after a spawn the launch command is typed (`PaneView.tsx:415-423`). */
 const LAUNCH_DELAY_MS = 300
+
+/** How long the find box waits after the last keystroke before searching. */
+const FIND_DEBOUNCE_MS = 120
 
 /** Chrome heights at uiScale 1, from styles.css (`--tabbar-h`, `--statusbar-h`). */
 const TAB_STRIP_PX = 38
@@ -132,10 +149,18 @@ export class Controller {
   private geoFontPx = levelAt(DEFAULT_ZOOM_INDEX).font
   private booting = true
   private restoreCandidate: LastSession | null = null
+  /** Between Restore and the rebuilt tabs arriving: still starting, not empty. */
+  private restoring = false
   private renamingTabId: string | null = null
   private renameDraft = ''
   private find: FindModel = emptyFind()
   private toastCancel: (() => void) | null = null
+  private findDebounce: (() => void) | null = null
+  /** The last snapshot written, so an unchanged window is not rewritten (`app.tsx:565-571`). */
+  private lastSnapshot = ''
+  private snapshotArmed = false
+  /** Expiry timers for `done` pulses, by pane id. */
+  private readonly doneTimers = new Map<string, () => void>()
   private drag: DragState | null = null
   /** Grids the shell holds, by pane id. */
   private readonly grids = new Map<string, GridInfo>()
@@ -187,6 +212,7 @@ export class Controller {
     } else {
       this.newTab()
     }
+    this.armSnapshot()
   }
 
   geometry(g: Geometry): void {
@@ -326,7 +352,7 @@ export class Controller {
         this.renameDraft = e.text.slice(0, MAX_TAB_NAME)
       } else if (t === 'find:query') {
         this.find = { ...this.find, query: e.text, count: null, miss: false }
-        this.sendFind('next', true)
+        this.debounceFind()
         this.emit()
       }
       return
@@ -359,10 +385,45 @@ export class Controller {
           this.emit()
         }
         break
+      case 'title':
+        // app.tsx:1670-1673: the setting gates it; the reducer keeps a custom label.
+        if (this.ui.settings.autoTitlePanes && typeof e.title === 'string') {
+          this.dispatch({ type: 'pane.autoTitle', paneId: e.paneId, title: e.title })
+        }
+        break
+      case 'cwd': {
+        const cwd = this.trustedCwd(e.cwd)
+        if (cwd && paneById(this.s, e.paneId)) this.dispatch({ type: 'pane.cwd', paneId: e.paneId, cwd, home: this.home })
+        break
+      }
+      case 'bell':
+        this.dispatch({ type: 'pane.bell', paneId: e.paneId, at: this.deps.now() })
+        break
       default:
-        // Titles, cwd, bells and path clicks are Task 5's (controller part 2).
+        // Path clicks reveal and preview files, which need the explorer and the
+        // preview panes (Phase 2). Selections are the shell's own business.
         break
     }
+  }
+
+  /**
+   * The shell reports either the raw OSC 7 payload (`file://host/path`) or a
+   * path it already parsed. Both go through `parseOsc7` (`terminal.ts:261-266`),
+   * so a path from a remote host or one carrying control characters is dropped.
+   */
+  private trustedCwd(raw: unknown): string | null {
+    if (typeof raw !== 'string' || raw === '') return null
+    if (raw.startsWith('file://')) {
+      return isLocalHost(raw, this.paths?.hostname ?? '') ? parseOsc7(raw) : null
+    }
+    if (!raw.startsWith('/') || raw.length > 4096) return null
+    let encoded: string
+    try {
+      encoded = raw.split('/').map(encodeURIComponent).join('/')
+    } catch {
+      return null // a lone surrogate
+    }
+    return parseOsc7(`file://${encoded}`)
   }
 
   push(ch: string, p: unknown): void {
@@ -376,8 +437,7 @@ export class Controller {
         const cmd = p as { command?: unknown; text?: unknown } | null
         if (typeof cmd?.command !== 'string') break
         if (cmd.command === 'edit.paste') {
-          const id = this.focusedTermId()
-          if (id && typeof cmd.text === 'string' && cmd.text) this.grid({ paneId: id, op: 'paste', text: cmd.text })
+          void this.paste(typeof cmd.text === 'string' ? cmd.text : '')
           break
         }
         this.command(cmd.command)
@@ -392,10 +452,63 @@ export class Controller {
         if (this.grids.has(x.paneId)) this.grid({ paneId: x.paneId, op: 'exited', failed: code !== 0 })
         break
       }
+      case 'metrics:tick': {
+        const m = p as Partial<MetricsTickEvent> | null
+        if (!m || !Array.isArray(m.panes)) break
+        this.dispatch({ type: 'metrics', panes: m.panes, system: m.system ?? null })
+        this.armDoneExpiry()
+        break
+      }
+      case 'session:requestSnapshot':
+        // The quit path: always answer, changed or not (app.tsx:629).
+        void this.snapshot(true)
+        break
       default:
-        // metrics:tick, update:state, session:requestSnapshot and watch:* are Task 5's.
+        // update:state and watch:* belong to Phase 2 (the update banner, the explorer).
         break
     }
+  }
+
+  /**
+   * `app.tsx:1018-1065`, for a terminal pane. The shell read the clipboard and
+   * sends its text. Quoted `C:\` paths (Explorer's "Copy as path") paste as
+   * quoted WSL paths; no text at all asks main for copied files, then for a
+   * screenshot saved as a PNG. Ordinary text is untouched. The target is
+   * resolved before anything awaits, so a focus change cannot redirect it.
+   */
+  private async paste(text: string): Promise<void> {
+    const id = this.focusedTermId()
+    if (!id) return
+    const platform = this.deps.platform
+    let winPaths: string[] = []
+    if (/^\s*"?[A-Za-z]:[\\/]/.test(text)) {
+      winPaths = text.split(/\r?\n/).map((l) => l.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean)
+    } else if (!text) {
+      try {
+        const files = await this.deps.invoke<string[]>('clipboard:windows-files', undefined)
+        if (Array.isArray(files)) winPaths = files.filter((f) => typeof f === 'string' && f !== '')
+      } catch {
+        /* no files on the clipboard, or no way to read them here */
+      }
+    }
+    if (winPaths.length) {
+      const out = dropText({ paths: winPaths }, platform)
+      if (out && this.grids.has(id)) this.grid({ paneId: id, op: 'paste', text: out })
+      return
+    }
+    if (!text) {
+      let image = ''
+      try {
+        image = await this.deps.invoke<string>('clipboard:image', undefined)
+      } catch {
+        image = ''
+      }
+      if (typeof image === 'string' && image && this.grids.has(id)) {
+        this.grid({ paneId: id, op: 'paste', text: dropText({ paths: [image] }, platform) })
+      }
+      return
+    }
+    if (this.grids.has(id)) this.grid({ paneId: id, op: 'paste', text })
   }
 
   // ---------------------------------------------------------------------------
@@ -482,6 +595,19 @@ export class Controller {
     this.dispatch({ type: 'tab.close', tabId })
   }
 
+  /**
+   * `PaneView.tsx` onRestart via `app.tsx:1656`: the pane starts over in a
+   * fresh grid. The old grid goes first, so the reducer's generation bump
+   * makes `sync` create a new one and spawn again under the new key.
+   */
+  private restartPane(paneId: string): void {
+    const pane = paneById(this.s, paneId)
+    if (!pane || !isTerm(pane) || pane.status !== 'exited') return
+    if (this.grids.delete(paneId)) this.grid({ paneId, op: 'dispose' })
+    if (this.find.paneId === paneId) this.find = { ...this.find, count: null, miss: false }
+    this.dispatch({ type: 'pane.restarting', paneId })
+  }
+
   private setZoom(index: number): void {
     this.ui = { ...this.ui, zoomIndex: clampIndex(index) }
     this.saveUi()
@@ -508,7 +634,7 @@ export class Controller {
   }
 
   // ---------------------------------------------------------------------------
-  // Find (the bar's open/step half; the debounce and the rest are Task 5's)
+  // Find
   // ---------------------------------------------------------------------------
 
   private openFind(): void {
@@ -522,7 +648,22 @@ export class Controller {
     this.emit()
   }
 
+  /** Typing searches once the keys stop for 120 ms, incrementally from the current match. */
+  private debounceFind(): void {
+    this.findDebounce?.()
+    this.findDebounce = this.deps.setTimer(() => {
+      this.findDebounce = null
+      this.sendFind('next', true)
+    }, FIND_DEBOUNCE_MS)
+  }
+
+  private cancelFindDebounce(): void {
+    this.findDebounce?.()
+    this.findDebounce = null
+  }
+
   private stepFind(direction: 'next' | 'prev'): void {
+    this.cancelFindDebounce()
     if (!this.find.open) this.openFind()
     this.sendFind(direction, false)
     this.emit()
@@ -547,6 +688,7 @@ export class Controller {
   }
 
   private closeFind(): void {
+    this.cancelFindDebounce()
     if (!this.find.open) return
     const paneId = this.find.paneId
     if (paneId && this.grids.has(paneId)) this.grid({ paneId, op: 'findClear' })
@@ -559,6 +701,11 @@ export class Controller {
   // ---------------------------------------------------------------------------
 
   private keyEvent(target: string, key: string): void {
+    // Escape on the restore card is Start fresh (RestoreCard.tsx:19-31).
+    if (this.restoreCandidate) {
+      if (key === 'Escape') this.declineRestore()
+      return
+    }
     if (this.renamingTabId && target === `tab:${this.renamingTabId}:rename`) {
       if (key === 'Enter') this.commitRename()
       else if (key === 'Escape') this.cancelRename()
@@ -607,7 +754,10 @@ export class Controller {
       if (type === 'click') this.toast(`${PHASE2_TARGETS[sub]} arrives in phase 2`)
       return
     }
-    if (sub === 'restart') return // Task 5
+    if (sub === 'restart') {
+      if (type === 'click') this.restartPane(id)
+      return
+    }
     if (type === 'down' || type === 'click') {
       if (this.activeTab()?.focusedPaneId !== id) this.dispatch({ type: 'pane.focus', paneId: id })
       if (sub === 'grid' && type === 'down') this.grid({ paneId: id, op: 'focus' })
@@ -700,15 +850,23 @@ export class Controller {
   }
 
   // ---------------------------------------------------------------------------
-  // Restore card (the decision half; the restore itself is Task 5's)
+  // Restore card and the session snapshot
   // ---------------------------------------------------------------------------
 
+  /** `app.tsx:1364-1379`: rebuild the saved tabs; nothing to reap, this is boot. */
   private acceptRestore(): void {
-    // Task 5 restores through planRestore. Until then the snapshot is kept on
-    // disk untouched and the window opens one tab, so nothing is lost.
-    if (!this.restoreCandidate) return
+    const snap = this.restoreCandidate
+    if (!snap) return
     this.restoreCandidate = null
-    this.newTab()
+    this.restoring = true
+    this.emit()
+    void restoreSavedTabs(snap.tabs, this.deps.invoke.bind(this.deps), uid)
+      .catch(() => [] as TabState[])
+      .then((restored) => {
+        this.restoring = false
+        if (restored.length === 0) this.newTab()
+        else this.dispatch({ type: 'tabs.replace', tabs: restored })
+      })
   }
 
   private declineRestore(): void {
@@ -716,6 +874,78 @@ export class Controller {
     this.restoreCandidate = null
     void this.deps.invoke('session:clear', undefined).catch(() => undefined)
     this.newTab()
+  }
+
+  /** The 30 s snapshot clock (`app.tsx:624-634`), re-armed after every tick. */
+  private armSnapshot(): void {
+    if (this.snapshotArmed) return
+    this.snapshotArmed = true
+    const tick = (): void => {
+      this.deps.setTimer(tick, SNAPSHOT_INTERVAL_MS)
+      void this.snapshot(false)
+    }
+    this.deps.setTimer(tick, SNAPSHOT_INTERVAL_MS)
+  }
+
+  /**
+   * `app.tsx:584-619`: write the window to the last-session file when it
+   * changed, or clear the file when the window is not worth offering back.
+   * `force` is the quit path and always answers. Never while the restore card
+   * is up or a restore is landing: a snapshot of no tabs would clear the very
+   * file the user is being offered.
+   */
+  private async snapshot(force: boolean): Promise<void> {
+    if (this.restoreCandidate || this.restoring || this.s.tabs.length === 0) return
+    const { lookup, proven } = await collectSaveLookup(this.s, this.deps.invoke.bind(this.deps))
+    if (Object.keys(proven).length > 0) this.dispatch({ type: 'panes.sessionIds', ids: proven })
+    const tabs = snapshotTabs(this.s, lookup)
+    try {
+      if (!shouldOfferRestore(tabs)) {
+        if (force || this.lastSnapshot !== '') {
+          this.lastSnapshot = ''
+          await this.deps.invoke('session:clear', undefined)
+        }
+        return
+      }
+      const encoded = JSON.stringify(tabs)
+      if (!force && encoded === this.lastSnapshot) return
+      await this.deps.invoke('session:save', { tabs })
+      this.lastSnapshot = encoded
+    } catch {
+      // Fires on a timer and at quit; the next write simply overwrites.
+    }
+  }
+
+  /**
+   * The renderer stops a `done` pulse on the first metrics tick after 9 s
+   * (store.ts metrics case). The core also arms a timer so the pulse ends on
+   * time when ticks are sparse; the reducer's own expiry still applies.
+   */
+  private armDoneExpiry(): void {
+    for (const tab of this.s.tabs) {
+      for (const p of Object.values(tab.panes)) {
+        if (p.attention !== 'done') {
+          const cancel = this.doneTimers.get(p.id)
+          if (cancel) {
+            cancel()
+            this.doneTimers.delete(p.id)
+          }
+          continue
+        }
+        if (this.doneTimers.has(p.id)) continue
+        const at = p.attentionAt
+        this.doneTimers.set(
+          p.id,
+          this.deps.setTimer(() => {
+            this.doneTimers.delete(p.id)
+            const now = paneById(this.s, p.id)
+            if (!now || now.attention !== 'done' || now.attentionAt !== at) return
+            this.s = mapPane(this.s, p.id, (x) => ({ ...x, attention: undefined, attentionAt: undefined }))
+            this.emit()
+          }, DONE_ATTENTION_MS)
+        )
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -958,8 +1188,8 @@ export class Controller {
       panes,
       dividers: laid?.dividers ?? [],
       zoomedPaneId: tab?.zoomedPaneId ?? null,
-      emptyState: !this.booting && this.s.tabs.length === 0 && restore === null,
-      starting: this.booting,
+      emptyState: !this.booting && !this.restoring && this.s.tabs.length === 0 && restore === null,
+      starting: this.booting || this.restoring,
       find: { ...this.find },
       restore: restore
         ? {
@@ -969,7 +1199,7 @@ export class Controller {
           }
         : null,
       toast: this.s.toast,
-      status: { panes: '', inPanes: '', used: '', usedLevel: 'ok', compressed: null, swap: null, swapWarn: false, hint: '' },
+      status: statusModel(tab, this.s.system, this.deps.platform),
       chords: this.opts.chords,
       tokens: {},
     }
@@ -977,8 +1207,8 @@ export class Controller {
 
   private paneModel(p: PaneState, index: number, rect: Rect, gridRect: Rect, cols: number, rows: number, focused: boolean): PaneModel {
     // Title bar contents as PaneView.tsx:140-220 draws them.
-    const mem = p.metrics?.footprintBytes ?? 0
-    const showMem = isTerm(p) && mem >= 200 * 1024 * 1024
+    const bytes = p.metrics?.footprintBytes ?? 0
+    const showMem = isTerm(p) && bytes >= 200 * 1024 * 1024
     const badge = p.kind === 'file' ? 'file' : p.kind === 'web' ? 'web' : p.metrics?.foregroundProcess || (p.command === 'zsh' ? 'zsh' : p.command)
     return {
       id: p.id,
@@ -991,8 +1221,8 @@ export class Controller {
       label: p.label,
       tooltip: p.filePath ?? p.url ?? p.cwd,
       badge,
-      memBadge: showMem ? `~${formatBytes(mem)}` : null,
-      memHigh: showMem && mem > 1e9,
+      memBadge: showMem ? `~${mem(bytes)}` : null,
+      memHigh: showMem && bytes > 1e9,
       zoomPercent: p.zoomIndex !== undefined ? zoomPercent(p.zoomIndex) : null,
       fontPx: this.paneFontPx(p),
       color: paneColorHex(p.color),
@@ -1012,9 +1242,15 @@ export class Controller {
   }
 }
 
-/** `PaneView.tsx:571-574`. */
-function formatBytes(n: number): string {
-  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`
-  return `${Math.round(n / 1024 ** 2)} MB`
+/** One pane replaced wherever it lives (store.ts mapPane, which is not exported). */
+function mapPane(state: AppState, paneId: string, fn: (p: PaneState) => PaneState): AppState {
+  let changed = false
+  const tabs = state.tabs.map((t) => {
+    const p = t.panes[paneId]
+    if (!p) return t
+    changed = true
+    return { ...t, panes: { ...t.panes, [paneId]: fn(p) } }
+  })
+  return changed ? { ...state, tabs } : state
 }
 
