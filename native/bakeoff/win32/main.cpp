@@ -87,6 +87,8 @@ static void feed(const char* buf, DWORD got) {
   }
 }
 
+static bool g_promptSeen = false;  // reader thread only
+
 static void startPty(HWND hwnd) {
   auto fail = [](const wchar_t* what, DWORD code) {
     std::lock_guard<std::mutex> lk(g_mu);
@@ -119,7 +121,11 @@ static void startPty(HWND hwnd) {
     if (GetEnvironmentVariableW(L"SEASHELL_D_LOG", logPath, MAX_PATH)) _wfopen_s(&log, logPath, L"wb");
     while (ReadFile(outR, buf, sizeof buf, &got, nullptr) && got) {
       if (log) { fwrite(buf, 1, got, log); fflush(log); }
-      { std::lock_guard<std::mutex> lk(g_mu); feed(buf, got); }
+      bool prompt = false;
+      { std::lock_guard<std::mutex> lk(g_mu); feed(buf, got);
+        for (const std::wstring& r : g_grids[0].rows) if (r.find(L'%') != std::wstring::npos) { prompt = true; break; } }
+      // The run script waits for this title before its W10 idle starts.
+      if (prompt && !g_promptSeen) { g_promptSeen = true; PostMessageW(hwnd, WM_APP + 1, 0, 0); }
       InvalidateRect(hwnd, nullptr, FALSE);
     }
   }).detach();
@@ -169,6 +175,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
   switch (m) {
     case WM_PAINT: paint(h); return 0;
     case WM_ERASEBKGND: return 1;
+    case WM_APP + 1: SetWindowTextW(h, L"SeaShell bakeoff D (prompt)"); return 0;
     case WM_SIZE: if (g_rt) g_rt->Resize(D2D1::SizeU(LOWORD(l), HIWORD(l))); InvalidateRect(h, nullptr, FALSE); return 0;
     case WM_DPICHANGED: {
       discardTarget();

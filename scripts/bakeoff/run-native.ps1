@@ -48,8 +48,14 @@ try {
   $deadline = (Get-Date).AddSeconds(30)
   do { Start-Sleep 1; $wsl = @(Get-AppTree $p.Id | Where-Object { $_.Name -eq 'wsl.exe' }) } while ($wsl.Count -eq 0 -and (Get-Date) -lt $deadline)
   if ($wsl.Count -eq 0) { throw 'no wsl.exe in the candidate tree after 30 s' }
-  Write-Output "wsl.exe up (pid $($wsl[0].ProcessId)); idling 70 s"
-  Start-Sleep 70
+  Write-Output "wsl.exe up (pid $($wsl[0].ProcessId)); waiting for the prompt in grid 0"
+  # main.cpp retitles the window once a zsh prompt reaches grid 0. Spec 2: the
+  # 60 s idle starts at the prompt, and a partial workload is never measured.
+  $deadline = (Get-Date).AddSeconds(60)
+  do { Start-Sleep 1; $p.Refresh() } while ($p.MainWindowTitle -notlike '*(prompt)*' -and -not $p.HasExited -and (Get-Date) -lt $deadline)
+  if ($p.MainWindowTitle -notlike '*(prompt)*') { throw "no zsh prompt in grid 0 after 60 s (title: $($p.MainWindowTitle))" }
+  Write-Output 'prompt in grid 0; idling 60 s (W10)'
+  Start-Sleep 60
   if ($p.HasExited) { throw "candidate D exited with code $($p.ExitCode)" }
   Get-AppTree $p.Id | ForEach-Object { Write-Output ("tree: {0} {1}" -f $_.ProcessId, $_.Name) }
   $p.Refresh()

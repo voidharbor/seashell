@@ -37,6 +37,7 @@ try {
     if ($LASTEXITCODE -eq 0 -and $text -match '^\d+$' -and [int]$text -gt 0) { break }
   }
   Write-Output "terminal 0 chars after startup: $text"
+  if (-not ($text -match '^\d+$' -and [int]$text -gt 0)) { throw 'no prompt in terminal 0 after 60 s; not measuring a partial W10' }
   Write-Output 'idle 60 s after the prompt (W10)'
   Start-Sleep -Seconds 60
   $count = Invoke-Cdp "window.__bakeoffTerms.length"
@@ -45,6 +46,8 @@ try {
   Write-Output "webgl addons loaded: $gl"
   $t0 = Invoke-Cdp "window.__bakeoffText0()"
   Write-Output "terminal 0 text: $t0"
+  # Spec 2: never record a partial workload.
+  if ("$(@($count)[-1])" -ne '10' -or "$(@($gl)[-1])" -ne '10') { throw "workload short: terminals $count, webgl $gl" }
   Invoke-Cdp --shot "$root\bakeoff\B-webview2.png"
   & "$root\scripts\win\measure-ram.ps1" -RootPid $p.Id -UdfSubstring 'webview2-udf' -Label B-webview2
   $code = $LASTEXITCODE
