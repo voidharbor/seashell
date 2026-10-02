@@ -11,10 +11,7 @@
 #include "selection.h"
 #define SEASHELL_HAS_SELECTION 1
 #endif
-#if __has_include("find.h")
 #include "find.h"
-#define SEASHELL_HAS_FIND 1
-#endif
 
 using Microsoft::WRL::ComPtr;
 
@@ -255,18 +252,17 @@ void GridView::draw(ID2D1RenderTarget* rt, bool focused, const Selection* sel, c
     if (rc.stale || rc.abs != abs) build(rc, abs);
     for (const Run& r : rc.bgs)
       if (ID2D1SolidColorBrush* b = brush(r.color)) rt->FillRectangle(cellsRect(v, r.col, r.ncols), b);
-#ifdef SEASHELL_HAS_FIND
     if (find) {
-      for (size_t i = 0; i < find->matches.size(); i++) {
-        const auto& m = find->matches[i];
-        if (m.first != abs) continue;
-        if (ID2D1SolidColorBrush* b = brush((int)i == find->active ? kFindActive : kFindMatch))
-          rt->FillRectangle(cellsRect(v, m.second.first, m.second.second - m.second.first), b);
+      // Sorted by row: only this row's entries. [active, activeEnd) is the active match.
+      auto it = std::lower_bound(find->matches.begin(), find->matches.end(), abs,
+                                 [](const std::pair<long, std::pair<int, int>>& m, long r) { return m.first < r; });
+      for (; it != find->matches.end() && it->first == abs; ++it) {
+        int i = (int)(it - find->matches.begin());
+        bool active = i >= find->active && i < find->activeEnd;
+        if (ID2D1SolidColorBrush* b = brush(active ? kFindActive : kFindMatch))
+          rt->FillRectangle(cellsRect(v, it->second.first, it->second.second - it->second.first), b);
       }
     }
-#else
-    (void)find;
-#endif
 #ifdef SEASHELL_HAS_SELECTION
     if (sel && sel->active) {
       // Ordered start to end; the end column is exclusive.

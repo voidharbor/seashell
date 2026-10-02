@@ -27,6 +27,8 @@ const ULONGLONG kEarlyDeathMs = 5000;
 const size_t kMaxEarlyBytes = 4u << 20;
 // xterm.js's cursor blink interval.
 const UINT kBlinkMs = 530;
+// The search addon re-runs the search this long after the last pty write.
+const UINT kFindRefreshMs = 200;
 
 // "#rrggbb" from the model's token table, else fallback (0x00RRGGBB).
 uint32_t tokenColor(const UiModel& m, const char* name, uint32_t fallback) {
@@ -139,7 +141,10 @@ bool App::onInput(HWND from, UINT msg, WPARAM w, LPARAM l) {
     input_.focus(msg == WM_SETFOCUS);
     return false;
   }
-  if (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) return input_.key(focusedGrid(), msg, w, l);
+  if (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) {
+    if (findKey(msg, w, l)) return true;
+    return input_.key(focusedGrid(), msg, w, l);
+  }
   if (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) {
     // Only the body's client coordinates map onto the grids; a wheel carries screen coordinates.
     if (from != Window::instance().body() && msg != WM_MOUSEWHEEL) return false;
@@ -194,6 +199,8 @@ void App::onGridCmd(const nlohmann::json& cmd) {
   if (op == "create") {
     // A second create for the same pane (a relaunched core) starts it afresh.
     views_.erase(id);   // it draws the grid about to be replaced
+    finders_.erase(id);
+    findRuns_.erase(id);
     auto g = std::make_unique<Grid>(id, num("cols", 80), num("rows", 24), num("scrollback", 20000));
     g->setOutput([this, id](const std::string& bytes) { wire_.ptyWrite(id, bytes); });
     g->onTitle = [this, id](const std::string& t) { wire_.sendTerm({ { "type", "title" }, { "paneId", id }, { "title", t } }); };
@@ -211,6 +218,8 @@ void App::onGridCmd(const nlohmann::json& cmd) {
     views_.erase(id);
     grids_.erase(id);
     sbCap_.erase(id);
+    finders_.erase(id);
+    findRuns_.erase(id);
     feed_.erase(id);
     log("grid dispose %s", id.c_str());
   } else if (op == "resize") {
@@ -219,11 +228,18 @@ void App::onGridCmd(const nlohmann::json& cmd) {
     g->resize(num("cols", g->store().cols()), num("rows", g->store().rows()));
     if (cmd.contains("fontPx") && cmd["fontPx"].is_number() && views_.count(id))
       views_[id]->setFontPx((float)(cmd["fontPx"].get<double>() * Window::instance().dpi().scale()));
+  } else if (op == "find") {
+    runFind(id, cmd);
+  } else if (op == "findClear") {
+    // The decorations and the selection go; the viewport stays where the find left it.
+    finders_.erase(id);
+    findRuns_.erase(id);
+    input_.dropPane(id);
   } else if (input_.gridCmd(op, id, cmd)) {
     log("on grid:cmd %s %s", op.c_str(), id.c_str());   // paste, copy, selectAll, clear
     return;   // gridCmd repaints what it changed
   } else {
-    // focus (keys follow the model's focused pane), find, exited: Tasks 14 and 15.
+    // focus (keys follow the model's focused pane), exited: Task 15.
     log("on grid:cmd %s %s", op.c_str(), id.c_str());
     return;
   }
@@ -255,11 +271,162 @@ void App::drainFeed() {
     size_t sb = g->store().scrollbackLen();
     std::string newest = g->store().text(-1);
     g->feed(it->second.data(), it->second.size());
-    input_.noteFed(*g, sb, newest, sbCap_.count(it->first) ? sbCap_[it->first] : 20000);
+    size_t cap = sbCap_.count(it->first) ? sbCap_[it->first] : 20000;
+    input_.noteFed(*g, sb, newest, cap);
+    auto f = finders_.find(it->first);
+    if (f != finders_.end()) {
+      size_t after = g->store().scrollbackLen();
+      if (after > sb) {
+        f->second.onScrollbackPushed((long)(after - sb), after);
+      } else if (after >= cap && g->store().text(-1) != newest) {
+        // At the cap the count cannot say how many rows moved (as for the
+        // selection): drop the decorations and the anchor; the re-search below
+        // finds the matches again.
+        f->second.clear();
+      }
+      // Re-search once the output settles, as the addon's onWriteParsed does.
+      if (findTimer_) KillTimer(nullptr, findTimer_);
+      findTimer_ = SetTimer(nullptr, 0, kFindRefreshMs, findRefresh);
+    }
     dirty = true;   // the grid keeps its damage; its GridView takes it on the next paint
     it = feed_.erase(it);
   }
   if (dirty) Window::instance().invalidateBody();
+}
+
+namespace {
+void sendFindResult(Wire& wire, const std::string& paneId, const Finder::Result& r) {
+  wire.sendTerm({ { "type", "findResult" }, { "paneId", paneId }, { "index", r.miss ? 0 : r.index },
+                  { "total", r.miss ? 0 : r.total }, { "capped", !r.miss && r.capped } });
+}
+}
+
+// grid:cmd find: from the pane's anchor (the active match), then the active
+// match to mid-viewport when it is off screen. Answers with findResult.
+void App::runFind(const std::string& paneId, const nlohmann::json& cmd) {
+  auto flag = [&](const char* k) { return cmd.contains(k) && cmd[k].is_boolean() && cmd[k].get<bool>(); };
+  std::string query = cmd.contains("query") && cmd["query"].is_string() ? cmd["query"].get<std::string>() : std::string();
+  Finder::Options opt{ flag("caseSensitive"), flag("regex"), flag("incremental") };
+  bool forward = cmd.value("direction", "next") != "prev";
+  Finder::Result r{ 0, 0, false, true };
+  LARGE_INTEGER t0, t1, freq;
+  QueryPerformanceCounter(&t0);
+  if (Grid* g = grid(paneId)) {
+    Finder& f = finders_[paneId];
+    long ar = LONG_MIN;
+    int ac = 0;
+    f.anchor(&ar, &ac);
+    r = f.find(g->store(), query, opt, forward, ar, ac);
+    if (r.miss) {
+      finders_.erase(paneId);   // no decorations, no anchor: the next search starts afresh
+      findRuns_.erase(paneId);
+    } else {
+      findRuns_[paneId] = { query, opt, r };
+      scrollToMatch(paneId);
+    }
+  }
+  QueryPerformanceCounter(&t1);
+  QueryPerformanceFrequency(&freq);
+  log("find %s: %s in %.1f ms", paneId.c_str(),
+      r.miss ? "miss" : (std::to_string(r.index) + " of " + std::to_string(r.total) + (r.capped ? "+" : "")).c_str(),
+      (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart);
+  sendFindResult(wire_, paneId, r);
+}
+
+// find-scroll.ts targetScrollLine: nothing when the match is on screen,
+// otherwise it goes to mid-viewport (Grid::scrollView clamps).
+void App::scrollToMatch(const std::string& paneId) {
+  Grid* g = grid(paneId);
+  auto f = finders_.find(paneId);
+  if (!g || f == finders_.end()) return;
+  long row = f->second.activeRow();
+  if (row == LONG_MIN) return;
+  long top = g->viewTop();
+  int rows = g->store().rows();
+  if (row >= top && row < top + rows) return;
+  g->scrollView(row - rows / 2 - top);
+}
+
+// Output settled: every live find runs again from its anchor (incremental, no
+// scroll), so the count and the decorations follow the newest buffer while the
+// user's match stays put (find-anchor.ts). A changed result goes to the core.
+void CALLBACK App::findRefresh(HWND, UINT, UINT_PTR id, DWORD) {
+  App& a = instance();
+  KillTimer(nullptr, id);
+  a.findTimer_ = 0;
+  bool any = false;
+  for (auto it = a.findRuns_.begin(); it != a.findRuns_.end();) {
+    Grid* g = a.grid(it->first);
+    auto f = a.finders_.find(it->first);
+    if (!g || f == a.finders_.end()) { it = a.findRuns_.erase(it); continue; }
+    Finder::Options opt = it->second.opt;
+    opt.incremental = true;
+    long ar = LONG_MIN;
+    int ac = 0;
+    f->second.anchor(&ar, &ac);
+    Finder::Result r = f->second.find(g->store(), it->second.query, opt, true, ar, ac);
+    const Finder::Result& l = it->second.last;
+    if (r.miss != l.miss || r.index != l.index || r.total != l.total || r.capped != l.capped)
+      sendFindResult(a.wire_, it->first, r);
+    it->second.last = r;
+    any = true;
+    ++it;
+  }
+  if (any) Window::instance().invalidateBody();
+}
+
+// The find bar's keys while it is open. Until Task 15 draws the bar and its
+// edit widget, the text lives here: typing and Backspace send the whole query
+// as `text` on find:query, Enter, Shift+Enter and Escape go as `key` events.
+// Chords still run; nothing else reaches the pty while the bar is open.
+bool App::findKey(UINT msg, WPARAM w, LPARAM l) {
+  if (!model_.find.open) { findSwallowChar_ = false; return false; }
+  bool ctrl = Driver::keyDown(VK_CONTROL), alt = Driver::keyDown(VK_MENU), shift = Driver::keyDown(VK_SHIFT);
+  nlohmann::json mods = { { "ctrl", ctrl }, { "alt", alt }, { "shift", shift } };
+  auto key = [&](const char* k) {
+    findSwallowChar_ = true;
+    wire_.sendEvent({ { "type", "key" }, { "target", "find:query" }, { "key", k }, { "mods", mods } });
+  };
+  if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+    findSwallowChar_ = false;
+    if (w == VK_SHIFT || w == VK_CONTROL || w == VK_MENU || w == VK_LWIN || w == VK_RWIN) return false;
+    if (findChords_.command(chordFromMessage(w, l, ctrl, alt, shift))) return false;   // GridInput runs it
+    if (msg == WM_SYSKEYDOWN) return false;   // Alt+Space and the window menu
+    if (w == VK_RETURN) { key(shift ? "Shift+Enter" : "Enter"); return true; }
+    if (w == VK_ESCAPE) { key("Escape"); return true; }
+    if (w == VK_BACK) {
+      findSwallowChar_ = true;
+      if (!findQuery_.empty()) {
+        size_t n = findQuery_.size() - 1;
+        while (n > 0 && ((unsigned char)findQuery_[n] & 0xC0) == 0x80) n--;   // one whole code point
+        findQuery_.resize(n);
+        sendFindQuery();
+      }
+      return true;
+    }
+    return true;   // arrows, Delete, Ctrl+letter: the bar has no caret yet
+  }
+  if (msg == WM_CHAR) {
+    if (findSwallowChar_) { findSwallowChar_ = false; return true; }
+    wchar_t ch = (wchar_t)w;
+    if (ch < 0x20 || ch == 0x7F) return true;   // control characters type nothing
+    std::wstring units;
+    if (ch >= 0xD800 && ch <= 0xDBFF) { findHigh_ = ch; return true; }
+    if (ch >= 0xDC00 && ch <= 0xDFFF) {
+      if (!findHigh_) return true;
+      units.push_back(findHigh_);
+    }
+    findHigh_ = 0;
+    units.push_back(ch);
+    findQuery_ += toUtf8(units);
+    sendFindQuery();
+    return true;
+  }
+  return false;   // key ups and WM_SYSCHAR stay with GridInput
+}
+
+void App::sendFindQuery() {
+  wire_.sendEvent({ { "type", "text" }, { "target", "find:query" }, { "text", findQuery_ } });
 }
 
 // BeginDraw, the chrome background, every visible pane's grid at its model
@@ -294,7 +461,8 @@ void App::paintBody() {
     v.setExited(p.status == "exited");
     v.setBlinkPhase(blinkOn_);
     if (Grid* g = grid(p.id)) v.setAppScrollbar(g->altScreen() && g->mouseMode() != VTERM_PROP_MOUSE_NONE);
-    v.draw(rt, p.focused, input_.selection(p.id), nullptr, 0);
+    auto f = finders_.find(p.id);
+    v.draw(rt, p.focused, input_.selection(p.id), f == finders_.end() ? nullptr : &f->second.decor(), 0);
   }
   HRESULT hr = rt->EndDraw();
   QueryPerformanceCounter(&t1);
@@ -402,6 +570,11 @@ int App::main(HINSTANCE hinst) {
     double oldFont = model_.window.fontPx;
     model_ = m;
     input_.setChords(m.chords);
+    findChords_.set(m.chords);
+    // The find bar opened: its text starts from the core's query (empty after a close).
+    if (m.find.open && !findWasOpen_) findQuery_ = m.find.query;
+    if (!m.find.open) { findQuery_.clear(); findHigh_ = 0; }
+    findWasOpen_ = m.find.open;
     Window::instance().invalidateStrip();   // Task 15 draws it
     Window::instance().invalidateBody();
     if (!firstModel_) {

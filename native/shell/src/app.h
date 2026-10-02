@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include "core_proc.h"
+#include "find.h"
 #include "grid.h"
 #include "grid_input.h"
 #include "grid_view.h"
@@ -53,6 +54,13 @@ private:
   void onPtyData(const std::string& paneId, const std::string& bytes);
   void drainFeed();                                // WM_APP_PTY_FEED
   static void CALLBACK blinkTick(HWND, UINT, UINT_PTR, DWORD);
+  // Find (Task 14): grid:cmd find and findClear, the find query's keys until
+  // Task 15's edit widget takes them, and the re-search after output settles.
+  void runFind(const std::string& paneId, const nlohmann::json& cmd);
+  void scrollToMatch(const std::string& paneId);
+  bool findKey(UINT msg, WPARAM w, LPARAM l);
+  void sendFindQuery();
+  static void CALLBACK findRefresh(HWND, UINT, UINT_PTR, DWORD);
 
   HINSTANCE hinst_ = nullptr;
   bool testMode_ = false;
@@ -74,4 +82,13 @@ private:
   bool blinkOn_ = true;                            // the cursor blink phase, flipped every 530 ms
   std::map<std::string, std::string> feed_;        // pty bytes waiting for the next WM_APP_PTY_FEED
   bool feedPosted_ = false;
+  struct FindRun { std::string query; Finder::Options opt{}; Finder::Result last{}; };
+  std::map<std::string, Finder> finders_;          // per pane, while it has a find going
+  std::map<std::string, FindRun> findRuns_;        // the pane's last search, re-run 200 ms after output stops
+  UINT_PTR findTimer_ = 0;
+  std::string findQuery_;                          // the open find bar's text, edited here until Task 15
+  bool findWasOpen_ = false;
+  bool findSwallowChar_ = false;                   // the WM_CHAR of Enter, Escape or Backspace in the find bar
+  wchar_t findHigh_ = 0;                           // a high surrogate waiting for its low half
+  ChordTable findChords_;                          // the model's chords: which modified keys pass the find bar
 };
