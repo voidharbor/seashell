@@ -12,6 +12,7 @@ import {
 } from '../../shared/ipc.js'
 import { buildEnv } from './env.js'
 import { PtyBatcher, ACTIVE_FLUSH_INTERVAL_MS } from './batcher.js'
+import { ptyReadGate, type ReadGate } from './flow.js'
 import { platform } from '../platform/index.js'
 
 interface PaneProc {
@@ -70,7 +71,19 @@ export class PtyManager {
   private flushTimer: ReturnType<typeof setInterval> | null = null
   private zdotdir: string | null = null
 
-  constructor(private readonly getWindow: () => BrowserWindow | null) {}
+  constructor(
+    private readonly getWindow: () => BrowserWindow | null,
+    private readonly gate: ReadGate = ptyReadGate
+  ) {
+    // The core's stdout is full (flow.ts): stop reading every pty until it drains.
+    gate.onChange((held) => {
+      for (const rec of this.panes.values()) {
+        if (rec.exited) continue
+        if (held) rec.proc.pause()
+        else rec.proc.resume()
+      }
+    })
+  }
 
   /**
    * The flush loop exists only while there is something to flush.
@@ -217,6 +230,7 @@ export class PtyManager {
       tail: '',
     }
     this.panes.set(req.paneId, rec)
+    if (this.gate.held) proc.pause()
     if (platform.paneShell) this.resolvePaneShell(rec)
     this.batcher.setPaneActive(req.paneId, true)
 

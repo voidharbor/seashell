@@ -8,6 +8,7 @@ import { startStdio } from './stdio-bridge.js'
 import { Controller } from './controller/controller.js'
 import { chordTableFromMenu } from './controller/chords.js'
 import { encodeEnvelope } from './protocol.js'
+import { gatedWriter } from '../main/pty/flow.js'
 
 const hostPid = Number(process.env.SEASHELL_HOST_PID) || process.ppid
 const userData = process.env.SEASHELL_USER_DATA
@@ -18,8 +19,10 @@ if (!userData || !userData.startsWith('/')) {
 const version = process.env.SEASHELL_CORE_VERSION ?? '0.0.0'
 /** False once the shell's end of the pipe is gone; later writes are dropped. */
 let pipeOpen = true
+/** Holds the pty reads while stdout is over its high-water mark (Review Focus 2). */
+const toPipe = gatedWriter(process.stdout)
 const write = (line: string): void => {
-  if (pipeOpen) process.stdout.write(line + '\n')
+  if (pipeOpen) toPipe(line + '\n')
 }
 
 // Electron's main process logs an unhandled rejection and keeps going; src/main
