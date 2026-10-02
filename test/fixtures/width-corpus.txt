@@ -1,0 +1,314 @@
+# ASCII and punctuation
+hello world
+The quick brown fox jumps over the lazy dog
+0123456789
+!"$%&'()*+,-./
+:;<=>?@[\]^_`{|}~
+ls -la /usr/local/bin
+git commit -m 'fix'
+a=b+c*d/e
+(1, 2, 3)
+{"key": "value"}
+path/to/file.txt
+user@example.com
+https://example.com/a?b=c&d=e
+~/.config
+x
+  leading spaces
+trailing spaces  
+MiXeD CaSe 42
+tab	separated
+end.
+# Latin with combining marks
+café
+naïve
+résumé
+è́̂
+å
+ño
+Ž̧
+ȫ
+über
+ça va
+Äpfel
+ệ
+i̇
+x̲y̲
+s̱
+ğ
+café precomposed
+Ångström
+Straße
+q̣̰̃
+# Greek, Cyrillic, Hebrew, Arabic
+Αθήνα
+καλημέρα
+άβγ
+Ωμέγα
+π≈ 3.14
+Привет
+Москва
+ёжик
+й
+Щука
+שלום
+עברית
+שָׁלוֹם
+אבג 123
+תורה
+مرحبا
+العربية
+كَتَبَ
+سلام world
+بِسْمِ
+# CJK ideographs, kana and Hangul
+中文
+日本語
+漢字
+你好世界
+東京都
+北京市
+文字化け
+一二三四五
+龍
+鬱
+天地人
+山田太郎
+空
+言語
+学校
+ひらがな
+こんにちは
+カタカナ
+コーヒー
+テスト
+あいうえお
+アイウ
+がぎぐ
+パピプ
+ﾊﾝｶｸｶﾀｶﾅ
+한국어
+안녕하세요
+서울
+한글
+가나다
+힐
+우리
+각
+한
+ab中cd
+中1日2
+、。「」
+【注】
+　x　
+中文 and English
+# Fullwidth forms
+ＡＢＣ
+１２３
+！？
+（）
+ａｂｃ
+￥100
+＠＃
+［］
+￡￠
+～－
+# Box drawing, blocks and the Claude Code frame
+╭───╮
+│ hi │
+╰───╯
+┃━┃
+┏━┓
+┗━┛
+╭╮╰╯│─┃┏┓┗┛
+┌─┬─┐
+├─┼─┤
+└─┴─┘
+╔═╗
+╚═╝
+███
+░▒▓
+▀▄▌▐
+▁▂▃▄▅▆▇
+▏▎▍
+╱╲╳
+│ ✔ done │
+── Claude ──
+# Emoji single
+😀
+😂
+😍
+🤔
+🚀
+🔥
+🎉
+👍
+💩
+🐱
+🐶
+🍎
+🍕
+🌍
+🌈
+💻
+📱
+🔒
+🚨
+🧠
+🧪
+🫠
+🪨
+🥇
+⌚
+⌛
+⏰
+☕
+⚡
+⛄
+✅
+❌
+❓
+⭐
+⬛
+☀
+❤
+✈
+🌡
+a😀b
+# Emoji with VS16
+❤️
+☀️
+☁️
+✈️
+☎️
+✔️
+✖️
+✳️
+❄️
+♻️
+⚠️
+⬆️
+➡️
+©️
+™️
+🌡️
+🗺️
+🕊️
+🖥️
+x❤️y
+# Skin-tone emoji
+👍🏻
+👍🏿
+👋🏼
+👋🏽
+👌🏾
+🙏🏻
+🙏🏽
+💪🏿
+👦🏼
+👧🏾
+👨🏽
+👩🏿
+🧑🏻
+👶🏼
+👴🏾
+✌🏽
+☝🏻
+✋🏿
+🤘🏼
+🤝🏾
+# ZWJ families and professions
+👨‍👩‍👧
+👨‍👩‍👧‍👦
+👩‍👩‍👦
+👨‍👨‍👧‍👧
+👨‍👦
+👩‍👧‍👦
+👨‍💻
+👩‍💻
+🧑‍💻
+👨‍🍳
+👩‍🔬
+👨‍🚀
+👩‍🚒
+👨‍⚕️
+👩‍⚖️
+👨‍✈️
+🧑‍🎨
+👩‍🏫
+👨🏽‍💻
+👩🏿‍🔬
+🏳️‍🌈
+🏴‍☠️
+👁️‍🗨️
+🐕‍🦺
+🐈‍⬛
+🐻‍❄️
+❤️‍🔥
+😮‍💨
+👩‍❤️‍👨
+a👨‍👩‍👧b
+# Flags
+🇺🇸
+🇬🇧
+🇫🇷
+🇩🇪
+🇯🇵
+🇨🇳
+🇰🇷
+🇧🇷
+🇮🇳
+🇨🇦
+🇦🇺
+🇮🇹
+🇪🇸
+🇲🇽
+🇮🇱
+🇺🇸🇬🇧
+🇫🇷🇩🇪🇯🇵
+🇺🇸🇫
+x🇸🇪y
+🇺
+# Keycaps
+0️⃣
+1️⃣
+2️⃣
+5️⃣
+9️⃣
+*️⃣
+x#️⃣
+1⃣
+1️⃣2️⃣3️⃣
+a7️⃣
+# Tag sequences
+🏴󠁧󠁢󠁥󠁮󠁧󠁿
+🏴󠁧󠁢󠁳󠁣󠁴󠁿
+🏴󠁧󠁢󠁷󠁬󠁳󠁿
+x🏴󠁧󠁢󠁥󠁮󠁧󠁿y
+🏴󠁧󠁢󠁥󠁮󠁧󠁿🏴󠁧󠁢󠁳󠁣󠁴󠁿
+# Symbols, arrows and math
+←↑→↓
+⇐⇒⇔
+➔➜
+∀∃∈∉
+∑∏√
+∞≠≤≥
+±×÷
+∫∂∇
+λ x → x
+∧∨¬
+✓✔✗✘
+★☆
+♠♣♥♦
+§¶†‡
+•·…
+€£¥¢
+™©®
+°C µs
+⌘⌥⇧⎋
+⏎⌫
+▶◀▲▼
+●○■□
+①②③
+⅓½¾
+❯ ❰
