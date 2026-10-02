@@ -10,7 +10,9 @@
  * component, which drags in react and xterm.
  */
 
-export const DRAWER_PTY_PREFIX = 'drawer:'
+import { DRAWER_PTY_PREFIX } from '../../shared/ipc.js'
+
+export { DRAWER_PTY_PREFIX }
 
 export function drawerPtyId(paneId: string): string {
   return `${DRAWER_PTY_PREFIX}${paneId}`

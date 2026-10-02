@@ -1,15 +1,26 @@
 import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from 'electron'
 import { CH } from '../shared/ipc.js'
+import { accelerator, zoomLabel } from '../shared/keys.js'
 
 /**
- * Every keybinding in SeaShell is a menu accelerator, and every accelerator uses
- * Cmd. There are ZERO Ctrl bindings, deliberately.
+ * Every keybinding in SeaShell is a menu accelerator, and every accelerator is
+ * written here in its macOS spelling, with Cmd. There are ZERO bare Ctrl
+ * bindings, deliberately.
  *
  * The reason: every Ctrl+<letter> maps to a C0 control code that zsh's line
  * editor or a full-screen TUI already binds (Ctrl+A/E/K/U/W/R/L/C/D/Z...).
  * Stealing any of them would break the thing the app exists to host. On macOS
  * the only Cmd chord xterm.js consumes is Cmd+A, so everything else falls
  * through without reaching the PTY.
+ *
+ * Off the Mac, Cmd is the Super key, which on Windows (SeaShell runs there
+ * through WSLg) is the Windows key, and Windows keeps those chords for itself:
+ * Cmd+D showed the desktop instead of opening a pane. So `item` passes every
+ * chord through shared/keys.ts, which respells it by rule for Linux and
+ * Windows: Cmd+X becomes Ctrl+Shift+X, Cmd+Shift+X becomes Ctrl+Alt+X. The
+ * letter stays the same on every machine. Write new bindings in the Cmd form
+ * and let the rule do the rest; test/unit/keys.test.ts checks that no chord
+ * in this file can turn into a bare Ctrl+letter or collide with another.
  *
  * Accelerators fire regardless of DOM focus and are forwarded to the renderer,
  * which dispatches on which zone (pane / explorer / tab bar) is focused.
@@ -32,9 +43,9 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
     getWindow()?.webContents.send(CH.uiCommand, { command })
   }
 
-  const item = (label: string, accelerator: string, command: string): MenuItemConstructorOptions => ({
+  const item = (label: string, mac: string, command: string): MenuItemConstructorOptions => ({
     label,
-    accelerator,
+    accelerator: accelerator(mac, process.platform),
     click: send(command),
   })
 
@@ -111,9 +122,9 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
         item('Rebalance Panes', 'Cmd+Shift+R', 'layout.rebalance'),
         { type: 'separator' },
         // No accelerators on these three, deliberately — see the note below.
-        { label: 'Zoom In\t⌘=', click: send('ui.zoomIn') },
-        { label: 'Zoom Out\t⌘-', click: send('ui.zoomOut') },
-        { label: 'Actual Size\t⌘0', click: send('ui.zoomReset') },
+        { label: `Zoom In\t${zoomLabel('=', process.platform)}`, click: send('ui.zoomIn') },
+        { label: `Zoom Out\t${zoomLabel('-', process.platform)}`, click: send('ui.zoomOut') },
+        { label: `Actual Size\t${zoomLabel('0', process.platform)}`, click: send('ui.zoomReset') },
         // No menu items for the pane pair: they act on the focused pane, which
         // is a renderer concept, and the chords are listed in the tutorial.
         { type: 'separator' },

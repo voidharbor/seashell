@@ -10,10 +10,33 @@
  */
 
 // ---------------------------------------------------------------------------
+// Pane limits
+// ---------------------------------------------------------------------------
+
+/**
+ * Most terminal panes that can run at once, across every tab.
+ *
+ * Main enforces it at spawn; the renderer and the projects handlers size their
+ * session-id batches to it, so a save or restore never silently drops a pane
+ * past the end of a batch. One number, read by both sides, for that reason.
+ */
+export const MAX_TERM_PANES = 64
+
+/**
+ * The shell drawer's pty ids share the PtyManager map with every pane's, so
+ * they carry a prefix no pane id has. Drawers do not count against
+ * MAX_TERM_PANES: there is at most one per pane, so they get a budget of
+ * their own of the same size.
+ */
+export const DRAWER_PTY_PREFIX = 'drawer:'
+
+// ---------------------------------------------------------------------------
 // Channel names
 // ---------------------------------------------------------------------------
 
 export const CH = {
+  clipboardWindowsFiles: 'clipboard:windows-files',
+  clipboardImage: 'clipboard:image',
   ptySpawn: 'pty:spawn',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
@@ -65,6 +88,16 @@ export const CH = {
   /** Main to renderer: write a snapshot now. Sent once, at quit. */
   sessionRequestSnapshot: 'session:requestSnapshot',
   uiCommand: 'ui:command',
+
+  /** Renderer to main: the window buttons the app draws itself off macOS. */
+  windowMinimize: 'window:minimize',
+  windowToggleMaximize: 'window:toggleMaximize',
+  windowClose: 'window:close',
+  windowIsMaximized: 'window:isMaximized',
+  /** Main to renderer: the window became, or stopped being, maximized. */
+  windowMaximized: 'window:maximized',
+  /** Renderer to main: pop the application menu, which has no bar to live in there. */
+  windowMenu: 'window:menu',
 } as const
 
 export type ChannelName = (typeof CH)[keyof typeof CH]
@@ -355,6 +388,11 @@ export interface UiCommandEvent {
   command: string
 }
 
+/** Main telling the renderer the maximized state flipped, so the middle button redraws. */
+export interface WindowMaximizedEvent {
+  maximized: boolean
+}
+
 /** Something main has to say, shown in the renderer's ordinary toast. */
 export interface AppToastEvent {
   message: string
@@ -498,6 +536,17 @@ export interface SessionSaveRequest {
 // ---------------------------------------------------------------------------
 
 export interface SeashellApi {
+  /** process.platform of the host, so the renderer spells its chords the way the menu does. */
+  platform: string
+  /** Paths for files dropped onto the window (empty string when unavailable). */
+  files: {
+    pathFor(file: File): string
+    /** Files copied in Windows Explorer (WSL only), as Windows paths; [] elsewhere. */
+    windowsClipboard(): Promise<string[]>
+    /** An image on the clipboard saved as a PNG, its path; '' when there is none.
+     *  Linux and WSL only, so the Mac's paste is unchanged. */
+    clipboardImage(): Promise<string>
+  }
   pty: {
     spawn(req: PtySpawnRequest): Promise<PtySpawnResponse>
     kill(req: PtyKillRequest): Promise<PtyKillResponse>
@@ -565,6 +614,20 @@ export interface SeashellApi {
     /** Both are fire and forget: the answer arrives as the next state event. */
     download(): void
     install(): void
+  }
+  /**
+   * The window frame, off macOS only. There the window is frameless (see
+   * shared/window-chrome.ts) and these are what the three buttons and the
+   * ≡ button do. On macOS the OS owns all of this and nothing calls them.
+   */
+  window: {
+    minimize(): void
+    toggleMaximize(): void
+    close(): void
+    isMaximized(): Promise<boolean>
+    onMaximized(cb: (e: WindowMaximizedEvent) => void): () => void
+    /** Pops the application menu under the ≡ button. */
+    menu(): void
   }
 }
 

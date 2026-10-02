@@ -1,10 +1,11 @@
-import { app, ipcMain, shell, type BrowserWindow } from 'electron'
+import { app, clipboard, ipcMain, shell, type BrowserWindow } from 'electron'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod'
 import {
   CH,
+  MAX_TERM_PANES,
   type AppPaths,
   type Project,
   type SavedTab,
@@ -24,6 +25,7 @@ import { denyOpenPath, extOf } from './fs/path-guard.js'
 import { statForOpen, type OpenTarget } from './fs/open-target.js'
 import { ensureNotes } from './links/notes.js'
 import { platform } from './platform/index.js'
+import { WINDOWS_IMAGE_SCRIPT, decodeBase64Output, saveClipboardImage } from './clipboard-image.js'
 import {
   MAX_NAME_LENGTH,
   MAX_PROJECTS,
@@ -146,6 +148,33 @@ export function awaitSnapshot(win: BrowserWindow, timeoutMs: number): Promise<vo
 }
 
 export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher }): void {
+  // WSL only: files copied in Windows Explorer never reach the Linux clipboard as
+  // paths, so ask Windows directly. Only called when a paste finds no text.
+  ipcMain.handle(CH.clipboardWindowsFiles, async () => {
+    const out = await windowsPowerShell(
+      '[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-Clipboard -Format FileDropList -ErrorAction SilentlyContinue).FullName'
+    )
+    return out === null ? [] : out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  })
+
+  // Only asked when a paste found no text and no files. Off the Mac only, where
+  // an image paste used to do nothing at all.
+  ipcMain.handle(CH.clipboardImage, async () => {
+    if (process.platform === 'darwin') return ''
+    return saveClipboardImage({
+      readLinux: () => {
+        const img = clipboard.readImage()
+        return img.isEmpty() ? null : img.toPNG()
+      },
+      readWindows: async () => {
+        const out = await windowsPowerShell(WINDOWS_IMAGE_SCRIPT, true)
+        return out === null ? null : decodeBase64Output(out)
+      },
+      dir: path.join(os.tmpdir(), `seashell-paste-${process.getuid?.() ?? 'user'}`),
+      now: () => Date.now(),
+    })
+  })
+
   ipcMain.handle(CH.ptySpawn, (_e, raw) => {
     const parsed = SpawnReq.safeParse(raw)
     if (!parsed.success) {
@@ -360,7 +389,7 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
   ipcMain.handle(CH.projectsSessionIds, async (_e, raw) => {
     const parsed = z
       .object({
-        panes: z.array(z.object({ paneId: PaneId, cwd: z.string().max(4096) })).max(64),
+        panes: z.array(z.object({ paneId: PaneId, cwd: z.string().max(4096) })).max(MAX_TERM_PANES),
       })
       .safeParse(raw)
     if (!parsed.success) return { ids: {} }
@@ -380,7 +409,7 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
                 .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
             })
           )
-          .max(64),
+          .max(MAX_TERM_PANES),
       })
       .safeParse(raw)
     if (!parsed.success) return { modes: {} }
@@ -496,5 +525,32 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
       // Falls back to Menlo at a larger size; the app still works.
       return null
     }
+  })
+}
+
+const WINDOWS_POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+
+/**
+ * Run a PowerShell command on the Windows side of WSL and return its stdout, or
+ * null anywhere that is not WSL, on a non-zero exit or on a timeout. `sta` is
+ * needed for System.Windows.Forms.Clipboard.
+ */
+async function windowsPowerShell(command: string, sta = false): Promise<string | null> {
+  if (process.platform !== 'linux') return null
+  try {
+    await fs.access(WINDOWS_POWERSHELL)
+  } catch {
+    return null
+  }
+  const { execFile } = await import('node:child_process')
+  const args = ['-NoProfile', '-NonInteractive', ...(sta ? ['-Sta'] : []), '-Command', command]
+  return new Promise((resolve) => {
+    execFile(
+      WINDOWS_POWERSHELL,
+      args,
+      // A full-screen screenshot is a few MB of base64.
+      { timeout: 8000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
+      (err, stdout) => resolve(err ? null : stdout)
+    )
   })
 }

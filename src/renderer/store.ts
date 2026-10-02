@@ -1,4 +1,5 @@
 import type { PaneMetrics, SystemMetrics } from '../shared/ipc.js'
+import { k } from './platform.js'
 import type { PaneColorKey } from './panes/colors.js'
 import { cleanPaneTitle } from './panes/paneTitle.js'
 import { doneExpired, nextAttention, type Attention } from './panes/attention.js'
@@ -231,9 +232,10 @@ export function makeTab(
   cwd: string,
   home: string,
   command: PaneCommand = 'zsh',
-  autoColor = false
+  autoColor = false,
+  commandText?: string
 ): TabState {
-  const base = makePane(cwd, home, command)
+  const base = makePane(cwd, home, command, commandText)
   // A tab's first pane is created here, not through the pane.new path, so the
   // first-pane colour has to be applied at birth rather than by withAutoColor.
   const pane = autoColor ? { ...base, color: FIRST_PANE_COLOR } : base
@@ -250,7 +252,7 @@ export function makeTab(
 }
 
 export type Action =
-  | { type: 'tab.new'; cwd: string; home: string; autoColor?: boolean }
+  | { type: 'tab.new'; cwd: string; home: string; autoColor?: boolean; commandText?: string }
   | { type: 'tab.close'; tabId: string }
   | { type: 'tab.select'; tabId: string }
   | { type: 'tab.selectIndex'; index: number }
@@ -324,7 +326,9 @@ function focusAfterClose(tree: RowNode, closedId: string, order: string[]): stri
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'tab.new': {
-      const tab = makeTab(action.cwd, action.home, 'zsh', action.autoColor)
+      const tab = action.commandText
+        ? makeTab(action.cwd, action.home, 'cmd', action.autoColor, action.commandText)
+        : makeTab(action.cwd, action.home, 'zsh', action.autoColor)
       return { ...state, tabs: [...state.tabs, tab], activeTabId: tab.id }
     }
 
@@ -402,7 +406,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const tab = activeTab(state)
       if (!tab) return state
       if (Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
-        return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (⌘T)` }
+        return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (${k('Cmd+T')})` }
       }
       const pane = withAutoColor(
         makePane(tab.cwd, action.home, action.command, action.commandText),
@@ -447,7 +451,7 @@ export function reducer(state: AppState, action: Action): AppState {
       }
 
       if (Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
-        return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (⌘T)` }
+        return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (${k('Cmd+T')})` }
       }
       const pane = withAutoColor(makeFilePane(action.path, tab.cwd), tab, action.autoColor)
       return replaceTab(state, tab.id, (t) => ({
@@ -463,7 +467,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const tab = activeTab(state)
       if (!tab) return state
       if (Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
-        return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (⌘T)` }
+        return { ...state, toast: `Tab is full (${MAX_PANES_PER_TAB} panes) — open a new tab (${k('Cmd+T')})` }
       }
       const pane = withAutoColor(makeWebPane(action.url, tab.cwd), tab, action.autoColor)
       return replaceTab(state, tab.id, (t) => ({

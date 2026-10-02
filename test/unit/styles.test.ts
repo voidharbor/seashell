@@ -107,6 +107,32 @@ describe('the stylesheet covers what the components ask for', () => {
     expect(at('.node.node--selected')).toBeLessThan(at('.node.node--revealed'))
   })
 
+  /**
+   * The window chrome scrolled itself out of alignment, permanently.
+   *
+   * `.app__desk` is inset -74px, so the app shell carries 74px of scrollable
+   * overflow. html, body and #root are overflow:hidden, which hides it and
+   * still leaves a scroll container behind: unreachable by hand, reachable by
+   * script. The explorer's reveal calls `scrollIntoView`, which scrolls every
+   * scrollport up to the viewport — so the first reveal after launch scrolled
+   * the entire UI up. The tab bar rendered short with its tabs and zoom badge
+   * riding the top edge, the status bar lifted off the bottom, and no scrollbar
+   * existed to put any of it back. It survived until the app was restarted.
+   *
+   * `overflow: clip` is the fix precisely because it is not a scroll container.
+   * Swapping it back to `hidden` looks like a synonym and restores the bug, so
+   * it is pinned here. A DOM test cannot cover it: happy-dom has no layout, so
+   * nothing overflows and nothing scrolls.
+   */
+  it('keeps the app shell unscrollable', () => {
+    const app = /^\.app\s*\{[^}]*\}/m.exec(css)?.[0] ?? ''
+    expect(app, 'no .app rule found at all').not.toBe('')
+    expect(app).toMatch(/overflow:\s*clip/)
+
+    // The guard is only meaningful while something still overflows the shell.
+    expect(css).toMatch(/\.app__desk\s*\{[^}]*inset:\s*-\d+px/)
+  })
+
   it('is actually looking at something', () => {
     // A guard on the guard: if the scan silently found nothing, the assertion
     // above would pass forever while checking nothing at all.

@@ -1,7 +1,6 @@
 import { Terminal, type IMarker, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
-import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { FALLBACK_FONT_SIZE, FONT_FAMILY, FONT_SIZE, TERMINAL_APP_PALETTE } from './palette.js'
@@ -10,6 +9,10 @@ import { isLocalHost, parseOsc7 } from './osc7.js'
 import { targetScrollLine } from './find-scroll.js'
 import { anchorAction } from './find-anchor.js'
 import { WheelRamp } from './wheel-ramp.js'
+import { installUnicode } from './unicode.js'
+import { AppScrollbar } from './app-scrollbar.js'
+import { isAppChord, isPrimaryModifier } from '../../shared/keys.js'
+import { platform } from '../platform.js'
 
 /**
  * One xterm.js terminal bound to one PTY.
@@ -103,6 +106,7 @@ export class PaneTerminal {
   private anchorSub: { dispose(): void } | null = null
 
   private readonly ramp = new WheelRamp()
+  private readonly appScroll: AppScrollbar
   private appliedSensitivity = 1
 
   constructor(private readonly opts: PaneTerminalOptions) {
@@ -197,9 +201,7 @@ export class PaneTerminal {
       },
     })
 
-    const unicode11 = new Unicode11Addon()
-    this.term.loadAddon(unicode11)
-    this.term.unicode.activeVersion = '11'
+    installUnicode(this.term)
 
     this.fit = new FitAddon()
     this.term.loadAddon(this.fit)
@@ -257,7 +259,16 @@ export class PaneTerminal {
       return true
     })
 
-    this.term.onData((d) => this.opts.onInput(d))
+    // Claude Code's fullscreen mode and other programs that keep their own
+    // history get SeaShell's scrollbar instead of xterm's empty one.
+    this.appScroll = new AppScrollbar(this.term, this.opts.container)
+    this.term.onWriteParsed(() => this.appScroll.sync())
+    this.term.buffer.onBufferChange(() => this.appScroll.sync())
+
+    this.term.onData((d) => {
+      if (d === '\r') this.appScroll.noteSubmit()
+      this.opts.onInput(d)
+    })
     this.term.onTitleChange((t) => this.opts.onTitle?.(t))
     this.term.onBell(() => this.opts.onBell?.())
     this.term.onResize(({ cols, rows }) => {
@@ -332,9 +343,13 @@ export class PaneTerminal {
         this.opts.onInput('\x1b\r')
         return false
       }
-      // Cmd chords belong to the menu. Note this runs before the flag is
-      // cleared below, so Cmd+A can set it without immediately clearing it.
-      if (ev.metaKey) return false
+      // App chords belong to the menu: every Cmd chord on the Mac, and
+      // Ctrl+Shift / Ctrl+Alt plus the Ctrl zoom keys elsewhere (shared/keys.ts
+      // spells out why). Returning false makes xterm step aside without
+      // preventDefault, so the event goes on to the accelerator. Note this
+      // runs before the flag is cleared below, so Cmd+A can set it without
+      // immediately clearing it.
+      if (isAppChord(ev, platform)) return false
 
       if (ev.type === 'keydown') {
         const kill = shouldKillLine({
@@ -377,6 +392,7 @@ export class PaneTerminal {
    * Revealing never opens anything, so even a wrong guess is inert.
    */
   private handleDoubleClick = (ev: MouseEvent): void => {
+    if (this.appScroll.owns(ev.target)) return
     this.claimDoubleClick(ev)
   }
 
@@ -409,9 +425,13 @@ export class PaneTerminal {
     if (near && now - this.lastClaim.at < 500) return
     this.lastClaim = { x: ev.clientX, y: ev.clientY, at: now }
 
-    // Cmd and Cmd+Opt travel with the gesture: the host reveals either way and
-    // uses them to decide whether to also open the file, and with what.
-    this.opts.onDoubleClick(ev.clientX, ev.clientY, { meta: ev.metaKey, alt: ev.altKey })
+    // The primary modifier (Cmd on the Mac, Ctrl elsewhere) and Alt travel
+    // with the gesture: the host reveals either way and uses them to decide
+    // whether to also open the file, and with what.
+    this.opts.onDoubleClick(ev.clientX, ev.clientY, {
+      meta: isPrimaryModifier(ev, platform),
+      alt: ev.altKey,
+    })
   }
 
   /**
@@ -423,7 +443,7 @@ export class PaneTerminal {
    * this runs before xterm's own bubble-phase mousedown handler.
    */
   private handleMouseDown = (ev: MouseEvent): void => {
-    if (ev.button !== 0 || ev.detail !== 2) return
+    if (ev.button !== 0 || ev.detail !== 2 || this.appScroll.owns(ev.target)) return
 
     // The reliable half of double-click detection. Runs in capture phase on an
     // ancestor of term.element, so it happens before xterm can preventDefault
@@ -771,6 +791,7 @@ export class PaneTerminal {
    */
   private handleWheel = (ev: WheelEvent): void => {
     if (this.disposed) return
+    this.appScroll.noteWheel(ev)
     let mult = this.ramp.feed(ev.deltaY, ev.deltaMode, performance.now())
     if (this.term.buffer.active.type === 'alternate' || this.term.modes.mouseTrackingMode !== 'none') {
       mult = 1
@@ -820,6 +841,7 @@ export class PaneTerminal {
     this.opts.container.removeEventListener('wheel', this.handleWheel, true)
     this.opts.container.removeEventListener('focusout', this.handleFocusOut, true)
     this.applySensitivity(1)
+    this.appScroll.dispose()
     this.disableWebgl()
     this.term.dispose()
   }

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { dropText } from './drop'
+import { k, paneZoomIn, paneZoomOut, z } from '../platform.js'
 import { PaneTerminal } from '../term/terminal.js'
 import { currentXtermTheme } from '../theme/live.js'
 import { pathAtPoint, rowContext } from './pathclick.js'
@@ -204,7 +206,7 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
             reading 100% would be noise, and the number is only interesting as a
             reminder that this one is deliberately out of step. */}
         {props.zoomIndex !== undefined && (
-          <span className="pane__zoom" title="Pane text zoom (⌘+ / ⌘_). ⌘0 resets every pane.">
+          <span className="pane__zoom" title={`Pane text zoom (${paneZoomIn} / ${paneZoomOut}). ${z('0')} resets every pane.`}>
             {zoomPercent(props.zoomIndex)}%
           </span>
         )}
@@ -213,7 +215,7 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
             ~{formatBytes(mem)}
           </span>
         )}
-        <span className="pane__close" onClick={props.onClose} title="Close pane (⌘W)">
+        <span className="pane__close" onClick={props.onClose} title={`Close pane (${k('Cmd+W')})`}>
           ×
         </span>
       </div>
@@ -509,7 +511,31 @@ function TerminalBody(props: PaneViewProps): React.JSX.Element {
         />
       )}
 
-      <div className="pane__term" ref={hostRef} />
+      <div
+        className="pane__term"
+        ref={hostRef}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list') || e.dataTransfer.types.includes('text/plain')) {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          const dt = e.dataTransfer
+          const text = dropText(
+            {
+              paths: Array.from(dt.files).map((f) => window.seashell.files.pathFor(f)),
+              uriList: dt.getData('text/uri-list'),
+              text: dt.getData('text/plain'),
+            },
+            window.seashell.platform,
+          )
+          if (!text) return
+          window.seashell.pty.write({ paneId: pane.id, data: text })
+          terminals.get(pane.id)?.term.focus()
+        }}
+      />
 
       {/* The CRT's rolling refresh band. A real element rather than a third
           pseudo-element because .pane__term already spends both on the

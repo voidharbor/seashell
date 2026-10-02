@@ -1,4 +1,5 @@
 import type { SystemMetrics } from '../../shared/ipc.js'
+import { isMac, k, paneZoomIn, paneZoomOut, z } from '../platform.js'
 import type { TabState } from '../store.js'
 
 export interface StatusBarProps {
@@ -74,7 +75,9 @@ export function StatusBar(props: StatusBarProps): React.JSX.Element {
       {/* ⌘= not ⌘+ for the global pair: ⌘+ cannot be typed without Shift, and
           Shift is what selects the focused pane instead. See app.tsx. */}
       <span className="statusbar__hint">
-        ⌘D pane · ⌘T tab · ⌘=/- zoom · ⌘+/_ pane zoom · ⌘↩ full screen
+        {isMac
+          ? '⌘D pane · ⌘T tab · ⌘=/- zoom · ⌘+/_ pane zoom · ⌘↩ full screen'
+          : `${k('Cmd+D')} pane · ${k('Cmd+T')} tab · ${z('=')}/- zoom · ${paneZoomIn}/- pane zoom · ${k('Cmd+Return')} full screen`}
       </span>
     </div>
   )

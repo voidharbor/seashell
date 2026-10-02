@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { k } from '../platform.js'
 import { PaneTerminal } from '../term/terminal.js'
 import { currentXtermTheme } from '../theme/live.js'
 import { pathAtPoint, rowContext } from '../panes/pathclick.js'
@@ -247,7 +248,7 @@ export function DrawerShell(props: DrawerShellProps): React.JSX.Element {
             cd to pane
           </button>
         )}
-        <button className="btn drawer__close" title="Hide shell (⌘J)" onClick={props.onClose}>
+        <button className="btn drawer__close" title={`Hide shell (${k('Cmd+J')})`} onClick={props.onClose}>
           ✕
         </button>
       </div>

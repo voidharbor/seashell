@@ -1,10 +1,15 @@
-import { app, BrowserWindow, ipcMain, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, net, protocol, shell, type MenuItem } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import fsp from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { CH } from '../shared/ipc.js'
 import { Updater } from './update/updater.js'
 import { buildMenu } from './menu.js'
+import { registerWindowControls, reportMaximized } from './window-controls.js'
+import { windowChrome } from '../shared/window-chrome.js'
+import { wslCursorSize } from '../shared/cursor-size.js'
+import { findMenuItem } from './accelerators.js'
 import { awaitSnapshot, registerIpc } from './ipc-router.js'
 import { PtyManager } from './pty/manager.js'
 import { DirWatcher } from './fs/watcher.js'
@@ -22,6 +27,14 @@ import { screenKindOf } from './control/screen-kind.js'
 if (process.env.SEASHELL_USER_DATA) {
   app.setPath('userData', path.resolve(process.env.SEASHELL_USER_DATA))
 }
+
+/**
+ * Under WSLg the pointer would otherwise be sized from the whole multi-monitor
+ * X screen and come out double size. Set before any window exists, since
+ * Chromium reads it when it loads its first cursor. See cursor-size.ts.
+ */
+const cursorSize = wslCursorSize(process.platform, os.release(), process.env)
+if (cursorSize) process.env.XCURSOR_SIZE = cursorSize
 
 const isDev = !app.isPackaged
 const dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -63,7 +76,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 900,
     minHeight: 560,
-    titleBarStyle: 'hiddenInset',
+    ...windowChrome(process.platform),
     backgroundColor: '#0b0d10',
     show: false,
     webPreferences: {
@@ -133,6 +146,19 @@ function createWindow(): void {
   })
 
   mainWindow.once('ready-to-show', () => mainWindow?.show())
+  reportMaximized(mainWindow)
+
+  // Off the Mac the frameless window never fires a menu accelerator, so match
+  // the menu's own shortcuts here and run the item (accelerators.ts).
+  if (process.platform !== 'darwin') {
+    const win = mainWindow
+    win.webContents.on('before-input-event', (e, input) => {
+      const item = findMenuItem<MenuItem>(Menu.getApplicationMenu(), input)
+      if (!item) return
+      e.preventDefault()
+      item.click(undefined, win, win.webContents)
+    })
+  }
 
   // A terminal prints attacker-influenced text. Nothing in this app should ever
   // open a new window or navigate the renderer away from its own origin.
@@ -268,6 +294,7 @@ app.whenReady().then(() => {
 
   createWindow()
   buildMenu(() => mainWindow)
+  registerWindowControls()
   metrics.start()
 
   /**

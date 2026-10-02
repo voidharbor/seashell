@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { enterLabel, shiftEnterLabel } from '../platform.js'
 import type { FindOptions } from '../term/terminal.js'
 
 export interface FindBarProps {
@@ -150,10 +151,10 @@ export function FindBar(props: FindBarProps): React.JSX.Element {
           .*
         </button>
       )}
-      <button className="btn findbar__btn" title="Previous (⇧⏎)" onClick={() => run('prev')}>
+      <button className="btn findbar__btn" title={`Previous (${shiftEnterLabel})`} onClick={() => run('prev')}>
         ↑
       </button>
-      <button className="btn findbar__btn" title="Next (⏎)" onClick={() => run('next')}>
+      <button className="btn findbar__btn" title={`Next (${enterLabel})`} onClick={() => run('next')}>
         ↓
       </button>
       <button className="btn findbar__btn" title="Close (esc)" onClick={props.onClose}>

@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { dropText } from './panes/drop'
+import { isPrimaryModifier } from '../shared/keys.js'
+import { isMac, k, platform, z } from './platform.js'
 import { computeLayout } from './layout/resize.js'
 import { dfsPaneOrder } from './layout/tree.js'
 import { MAX_PANES_PER_TAB, type RowNode } from './layout/types.js'
@@ -48,7 +51,8 @@ import { stateToTabs, tabToSaved, tabsFromSaved } from './projects/serialize.js'
 import { shouldOfferRestore } from './session/offer.js'
 import { RestoreCard } from './session/RestoreCard.js'
 import { UpdateBanner } from './update/UpdateBanner.js'
-import type { LastSession, Project, UpdateState } from '../shared/ipc.js'
+import { MenuButton, WindowControls } from './chrome/WindowControls.js'
+import { MAX_TERM_PANES, type LastSession, type Project, type UpdateState } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 import { dirtyPreviewPanes } from './viewer/FilePreview.js'
 
@@ -176,6 +180,10 @@ export function App(): React.JSX.Element {
    */
   const autoColorRef = useRef(false)
   autoColorRef.current = settings.autoColorPanes
+  const newPaneCmdRef = useRef('')
+  newPaneCmdRef.current = settings.newPaneCommand
+  const userCommand = (): { commandText?: string } =>
+    newPaneCmdRef.current ? { commandText: newPaneCmdRef.current } : {}
 
 
   /**
@@ -333,6 +341,7 @@ export function App(): React.JSX.Element {
           cwd: paths.home,
           home: paths.home,
           autoColor: autoColorRef.current,
+          ...userCommand(),
         })
       }
       setReady(true)
@@ -374,6 +383,13 @@ export function App(): React.JSX.Element {
     },
     [home]
   )
+
+  /** A pane or tab the user opens runs the New pane command setting, if set. */
+  const userNewPane = useCallback(() => {
+    const c = newPaneCmdRef.current
+    if (c) newPane('cmd', c)
+    else newPane('zsh')
+  }, [newPane])
 
   /**
    * Panes must be killed, not just forgotten — an orphaned agent process is
@@ -442,7 +458,7 @@ export function App(): React.JSX.Element {
    *
    * Shared by the two writers, the named project and the last-session snapshot,
    * because they are the same capture. Two copies of the `kind === 'term'`
-   * filter and the same 64-pane cap is precisely the drift this file argues
+   * filter and the same pane cap is precisely the drift this file argues
    * against everywhere else.
    */
   const collectSessionIds = useCallback(async (): Promise<
@@ -454,7 +470,7 @@ export function App(): React.JSX.Element {
         .map((p) => ({ paneId: p.id, cwd: p.cwd }))
     )
     try {
-      const res = await window.seashell.projects.sessionIds({ panes: livePanes.slice(0, 64) })
+      const res = await window.seashell.projects.sessionIds({ panes: livePanes.slice(0, MAX_TERM_PANES) })
       return new Map(Object.entries(res.ids))
     } catch {
       return undefined // registry unavailable: panes save as plain claude
@@ -611,7 +627,7 @@ export function App(): React.JSX.Element {
     )
     if (needIds.length > 0) {
       try {
-        const res = await window.seashell.projects.sessionIds({ panes: needIds.slice(0, 64) })
+        const res = await window.seashell.projects.sessionIds({ panes: needIds.slice(0, MAX_TERM_PANES) })
         for (const tab of restored) {
           for (const pane of Object.values(tab.panes)) {
             const sid = res.ids[pane.id]
@@ -634,7 +650,7 @@ export function App(): React.JSX.Element {
     )
     if (resuming.length > 0) {
       try {
-        const res = await window.seashell.projects.resumeModes({ panes: resuming.slice(0, 64) })
+        const res = await window.seashell.projects.resumeModes({ panes: resuming.slice(0, MAX_TERM_PANES) })
         for (const tab of restored) {
           for (const pane of Object.values(tab.panes)) {
             const mode = res.modes[pane.id]
@@ -846,7 +862,7 @@ export function App(): React.JSX.Element {
       }
       switch (command) {
         case 'tab.new':
-          dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current })
+          dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current, ...userCommand() })
           break
         case 'tab.close':
           if (activeTab) void closeTab(activeTab.id)
@@ -858,7 +874,7 @@ export function App(): React.JSX.Element {
           dispatch({ type: 'tab.cycle', delta: -1 })
           break
         case 'pane.new':
-          newPane('zsh')
+          userNewPane()
           break
         case 'pane.close':
           if (activeTab?.focusedPaneId) void closePane(activeTab.focusedPaneId)
@@ -975,7 +991,30 @@ export function App(): React.JSX.Element {
           const field = textField()
           const id = field ? null : editTarget()
           if (!field && !id) break
-          void navigator.clipboard.readText().then((text) => {
+          void navigator.clipboard.readText().then(async (text) => {
+            if (!field && id) {
+              // Explorer: Ctrl+C on files leaves no text here, so fetch the files from
+              // Windows; "Copy as path" leaves quoted C:\ paths. Both paste as quoted
+              // /mnt paths. Ordinary text is untouched.
+              const winPaths = /^\s*"?[A-Za-z]:[\\/]/.test(text)
+                ? text.split(/\r?\n/).map((l) => l.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean)
+                : !text
+                  ? await window.seashell.files.windowsClipboard()
+                  : []
+              if (winPaths.length) {
+                const out = dropText({ paths: winPaths }, window.seashell.platform)
+                if (out) terminals.get(id)?.term.paste(out)
+                return
+              }
+              // A screenshot: no text, no files. It goes in as the path of a saved
+              // PNG, which Claude Code turns into an attached image and a shell
+              // keeps as a path.
+              if (!text) {
+                const image = await window.seashell.files.clipboardImage()
+                if (image) terminals.get(id)?.term.paste(dropText({ paths: [image] }, window.seashell.platform))
+                return
+              }
+            }
             if (!text) return
             if (field) {
               // insertText rather than assigning .value: it goes in at the
@@ -1015,7 +1054,7 @@ export function App(): React.JSX.Element {
     })
     return off
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, home, newPane, closePane, closeTab, closeAllPreviews, openFind, stepFind])
+  }, [activeTab, home, newPane, userNewPane, closePane, closeTab, closeAllPreviews, openFind, stepFind])
 
   /**
    * Zoom keys are bound here rather than as menu accelerators.
@@ -1038,10 +1077,13 @@ export function App(): React.JSX.Element {
    * This is safe to do at the document level because xterm's key handler
    * returns false for every Cmd chord except Cmd+A without calling
    * preventDefault, so the event reaches here without ever reaching the PTY.
+   *
+   * Off the Mac the primary modifier is Ctrl (Ctrl+= / Ctrl+- / Ctrl+0), and
+   * the terminal steps aside for exactly those keys too. See shared/keys.ts.
    */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (!e.metaKey || e.ctrlKey || e.altKey) return
+      if (!isPrimaryModifier(e, platform) || e.altKey || (e.metaKey && e.ctrlKey)) return
       // Read through a ref: this listener is bound once, and a stale closure
       // would make every pane zoom step from the level at mount.
       const base = zoomIndexRef.current
@@ -1298,7 +1340,7 @@ export function App(): React.JSX.Element {
           }).then((restored) => {
             // No live panes to reap: this is boot, and the window is empty.
             if (restored.length === 0) {
-              dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current })
+              dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current, ...userCommand() })
               return
             }
             dispatch({ type: 'tabs.replace', tabs: restored })
@@ -1307,7 +1349,7 @@ export function App(): React.JSX.Element {
         onFresh={() => {
           setPendingRestore(null)
           void window.seashell.session.clear()
-          dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current })
+          dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current, ...userCommand() })
         }}
       />
     )
@@ -1347,7 +1389,7 @@ export function App(): React.JSX.Element {
     Object.values(t.panes).some((p) => p.zoomIndex !== undefined)
   )
   return (
-    <div className="app">
+    <div className={'app' + (isMac ? '' : ' app--own-chrome')}>
       {/* The desktop behind the glass. Aero is the only theme that paints it,
           and it is what the translucent chrome above is translucent *against*
           — without it, backdrop-filter has nothing to blur and the frosted
@@ -1356,6 +1398,7 @@ export function App(): React.JSX.Element {
       <div className="app__desk" aria-hidden="true" />
 
       <div className="tabbar">
+        {!isMac && <MenuButton />}
         <div className="tabbar__tabs">
           {state.tabs.map((t) => (
             <div
@@ -1383,7 +1426,7 @@ export function App(): React.JSX.Element {
               )}
               <span
                 className="tab__close"
-                title="Close tab (⌘⇧W)"
+                title={`Close tab (${k('Cmd+Shift+W')})`}
                 onClick={(e) => {
                   e.stopPropagation()
                   void closeTab(t.id)
@@ -1396,24 +1439,24 @@ export function App(): React.JSX.Element {
         </div>
         <div
           className="tabbar__new"
-          title="New tab (⌘T)"
+          title={`New tab (${k('Cmd+T')})`}
           onClick={() =>
-            dispatch({ type: 'tab.new', cwd: home, home, autoColor: settings.autoColorPanes })
+            dispatch({ type: 'tab.new', cwd: home, home, autoColor: settings.autoColorPanes, ...userCommand() })
           }
         >
           +
         </div>
         <div
           className="tabbar__new"
-          title={full ? `Tab is full (${MAX_PANES_PER_TAB} panes)` : 'New pane (⌘D)'}
+          title={full ? `Tab is full (${MAX_PANES_PER_TAB} panes)` : `New pane (${k('Cmd+D')})`}
           style={full ? { opacity: 0.4 } : undefined}
-          onClick={() => !full && newPane('zsh')}
+          onClick={() => !full && userNewPane()}
         >
           ⊞
         </div>
         <div
           className="tabbar__new"
-          title="New web preview (⌘⇧U)"
+          title={`New web preview (${k('Cmd+Shift+U')})`}
           style={full ? { opacity: 0.4 } : undefined}
           onClick={() =>
             !full && dispatch({ type: 'pane.newWeb', url: '', autoColor: settings.autoColorPanes })
@@ -1433,7 +1476,7 @@ export function App(): React.JSX.Element {
         {(zoomIndex !== DEFAULT_ZOOM_INDEX || panesAreZoomed) && (
           <div
             className="tabbar__zoom"
-            title="Overall zoom (⌘= / ⌘-). Click to reset every pane to 100%."
+            title={`Overall zoom (${z('=')} / ${z('-')}). Click to reset every pane to 100%.`}
             onClick={() => {
               setZoomIndex(DEFAULT_ZOOM_INDEX)
               dispatch({ type: 'pane.clearTextZoom' })
@@ -1464,11 +1507,14 @@ export function App(): React.JSX.Element {
 
         <div
           className="tabbar__new"
-          title="Settings (⌘,)"
+          title={`Settings (${k('Cmd+,')})`}
           onClick={() => setSettingsOpen(true)}
         >
           ⚙
         </div>
+
+        {/* Off macOS the bar is the title bar, and these are its buttons. */}
+        {!isMac && <WindowControls />}
       </div>
 
       <div className="body">
@@ -1620,10 +1666,10 @@ export function App(): React.JSX.Element {
               <button
                 className="btn"
                 onClick={() =>
-                  dispatch({ type: 'tab.new', cwd: home, home, autoColor: settings.autoColorPanes })
+                  dispatch({ type: 'tab.new', cwd: home, home, autoColor: settings.autoColorPanes, ...userCommand() })
                 }
               >
-                New Tab (⌘T)
+                New Tab ({k('Cmd+T')})
               </button>
             </div>
           )}

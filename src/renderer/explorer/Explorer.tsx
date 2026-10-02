@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { k } from '../platform.js'
 import type { FsDirEntry } from '../../shared/ipc.js'
 import type { RevealTarget } from '../store.js'
 import { expandChain } from './chain.js'
@@ -367,7 +368,7 @@ export function Explorer(props: ExplorerProps): React.JSX.Element {
             named the folder and looked like a breadcrumb that had lost the
             rest of itself. */}
         <span title={displayRoot(root, props.home)}>File Browser</span>
-        <span className="sidebar__refresh" title="Refresh (⌘R)" onClick={refresh}>
+        <span className="sidebar__refresh" title={`Refresh (${k('Cmd+R')})`} onClick={refresh}>
           ⟳
         </span>
       </div>

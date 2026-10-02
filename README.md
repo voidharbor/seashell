@@ -221,6 +221,31 @@ so no theme can resize your interface.
 
 Press ⌘/ for a short tutorial of the parts that aren't guessable.
 
+**Keys on Linux, and on Windows through WSLg.** There, Cmd is the Windows key and Windows keeps
+those chords for itself (Win+D shows the desktop), so every binding is respelled by one rule and
+the letter never changes: ⌘X is Ctrl+Shift+X, ⌘⇧X is Ctrl+Alt+X, ⌘⌥W is Ctrl+Alt+Shift+W,
+zoom is Ctrl+= / Ctrl+- / Ctrl+0, and Settings is Ctrl+,. Bare Ctrl+letter is never used, because
+the shell owns those. The menu and the tutorial show the spelling for the machine you are on.
+
+**The window on Linux, and on Windows through WSLg.** SeaShell draws its own frame there: no
+title bar from the desktop, the tab bar is the title bar (drag it to move the window), and the
+three Windows-style buttons sit at its right-hand end. The menu strip is hidden; press Alt to show
+it, or click ≡ at the left of the tab bar. Emoji and the symbols Claude Code draws (the ⎿ tree
+lines) come from the system's fonts, so install `fonts-noto-color-emoji` and `fonts-symbola`
+(Debian/Ubuntu) or a missing one renders as a box with a slash through it.
+
+**Pasting on Linux and WSL.** Ctrl+Shift+V pastes text, files copied in Windows Explorer (as
+quoted `/mnt/c/...` paths) and screenshots: an image on the clipboard is saved as a PNG and its
+path is pasted, which Claude Code turns into an attached image. Ctrl+V still goes to the program,
+so it stays Claude Code's own image paste. Dragging files in from Windows Explorer does not work
+under WSLg, which does not pass drags from Windows to Linux windows; copy and paste them instead.
+
+**Programs that keep their own history.** Claude Code's fullscreen mode, like anything else on
+the alternate screen with the mouse on, has no scrollback for the terminal to show. SeaShell draws
+a scrollbar for those panes that works by sending the program wheel scrolls: drag the thumb, or
+click above or below it to page. The program never reports where it is, so the thumb is an
+estimate.
+
 ## Design
 
 The full design specification lives in

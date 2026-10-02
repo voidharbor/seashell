@@ -2,7 +2,14 @@ import { app, type BrowserWindow } from 'electron'
 import fs from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
 import * as pty from 'node-pty'
-import { CH, type PtySpawnRequest, type PtySpawnResponse, type PtyKillResponse } from '../../shared/ipc.js'
+import {
+  CH,
+  DRAWER_PTY_PREFIX,
+  MAX_TERM_PANES,
+  type PtySpawnRequest,
+  type PtySpawnResponse,
+  type PtyKillResponse,
+} from '../../shared/ipc.js'
 import { buildEnv } from './env.js'
 import { PtyBatcher, ACTIVE_FLUSH_INTERVAL_MS } from './batcher.js'
 import { platform } from '../platform/index.js'
@@ -43,8 +50,6 @@ interface PaneProc {
 /** Enough to hold several full ink repaints of claude's input area or a
  *  selector; anything older than that cannot be the current screen. */
 const TAIL_MAX_CHARS = 8192
-
-const MAX_PANES = 24
 
 export class PtyManager {
   private panes = new Map<string, PaneProc>()
@@ -102,9 +107,15 @@ export class PtyManager {
       return { ok: false, code: 'ELIMIT', message: 'pane already has a pty' }
     }
 
-    const liveCount = [...this.panes.values()].filter((p) => !p.exited).length
-    if (liveCount >= MAX_PANES) {
-      return { ok: false, code: 'ELIMIT', message: `at most ${MAX_PANES} panes` }
+    // Panes and drawers are budgeted separately, so an open drawer never costs
+    // a pane its shell.
+    const isDrawer = req.paneId.startsWith(DRAWER_PTY_PREFIX)
+    const liveCount = [...this.panes.values()].filter(
+      (p) => !p.exited && p.paneId.startsWith(DRAWER_PTY_PREFIX) === isDrawer
+    ).length
+    if (liveCount >= MAX_TERM_PANES) {
+      const what = isDrawer ? 'drawer shells' : 'panes'
+      return { ok: false, code: 'ELIMIT', message: `at most ${MAX_TERM_PANES} ${what}` }
     }
 
     // Restart: drop the dead record so the pane id is free to be re-spawned.

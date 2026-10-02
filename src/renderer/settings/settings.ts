@@ -39,6 +39,12 @@ export interface Settings {
   /** Give every new pane a colour tag automatically, preferring one the tab is
    *  not already using. Renaming or recolouring by hand always wins. */
   autoColorPanes: boolean
+  /**
+   * What a new pane or tab runs, typed into its shell once the prompt settles
+   * (e.g. `claude` or `codex`). Empty means a plain shell. Restored sessions
+   * and projects keep whatever they were saved with.
+   */
+  newPaneCommand: string
 
   // --- Appearance. All keys, never literal colours, so a future palette
   // revision re-resolves instead of stranding a stored hex. ---
@@ -59,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
   attentionSound: false,
   autoTitlePanes: true,
   autoColorPanes: true,
+  newPaneCommand: '',
   theme: 'nautical',
   paneStyle: 'theme',
   palette: 'native',
@@ -122,6 +129,13 @@ export function coerceSettings(value: unknown): Settings {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(out as any)[key] = v
     }
+  }
+
+  // One line of shell input, typed with a trailing Enter: a stored newline or
+  // control byte would run something other than what the field shows.
+  const cmd = raw['newPaneCommand']
+  if (typeof cmd === 'string' && cmd.length <= 200 && !/[\x00-\x1f\x7f]/.test(cmd)) {
+    out.newPaneCommand = cmd.trim()
   }
 
   // Accent is nullable, and only ever one of the fixed keys.

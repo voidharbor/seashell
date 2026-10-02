@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { k } from '../platform.js'
 import type { Settings } from './settings.js'
 import {
   ACCENTS,
@@ -228,12 +229,34 @@ export function SettingsPanel(props: SettingsPanelProps): React.JSX.Element {
         ))}
 
         <div className="set__group">
+          <div className="set__heading">New panes</div>
+          <label className="set__row">
+            <span className="set__text">
+              <span className="set__name">Start new panes with</span>
+              <span className="set__detail">
+                A command typed into each new pane or tab once its shell is ready, e.g. claude. Leave empty for a
+                plain shell. Exiting the command drops back to that shell.
+              </span>
+            </span>
+            <input
+              className="set__input"
+              type="text"
+              spellCheck={false}
+              placeholder="plain shell"
+              maxLength={200}
+              value={props.settings.newPaneCommand}
+              onChange={(e) => set('newPaneCommand', e.target.value.replace(/[\x00-\x1f\x7f]/g, ''))}
+            />
+          </label>
+        </div>
+
+        <div className="set__group">
           <div className="set__heading">Help</div>
           <div className="set__row">
             <span className="set__text">
               <span className="set__name">Tutorial</span>
               <span className="set__detail">
-                A short tour of the parts that are not obvious. Also on Help ▸ Show Tutorial (⌘/).
+                A short tour of the parts that are not obvious. Also on Help ▸ Show Tutorial ({k('Cmd+/')}).
               </span>
             </span>
             <button className="btn" onClick={props.onShowTutorial}>

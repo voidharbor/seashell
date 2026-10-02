@@ -9,7 +9,7 @@
  * No function here takes a channel name as an argument. That is the property
  * that makes the surface enumerable.
  */
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import {
   CH,
   type AppPaths,
@@ -57,6 +57,7 @@ import {
   type UiCommandEvent,
   type UpdateState,
   type WatchDirRequest,
+  type WindowMaximizedEvent,
 } from '../shared/ipc.js'
 
 /**
@@ -72,6 +73,19 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api: SeashellApi = {
+  platform: process.platform,
+  files: {
+    // Electron 32+ removed File.path; this is the supported way to get a dropped file's path.
+    pathFor: (file: File): string => {
+      try {
+        return webUtils.getPathForFile(file)
+      } catch {
+        return ''
+      }
+    },
+    windowsClipboard: (): Promise<string[]> => ipcRenderer.invoke(CH.clipboardWindowsFiles),
+    clipboardImage: (): Promise<string> => ipcRenderer.invoke(CH.clipboardImage),
+  },
   pty: {
     spawn: (req: PtySpawnRequest): Promise<PtySpawnResponse> =>
       ipcRenderer.invoke(CH.ptySpawn, req),
@@ -146,6 +160,15 @@ const api: SeashellApi = {
     onState: (cb: (s: UpdateState) => void) => subscribe<UpdateState>(CH.updateState, cb),
     download: (): void => ipcRenderer.send(CH.updateDownload),
     install: (): void => ipcRenderer.send(CH.updateInstall),
+  },
+  window: {
+    minimize: (): void => ipcRenderer.send(CH.windowMinimize),
+    toggleMaximize: (): void => ipcRenderer.send(CH.windowToggleMaximize),
+    close: (): void => ipcRenderer.send(CH.windowClose),
+    isMaximized: (): Promise<boolean> => ipcRenderer.invoke(CH.windowIsMaximized),
+    onMaximized: (cb: (e: WindowMaximizedEvent) => void) =>
+      subscribe<WindowMaximizedEvent>(CH.windowMaximized, cb),
+    menu: (): void => ipcRenderer.send(CH.windowMenu),
   },
 }
 
