@@ -2,6 +2,7 @@
 #include "app.h"
 #include "hostapi.h"
 #include "paths.h"
+#include "width.h"
 #include "window.h"
 #include <ws2tcpip.h>
 #include <bcrypt.h>
@@ -353,9 +354,15 @@ json Driver::execute(const json& req) {
   if (cmd == "stats") return stats();
   if (cmd == "coreKill") return coreKill();
   if (cmd == "grid") return grid(strArg(req, "paneId"));
-  // width arrives with libvterm's driver hook, drag and click by point with
-  // the hit rects (Task 15).
-  if (cmd == "width" || cmd == "drag") return fail("ENOTYET");
+  if (cmd == "width") {
+    // libvterm's cluster widths with the shell's hooks, as width-test prints them.
+    if (!req.contains("strings") || !req["strings"].is_array()) return fail("ENOSTRINGS");
+    json widths = json::array();
+    for (const json& s : req["strings"]) widths.push_back(s.is_string() ? seashell_cluster_widths(s.get<std::string>()) : std::vector<int>());
+    return { { "ok", true }, { "widths", widths } };
+  }
+  // drag and click by point arrive with the hit rects (Task 15).
+  if (cmd == "drag") return fail("ENOTYET");
   return fail("EUNKNOWN");
 }
 
