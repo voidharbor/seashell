@@ -35,6 +35,8 @@ private:
   std::shared_ptr<Run> run_;            // the live run; its threads hold their own reference
   mutable std::mutex mu_;               // guards run_
   std::wstring cmd_;
+  std::wstring stagedDir_;              // staged once per shell process; relaunches reuse it
+  std::string stagedHow_;               // "staged" (copied) or "current" (already there)
   std::atomic<bool> expected_{ false };
   LPARAM gen_ = 0;
   ULONGLONG started_ = 0;

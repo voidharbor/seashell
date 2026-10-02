@@ -4,6 +4,8 @@
 #include "window.h"
 #include "version.h"
 #include <shlobj.h>
+#include <algorithm>
+#include <cstring>
 #include <condition_variable>
 #include <deque>
 #include <thread>
@@ -54,6 +56,138 @@ const size_t kMaxQueuedLineBytes = 16u << 20;
 // What send() queues for a core that is not reading its stdin before it drops.
 const size_t kMaxOutboxBytes = 16u << 20;
 std::atomic<size_t> g_queuedLineBytes{ 0 };
+
+// CreateProcessW with CREATE_NO_WINDOW that inherits exactly the three stdio
+// handles given, nothing else the shell holds open.
+bool spawnHidden(const std::wstring& exe, const std::wstring& cmd, HANDLE in, HANDLE out, HANDLE err,
+                 PROCESS_INFORMATION& pi, DWORD& lastError) {
+  // The handle list refuses a duplicate (ERROR_INVALID_PARAMETER), and stdout
+  // and stderr may be one handle.
+  HANDLE inherit[3] = { in, out, err };
+  DWORD count = 0;
+  for (HANDLE h : { in, out, err })
+    if (std::find(inherit, inherit + count, h) == inherit + count) inherit[count++] = h;
+  SIZE_T attrSize = 0;
+  InitializeProcThreadAttributeList(nullptr, 1, 0, &attrSize);
+  std::vector<char> attrBuf(attrSize);
+  auto* attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attrBuf.data());
+  bool attrsOk = InitializeProcThreadAttributeList(attrs, 1, 0, &attrSize) &&
+                 UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, count * sizeof(HANDLE), nullptr, nullptr);
+  STARTUPINFOEXW si{};
+  si.StartupInfo.cb = sizeof si;
+  si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+  si.StartupInfo.hStdInput = in;
+  si.StartupInfo.hStdOutput = out;
+  si.StartupInfo.hStdError = err;
+  si.lpAttributeList = attrsOk ? attrs : nullptr;
+  pi = PROCESS_INFORMATION{};
+  std::wstring cmdBuf = cmd;
+  BOOL ok = CreateProcessW(exe.c_str(), cmdBuf.data(), nullptr, nullptr, TRUE,
+                           CREATE_NO_WINDOW | (attrsOk ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr, nullptr,
+                           &si.StartupInfo, &pi);
+  lastError = GetLastError();
+  if (attrsOk) DeleteProcThreadAttributeList(attrs);
+  return ok != FALSE;
+}
+
+std::wstring wslExe() {
+  wchar_t sysDir[MAX_PATH] = {};
+  GetSystemDirectoryW(sysDir, MAX_PATH);
+  return std::wstring(sysDir) + L"\\wsl.exe";
+}
+
+std::wstring joinArgs(const std::vector<std::wstring>& args) {
+  std::wstring cmd;
+  for (const auto& a : args) { if (!cmd.empty()) cmd += L' '; cmd += quoteArg(a); }
+  return cmd;
+}
+
+// The directory holding SeaShell.exe.
+std::wstring exeDir() {
+  std::wstring p(32768, L'\0');
+  DWORD n = GetModuleFileNameW(nullptr, p.data(), (DWORD)p.size());
+  p.resize(n);
+  size_t slash = p.find_last_of(L"\\/");
+  return slash == std::wstring::npos ? L"." : p.substr(0, slash);
+}
+
+const DWORD kStageTimeoutMs = 60000;
+
+// Spec 4.5: copy resources\core into ~/.cache/seashell-win/core/<version> with
+// stage-core.sh (a no-op when VERSION and BUILD already match) and return the
+// staged directory it prints, Linux form. "" on any failure, logged.
+std::wstring stageCore(std::string& how) {
+  std::wstring res = exeDir() + L"\\resources";
+  for (const wchar_t* f : { L"\\stage-core.sh", L"\\core\\index.cjs" }) {
+    if (GetFileAttributesW((res + f).c_str()) == INVALID_FILE_ATTRIBUTES) {
+      App::log("error: core staging: %s is missing and SEASHELL_CORE_DIR is not set; the core was not started",
+               toUtf8(res + f).c_str());
+      return L"";
+    }
+  }
+  std::wstring wsl = wslExe();
+  std::wstring cmd = joinArgs({ wsl, L"-d", kDistro, L"-e", L"sh", fromUtf8(toLinuxPath(res + L"\\stage-core.sh")),
+                                fromUtf8(toLinuxPath(res + L"\\core")), fromUtf8(SEASHELL_VERSION_STR) });
+  SECURITY_ATTRIBUTES sa{ sizeof sa, nullptr, TRUE };
+  HANDLE outR = nullptr, outW = nullptr;
+  if (!CreatePipe(&outR, &outW, &sa, 64 * 1024)) {
+    App::log("error: core staging: CreatePipe %lu", GetLastError());
+    return L"";
+  }
+  SetHandleInformation(outR, HANDLE_FLAG_INHERIT, 0);
+  HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+  PROCESS_INFORMATION pi{};
+  DWORD err = 0;
+  bool ok = spawnHidden(wsl, cmd, nul, outW, outW, pi, err);
+  closeH(outW); closeH(nul);
+  if (!ok) {
+    App::log("error: core staging: CreateProcess wsl.exe %lu: %s", err, toUtf8(cmd).c_str());
+    closeH(outR);
+    return L"";
+  }
+  CloseHandle(pi.hThread);
+  // Read as it comes (never blocks: only what PeekNamedPipe says is there),
+  // until the process ends or the timeout.
+  std::string out;
+  ULONGLONG end = GetTickCount64() + kStageTimeoutMs;
+  bool exited = false;
+  for (;;) {
+    DWORD avail = 0;
+    while (PeekNamedPipe(outR, nullptr, 0, nullptr, &avail, nullptr) && avail > 0) {
+      char buf[4096];
+      DWORD got = 0;
+      if (!ReadFile(outR, buf, std::min<DWORD>(avail, sizeof buf), &got, nullptr) || got == 0) break;
+      out.append(buf, got);
+    }
+    if (exited) break;
+    if (WaitForSingleObject(pi.hProcess, 50) == WAIT_OBJECT_0) { exited = true; continue; }   // one last read
+    if (GetTickCount64() >= end) break;
+  }
+  DWORD code = 1;
+  if (!exited) {
+    App::log("error: core staging did not finish in %lu ms; ending it: %s", kStageTimeoutMs, toUtf8(cmd).c_str());
+    TerminateProcess(pi.hProcess, 1);
+  } else {
+    GetExitCodeProcess(pi.hProcess, &code);
+  }
+  CloseHandle(pi.hProcess);
+  closeH(outR);
+  while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+  for (char& c : out) if (c == '\r' || c == '\n') c = ' ';
+  App::log("core staging exit %lu: %s", code, out.c_str());
+  if (!exited || code != 0) return L"";
+  // The last line is "staged <dst>" or "current <dst>".
+  std::string last = out;
+  for (const char* tag : { "staged ", "current " }) {
+    size_t at = last.rfind(tag);
+    if (at != std::string::npos && (at == 0 || last[at - 1] == ' ')) {
+      std::string dst = last.substr(at + strlen(tag));
+      if (!dst.empty() && dst[0] == '/') { how = std::string(tag, strlen(tag) - 1); return fromUtf8(dst); }
+    }
+  }
+  App::log("error: core staging printed no staged directory");
+  return L"";
+}
 
 bool postLine(std::string* line) {
   size_t n = line->size();
@@ -108,14 +242,18 @@ DWORD CoreProc::pid() const {
 }
 
 bool CoreProc::start() {
-  // Task 17 stages the bundle under ~/.cache/seashell-win/core/<version>; until
-  // then a dev run names the bundle directory itself.
+  // A dev run names the bundle directory itself; otherwise the release layout's
+  // resources\core is staged into the distro once per shell process (spec 4.5).
   std::wstring coreDir = envW(L"SEASHELL_CORE_DIR");
+  std::string how = "SEASHELL_CORE_DIR";
   if (coreDir.empty()) {
-    App::log("error: SEASHELL_CORE_DIR is not set and core staging does not exist yet; the core was not started");
-    return false;
+    if (stagedDir_.empty()) stagedDir_ = stageCore(stagedHow_);
+    if (stagedDir_.empty()) return false;
+    coreDir = stagedDir_;
+    how = stagedHow_;
   }
   while (coreDir.size() > 1 && coreDir.back() == L'/') coreDir.pop_back();
+  App::log("core dir %s (%s)", toUtf8(coreDir).c_str(), how.c_str());
 
   std::wstring userData = userDataWin();
   SHCreateDirectoryExW(nullptr, userData.c_str(), nullptr);   // fine when it exists
@@ -137,9 +275,7 @@ bool CoreProc::start() {
     errH = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
   }
 
-  wchar_t sysDir[MAX_PATH] = {};
-  GetSystemDirectoryW(sysDir, MAX_PATH);
-  std::wstring wsl = std::wstring(sysDir) + L"\\wsl.exe";
+  std::wstring wsl = wslExe();
   std::vector<std::wstring> args = {
     wsl, L"-d", kDistro, L"--cd", L"~", L"-e", L"env",
     L"SEASHELL_HOST=native-win",
@@ -152,31 +288,11 @@ bool CoreProc::start() {
   if (!cdp.empty()) args.push_back(L"SEASHELL_CDP_PORT=" + cdp);
   args.push_back(L"/usr/bin/node");
   args.push_back(coreDir + L"/index.cjs");
-  std::wstring cmd;
-  for (const auto& a : args) { if (!cmd.empty()) cmd += L' '; cmd += quoteArg(a); }
+  std::wstring cmd = joinArgs(args);
 
-  // Inherit exactly the three stdio handles, nothing else the shell holds open.
-  HANDLE inherit[3] = { inR, outW, errH };
-  SIZE_T attrSize = 0;
-  InitializeProcThreadAttributeList(nullptr, 1, 0, &attrSize);
-  std::vector<char> attrBuf(attrSize);
-  auto* attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attrBuf.data());
-  bool attrsOk = InitializeProcThreadAttributeList(attrs, 1, 0, &attrSize) &&
-                 UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof inherit, nullptr, nullptr);
-  STARTUPINFOEXW si{};
-  si.StartupInfo.cb = sizeof si;
-  si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-  si.StartupInfo.hStdInput = inR;
-  si.StartupInfo.hStdOutput = outW;
-  si.StartupInfo.hStdError = errH;
-  si.lpAttributeList = attrsOk ? attrs : nullptr;
   PROCESS_INFORMATION pi{};
-  std::wstring cmdBuf = cmd;
-  BOOL ok = CreateProcessW(wsl.c_str(), cmdBuf.data(), nullptr, nullptr, TRUE,
-                           CREATE_NO_WINDOW | (attrsOk ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr, nullptr,
-                           &si.StartupInfo, &pi);
-  DWORD err = GetLastError();
-  if (attrsOk) DeleteProcThreadAttributeList(attrs);
+  DWORD err = 0;
+  bool ok = spawnHidden(wsl, cmd, inR, outW, errH, pi, err);
   closeH(inR); closeH(outW); closeH(errH);
   cmd_ = cmd;
   if (!ok) {
