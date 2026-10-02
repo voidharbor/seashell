@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.25)
+project(seashell_bakeoff_webview2 CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(unofficial-webview2 CONFIG REQUIRED)
+find_package(wil CONFIG REQUIRED)
+add_executable(bakeoff-webview2 WIN32 main.cpp)
+target_link_libraries(bakeoff-webview2 PRIVATE unofficial::webview2::webview2 WIL::WIL)
+target_compile_definitions(bakeoff-webview2 PRIVATE UNICODE _UNICODE NOMINMAX)

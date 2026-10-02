@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><title>bakeoff</title>
+<link rel="stylesheet" href="xterm.css">
+<style>body{margin:0;background:#000;display:grid;grid-template-columns:repeat(5,1fr);grid-template-rows:repeat(2,1fr);height:100vh;overflow:hidden}.t{border:1px solid #1c2c1c;overflow:hidden;min-width:0;min-height:0}</style>
+</head><body>
+<script src="xterm.js"></script><script src="addon-webgl.js"></script>
+<script>
+// xterm.js 6.0 UMD spreads its exports onto globalThis (Terminal); addon-webgl
+// 0.19 UMD sets globalThis.WebglAddon to the module, so the class is WebglAddon.WebglAddon.
+const terms = []
+const webgl = []
+for (let i = 0; i < 10; i++) {
+  const el = document.createElement('div'); el.className = 't'; document.body.appendChild(el)
+  const t = new Terminal({ cols: 120, rows: 40, scrollback: 20000, fontFamily: 'Consolas', fontSize: 13, theme: { background: '#000000', foreground: '#28fe14' } })
+  t.open(el)
+  try { t.loadAddon(new WebglAddon.WebglAddon()); webgl.push(true) } catch (e) { webgl.push(false) }
+  if (i > 0) t.write('zsh idle pane ' + i + '\r\n% ')
+  terms.push(t)
+}
+const b64d = (s) => { const bin = atob(s); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u }
+window.chrome.webview.addEventListener('message', (e) => { const m = e.data; if (m && m.ch === 'data') terms[0].write(b64d(m.p)) })
+terms[0].onData((d) => window.chrome.webview.postMessage(d))
+terms[0].focus()
+window.__bakeoffTerms = terms
+window.__bakeoffWebgl = webgl
+// Text of terminal 0, so the run script can wait for the live zsh prompt.
+window.__bakeoffText0 = () => { const b = terms[0].buffer.active; const out = []; for (let i = 0; i < b.length; i++) out.push(b.getLine(i).translateToString(true)); return out.join('\n').trim() }
+</script></body></html>
