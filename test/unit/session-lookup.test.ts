@@ -29,7 +29,7 @@ describe('pickFallbackSessionIds', () => {
     expect(out).toEqual({})
   })
 
-  it('never hands the same session to two panes sharing a cwd', () => {
+  it('refuses to guess for two panes sharing a cwd, either could own either session', () => {
     const out = pickFallbackSessionIds(
       [
         { paneId: 'p1', cwd: '/w' },
@@ -38,7 +38,7 @@ describe('pickFallbackSessionIds', () => {
       {},
       lister({ '/w': [{ sid: A, mtimeMs: 10 }, { sid: B, mtimeMs: 90 }] })
     )
-    expect(out).toEqual({ p1: B, p2: A })
+    expect(out).toEqual({})
   })
 
   it('never reuses a session the registry already claimed', () => {
@@ -55,14 +55,12 @@ describe('pickFallbackSessionIds', () => {
 
   it('runs dry rather than guessing when a cwd has no transcripts left', () => {
     const out = pickFallbackSessionIds(
-      [
-        { paneId: 'p1', cwd: '/w' },
-        { paneId: 'p2', cwd: '/w' },
-      ],
+      [{ paneId: 'p1', cwd: '/w' }],
       {},
-      lister({ '/w': [{ sid: A, mtimeMs: 10 }] })
+      lister({ '/w': [{ sid: A, mtimeMs: 10 }] }),
+      new Set([A])
     )
-    expect(out).toEqual({ p1: A })
+    expect(out).toEqual({})
   })
 
   it('drops ids that are not UUID-shaped, same as every other boundary', () => {

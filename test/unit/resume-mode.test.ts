@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseLastPermissionMode } from '../../src/main/state/resume-mode.js'
+import { bypassConsentFrom, parseLastPermissionMode } from '../../src/main/state/resume-mode.js'
 
 const line = (obj: unknown) => JSON.stringify(obj)
 
@@ -41,5 +41,30 @@ describe('parseLastPermissionMode', () => {
 
   it('returns null for a transcript that never mentions a mode', () => {
     expect(parseLastPermissionMode([line({ type: 'user', message: {} })])).toBeNull()
+  })
+})
+
+describe('bypassConsentFrom', () => {
+  it('is true once the user has accepted claude\'s own bypass warning', () => {
+    expect(bypassConsentFrom({ skipDangerousModePermissionPrompt: true, permissions: { defaultMode: 'dontAsk' } })).toBe(true)
+  })
+
+  it('is false when they never have', () => {
+    expect(bypassConsentFrom({ permissions: { defaultMode: 'dontAsk' } })).toBe(false)
+    expect(bypassConsentFrom(null)).toBe(false)
+    expect(bypassConsentFrom({ skipDangerousModePermissionPrompt: 'yes' })).toBe(false)
+  })
+
+  it('is false when bypass mode is disabled by settings, whatever else is set', () => {
+    expect(
+      bypassConsentFrom({ skipDangerousModePermissionPrompt: true, permissions: { disableBypassPermissionsMode: 'disable' } })
+    ).toBe(false)
+  })
+})
+
+describe('default is a mode too', () => {
+  it('a session that left plan for default is not read back as plan', () => {
+    const lines = [line({ permissionMode: 'plan' }), line({ permissionMode: 'default' })]
+    expect(parseLastPermissionMode(lines)).toBe('default')
   })
 })

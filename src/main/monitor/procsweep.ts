@@ -23,6 +23,26 @@ export async function psSweepMemory(): Promise<string> {
   }
 }
 
+/**
+ * `ps -o pid=,lstart=` for the given pids, under the same LC_ALL=C TZ=UTC
+ * claude uses when it records `procStart` on macOS, so the strings compare
+ * equal. Parsed by `parsePsLstart` in state/session-lookup.ts.
+ */
+export async function psStartTimes(pids: number[]): Promise<string> {
+  const list = pids.filter((p) => Number.isInteger(p) && p > 0)
+  if (list.length === 0) return ''
+  try {
+    const { stdout } = await run('/bin/ps', ['-o', 'pid=,lstart=', '-p', list.join(',')], {
+      env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
+      maxBuffer: 1024 * 1024,
+    })
+    return stdout
+  } catch (err) {
+    // ps exits 1 when any listed pid is gone but still prints the live ones.
+    return (err as { stdout?: string }).stdout ?? ''
+  }
+}
+
 /** One row of the wider sweep used by the kill ladder. */
 export interface KillRow {
   pid: number

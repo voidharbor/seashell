@@ -75,6 +75,15 @@ export interface Platform {
   /** The wider sweep the kill ladder walks. */
   sweepForKill(): Promise<KillRow[]>
 
+  /**
+   * The start time of each live pid, spelled exactly the way claude records it
+   * as `procStart` in ~/.claude/sessions/<pid>.json, so a pid file can be
+   * proven to belong to the process that holds that pid now. Dead pids are
+   * absent. A platform that cannot spell it returns an empty map, which turns
+   * the process lane of session lookup off rather than letting it guess.
+   */
+  processStartTokens(pids: number[]): Promise<Map<number, string>>
+
   /** Ends a pane and everything it started. */
   killPaneTree(req: KillRequest): Promise<KillResult>
 

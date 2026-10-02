@@ -74,6 +74,25 @@ export const DENY_EXTENSIONS: ReadonlySet<string> = new Set([
   '.osax',
   '.kext',
   '.appex',
+  // Windows programs and launchers. Under WSL a Windows drive is mounted with
+  // every file reporting the exec bit, and binfmt interop can run these, so
+  // they are denied by type rather than trusted to a mode bit.
+  '.exe',
+  '.bat',
+  '.cmd',
+  '.com',
+  '.msi',
+  '.ps1',
+  '.vbs',
+  '.vbe',
+  '.hta',
+  '.wsf',
+  '.scr',
+  '.lnk',
+  '.reg',
+  '.cpl',
+  '.msc',
+  '.pif',
 ])
 
 /** The in-app viewer's extension list (spec §8.6 "Viewer" row). Shared with
@@ -224,6 +243,32 @@ export const DOCUMENT_EXTENSIONS: ReadonlySet<string> = new Set([
   '.zip',
   '.tar',
   '.gz',
+  // Everyday data formats. On a WSL Windows drive every file carries the exec
+  // bit, so without these an ordinary .doc or .webp was refused as executable.
+  '.doc',
+  '.xls',
+  '.ppt',
+  '.odt',
+  '.ods',
+  '.odp',
+  '.rtf',
+  '.webp',
+  '.bmp',
+  '.ico',
+  '.tif',
+  '.tiff',
+  '.wav',
+  '.flac',
+  '.ogg',
+  '.aac',
+  '.mkv',
+  '.webm',
+  '.avi',
+  '.7z',
+  '.rar',
+  '.eml',
+  '.msg',
+  '.dwg',
 ])
 
 /** True when `resolvedPath` is `/dev` or lives under it — device nodes that

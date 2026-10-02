@@ -47,7 +47,14 @@ import { Tutorial, hasSeenTutorial } from './tutorial/Tutorial.js'
 import { playAttentionPing, unlockAudio } from './panes/ping.js'
 import { SettingsPanel } from './settings/SettingsPanel.js'
 import { ProjectsPanel, type SaveScope } from './projects/ProjectsPanel.js'
-import { stateToTabs, tabToSaved, tabsFromSaved } from './projects/serialize.js'
+import {
+  applyLaunchModes,
+  applyRestoreIds,
+  planRestore,
+  savedCommandFor,
+  stateToTabs,
+  tabToSaved,
+} from './projects/serialize.js'
 import { shouldOfferRestore } from './session/offer.js'
 import { RestoreCard } from './session/RestoreCard.js'
 import { UpdateBanner } from './update/UpdateBanner.js'
@@ -460,20 +467,38 @@ export function App(): React.JSX.Element {
    * because they are the same capture. Two copies of the `kind === 'term'`
    * filter and the same pane cap is precisely the drift this file argues
    * against everywhere else.
+   *
+   * Each pane sends the id it already has, so a pane main cannot resolve right
+   * now keeps it instead of losing it to a guess, and whatever main proves from
+   * the live process is written back into the pane for the next save to carry.
+   * `running` is the panes main saw a live claude in, which is how a pane
+   * saves as claude even where the monitor never reported its foreground.
    */
   const collectSessionIds = useCallback(async (): Promise<
-    ReadonlyMap<string, string> | undefined
+    { ids: ReadonlyMap<string, string>; running: ReadonlySet<string> } | undefined
   > => {
     const livePanes = state.tabs.flatMap((t) =>
       Object.values(t.panes)
         .filter((p) => p.kind === 'term')
-        .map((p) => ({ paneId: p.id, cwd: p.cwd }))
+        .map((p) => ({
+          paneId: p.id,
+          cwd: p.cwd,
+          ...(p.claudeSessionId ? { knownSid: p.claudeSessionId, knownVerified: true } : {}),
+          claude: savedCommandFor(p) === 'claude',
+        }))
     )
     try {
       const res = await window.seashell.projects.sessionIds({ panes: livePanes.slice(0, MAX_TERM_PANES) })
-      return new Map(Object.entries(res.ids))
+      const proven = Object.entries(res.ids).filter(
+        ([id]) => res.sources[id] === 'process' || res.sources[id] === 'registry'
+      )
+      if (proven.length > 0) dispatch({ type: 'panes.sessionIds', ids: Object.fromEntries(proven) })
+      return {
+        ids: new Map(Object.entries(res.ids)),
+        running: new Set(Object.keys(res.sources).filter((id) => res.sources[id] === 'process')),
+      }
     } catch {
-      return undefined // registry unavailable: panes save as plain claude
+      return undefined // lookup unavailable: panes save as plain claude
     }
   }, [state])
 
@@ -494,13 +519,13 @@ export function App(): React.JSX.Element {
    */
   const saveProject = useCallback(
     async (name: string, id?: string, scope: 'window' | 'tab' = 'window') => {
-      const sessionIds = await collectSessionIds()
+      const found = await collectSessionIds()
       const tabs =
         scope === 'tab'
           ? activeTab
-            ? [tabToSaved(activeTab, sessionIds)]
+            ? [tabToSaved(activeTab, found?.ids, found?.running)]
             : []
-          : stateToTabs(state, sessionIds)
+          : stateToTabs(state, found?.ids, found?.running)
       if (tabs.length === 0) {
         dispatch({ type: 'toast', message: 'Nothing to save' })
         return
@@ -556,7 +581,8 @@ export function App(): React.JSX.Element {
       // the user just chose to bring back. Both states resolve on their own.
       if (state.tabs.length === 0) return
 
-      const tabs = stateToTabs(state, await collectSessionIds())
+      const found = await collectSessionIds()
+      const tabs = stateToTabs(state, found?.ids, found?.running)
       try {
         if (!shouldOfferRestore(tabs)) {
           if (force || lastSnapshotRef.current !== '') {
@@ -612,51 +638,44 @@ export function App(): React.JSX.Element {
    * adding one (which does not), so the two can never drift on the part that
    * decides whether a restored agent pane resumes its session or starts cold.
    */
-  const restoreProjectTabs = useCallback(async (project: Project) => {
-    const restored = tabsFromSaved(project.tabs, uid)
+  const restoreProjectTabs = useCallback(async (project: Project, releasing: string[] = []) => {
+    const { tabs: restored, lookup } = planRestore(project.tabs, uid)
     if (restored.length === 0) return []
 
-    // A project saved before its panes could be matched to sessions carries no
-    // ids at all, and re-saving it is not something the user should have to
-    // know to do. Any claude pane still missing one gets resolved here, from
-    // the newest transcript for its own directory.
-    const needIds = restored.flatMap((t) =>
-      Object.values(t.panes)
-        .filter((p) => p.kind === 'term' && p.command === 'claude' && !p.claudeSessionId)
-        .map((p) => ({ paneId: p.id, cwd: p.cwd }))
-    )
-    if (needIds.length > 0) {
+    // Every claude pane's session is settled by main before anything is typed:
+    // a saved id is kept only if it is not live somewhere else and, when an
+    // older build wrote it, only if the pane's own title confirms it; a pane
+    // with no id gets one only when nothing else could claim it. Anything
+    // unsettled restores as a fresh claude: a wrong session in a pane is
+    // worse than a cold one.
+    if (lookup.length > 0) {
+      let ids: Record<string, string> | null = null
       try {
-        const res = await window.seashell.projects.sessionIds({ panes: needIds.slice(0, MAX_TERM_PANES) })
-        for (const tab of restored) {
-          for (const pane of Object.values(tab.panes)) {
-            const sid = res.ids[pane.id]
-            if (sid) pane.claudeSessionId = sid
-          }
-        }
+        const res = await window.seashell.projects.sessionIds({
+          panes: lookup.slice(0, MAX_TERM_PANES),
+          ...(releasing.length > 0 ? { releasing: releasing.slice(0, MAX_TERM_PANES) } : {}),
+        })
+        ids = res.ids
       } catch {
-        /* unresolved panes just open as a fresh claude, the old behaviour */
+        /* applyRestoreIds keeps only verified ids when the lookup fails */
       }
+      applyRestoreIds(restored, lookup, ids)
     }
 
-    // Every pane about to resume relaunches in the permission mode its session
-    // was last running in, read from the session's own transcript. Without
-    // this a bare `claude -r` falls back to the settings defaultMode, which is
-    // not necessarily how the pane was running when the project was saved.
-    const resuming = restored.flatMap((t) =>
-      Object.values(t.panes)
-        .filter((p) => p.kind === 'term' && p.command === 'claude' && p.claudeSessionId)
-        .map((p) => ({ paneId: p.id, cwd: p.cwd, sid: p.claudeSessionId! }))
+    // Every claude pane relaunches in a permission mode it can work in: the
+    // one its session was last running in, read from the transcript, unless
+    // that was a mode no one chose (dontAsk or default, inherited from the
+    // settings defaultMode by a bare resume) and the user has accepted bypass.
+    const claudePanes = restored.flatMap((t) =>
+      Object.values(t.panes).filter((p) => p.kind === 'term' && p.command === 'claude')
     )
-    if (resuming.length > 0) {
+    if (claudePanes.length > 0) {
+      const resuming = claudePanes
+        .filter((p) => p.claudeSessionId)
+        .map((p) => ({ paneId: p.id, cwd: p.cwd, sid: p.claudeSessionId! }))
       try {
         const res = await window.seashell.projects.resumeModes({ panes: resuming.slice(0, MAX_TERM_PANES) })
-        for (const tab of restored) {
-          for (const pane of Object.values(tab.panes)) {
-            const mode = res.modes[pane.id]
-            if (mode) pane.claudeResumeMode = mode
-          }
-        }
+        applyLaunchModes(restored, res.modes, res.bypassConsented)
       } catch {
         /* a bare resume still works; it just follows the default mode */
       }
@@ -692,15 +711,20 @@ export function App(): React.JSX.Element {
 
   const openProject = useCallback(
     async (project: Project) => {
-      const restored = await restoreProjectTabs(project)
+      // Every pane on screen is about to be reaped, so the sessions in them are
+      // free for the project to resume, not live somewhere else.
+      const live = state.tabs.flatMap((t) =>
+        Object.values(t.panes).filter((p) => p.kind === 'term')
+      )
+      const restored = await restoreProjectTabs(
+        project,
+        live.map((p) => p.id)
+      )
       if (restored.length === 0) {
         dispatch({ type: 'toast', message: 'That project has nothing to open' })
         return
       }
 
-      const live = state.tabs.flatMap((t) =>
-        Object.values(t.panes).filter((p) => p.kind === 'term')
-      )
       await Promise.all(
         live.map(async (p) => {
           await window.seashell.pty.kill({ paneId: p.id })

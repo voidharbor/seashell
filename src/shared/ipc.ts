@@ -366,7 +366,9 @@ export interface SystemMetrics {
 
 export interface MetricsTickEvent {
   panes: PaneMetrics[]
-  system: SystemMetrics
+  /** Null when the platform could not sample system memory this tick; the
+   *  status bar keeps its last reading. Pane metrics are sent regardless. */
+  system: SystemMetrics | null
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +453,11 @@ export interface SavedTab {
   focusedPaneId: string | null
   tree: unknown
   panes: Record<string, SavedPane>
+  /** Set by builds that resolve session ids from the live claude process and
+   *  never guess between panes. Absent on anything older, whose ids may have
+   *  been handed out by recency and are checked against each pane's title
+   *  before they are resumed. */
+  sessionIdsVerified?: boolean
 }
 
 export interface Project {
@@ -488,14 +495,32 @@ export interface ProjectsDeleteRequest {
 }
 
 export interface ProjectsSessionIdsRequest {
-  /** Live panes to resolve; capped to the pane limit. The cwd is what lets a
-   *  pane the session registry missed still be matched to a claude transcript. */
-  panes: { paneId: string; cwd: string }[]
+  /** Panes to resolve; capped to the pane limit. See
+   *  src/main/state/session-lookup.ts for what each field feeds. */
+  panes: {
+    paneId: string
+    cwd: string
+    /** The id the pane already has, kept when nothing better answers. */
+    knownSid?: string
+    /** False for an id from a snapshot an older build wrote (ids guessed). */
+    knownVerified?: boolean
+    /** The pane's own title, for matching a session by its title. */
+    label?: string
+    /** Whether the pane is running claude, as far as the renderer knows. */
+    claude?: boolean
+  }[]
+  /** Live panes about to be killed (a project opening over the window); the
+   *  sessions in them count as free rather than as live elsewhere. */
+  releasing?: string[]
 }
 
+/** How an id was resolved; 'process' means a live claude is in the pane now. */
+export type SessionIdSource = 'process' | 'registry' | 'carried' | 'title' | 'cwd'
+
 export interface ProjectsSessionIdsResponse {
-  /** paneId -> claude session id, for panes with a live registered session. */
+  /** paneId -> claude session id. */
   ids: Record<string, string>
+  sources: Record<string, SessionIdSource>
 }
 
 export interface ProjectsResumeModesRequest {
@@ -508,6 +533,10 @@ export interface ProjectsResumeModesResponse {
   /** paneId -> the session's last recorded permission mode. A pane with no
    *  recoverable mode is simply absent, and restore types a bare resume. */
   modes: Record<string, string>
+  /** The user accepted claude's bypass warning (settings
+   *  skipDangerousModePermissionPrompt), so restored panes default to
+   *  bypassPermissions; see claudeLaunchMode in renderer/projects/serialize.ts. */
+  bypassConsented: boolean
 }
 
 export type ProjectsDeleteResponse = { ok: boolean }

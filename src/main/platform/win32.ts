@@ -77,6 +77,12 @@ export const win32: Platform = {
     return Promise.resolve('')
   },
 
+  processStartTokens(): Promise<Map<number, string>> {
+    // claude records a FILETIME here, and there is no process table to walk
+    // anyway (sweepMemory is empty), so the process lane stays off.
+    return Promise.resolve(new Map())
+  },
+
   sweepForKill(): Promise<KillRow[]> {
     // Nothing calls this on Windows — killPaneTree cannot use a process-group
     // walk. It throws rather than returning [] so that a future caller finds

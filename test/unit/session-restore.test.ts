@@ -161,10 +161,11 @@ describe('resumed sessions keep their permission mode', () => {
     ).toBe(`claude -r ${SID}`)
   })
 
-  it('never applies a mode without a session to resume', () => {
+  it('a fresh claude takes the mode too, since a bare claude falls to the settings default', () => {
     expect(
       launchCommandText(pane({ command: 'claude', claudeResumeMode: 'bypassPermissions' }))
-    ).toBe('claude')
+    ).toBe('claude --dangerously-skip-permissions')
+    expect(launchCommandText(pane({ command: 'claude' }))).toBe('claude')
   })
 
   it('never saves the mode into a project — it is re-read at open', () => {

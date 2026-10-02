@@ -5,6 +5,7 @@ import { platform } from '../platform/index.js'
 import { parsePsOutput, sumSubtreeRss } from './sweep-parse.js'
 import { readSystemMemory } from './system-mem.js'
 import { classifyActivity } from './activity.js'
+import { sampleTick } from './sample.js'
 
 /** Sweep cadence while the window is on screen. */
 export const VISIBLE_TICK_MS = 5000
@@ -119,12 +120,10 @@ export class MetricsMonitor {
       // an empty sweep reports itself — the status bar keeps its last good
       // reading rather than showing invented zeroes.
       //
-      // Without this the rejection escapes a `void this.run()`: readSystemMemory
-      // is the one sampler with no internal catch, and it shells out to
-      // /usr/bin/vm_stat, which does not exist off macOS and which fails to
-      // fork under exactly the memory pressure this monitor exists to display.
-      // `finally` has already re-armed the next tick, so the loop survived —
-      // but every tick raised an unhandled rejection.
+      // Without this a rejection escapes a `void this.run()`. readSystemMemory
+      // shells out to /usr/bin/vm_stat, which does not exist off macOS; that
+      // one is now absorbed by sampleTick so it cannot cost the pane metrics
+      // too, but anything else that throws still lands here.
     } finally {
       // The window is created before the monitor starts, but re-attaching is
       // cheap and covers a window replaced under a long-lived monitor.
@@ -143,7 +142,7 @@ export class MetricsMonitor {
       return
     }
 
-    const [stdout, system] = await Promise.all([platform.sweepMemory(), readSystemMemory()])
+    const { stdout, system } = await sampleTick(() => platform.sweepMemory(), readSystemMemory)
     // An empty sweep means no sample this tick — which is also how a platform
     // without process metrics reports itself. Panes still work; the numbers are
     // simply absent rather than invented.

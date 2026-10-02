@@ -137,3 +137,54 @@ describe('buildEnv agent-identity leak', () => {
     expect(env.PATH).toBe('/usr/bin:/bin')
   })
 })
+
+/**
+ * The Linux AppImage runtime exports its own variables into SeaShell's
+ * environment, and panes inherited all of them. ARGV0 is the one that bites:
+ * zsh uses an exported ARGV0 as argv[0] for every command it runs, so on the
+ * PC every claude in every pane showed up in ps as
+ * `/Users/joshwald/.local/bin/SeaShell.AppImage --dangerously-skip-permissions`.
+ * The c-assistant hook then could not find claude by name (the session registry
+ * stayed empty) and the control socket's foreground check refused every pane.
+ */
+describe('the AppImage runtime does not leak into panes', () => {
+  const MOUNT = '/tmp/.mount_SeaSheFyiyRI'
+  const appimage = (): NodeJS.ProcessEnv =>
+    base({
+      APPDIR: MOUNT,
+      APPIMAGE: '/Users/j/.local/bin/SeaShell.AppImage',
+      ARGV0: '/Users/j/.local/bin/SeaShell.AppImage',
+      OWD: '/Users/j',
+      CHROME_DESKTOP: 'seashell.desktop',
+      PATH: `${MOUNT}:${MOUNT}/usr/sbin:/usr/local/bin:/usr/bin:/bin`,
+      LD_LIBRARY_PATH: `${MOUNT}/usr/lib`,
+      XDG_DATA_DIRS: `${MOUNT}/usr/share/:/usr/share/gnome:/usr/local/share/:/usr/share/`,
+      GSETTINGS_SCHEMA_DIR: `${MOUNT}/usr/share/glib-2.0/schemas`,
+    })
+  const env = (): NodeJS.ProcessEnv =>
+    buildEnv({ baseEnv: appimage(), paneId: 'p1', appVersion: '0.5.0', zdotdirShimPath: SHIM })
+
+  it('drops the runtime identity variables', () => {
+    const e = env()
+    for (const k of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'CHROME_DESKTOP']) expect(e[k]).toBeUndefined()
+  })
+
+  it('takes the mount point out of search paths and keeps everything else in order', () => {
+    const e = env()
+    expect(e.PATH).toBe('/usr/local/bin:/usr/bin:/bin')
+    expect(e.XDG_DATA_DIRS).toBe('/usr/share/gnome:/usr/local/share/:/usr/share/')
+    expect(e.LD_LIBRARY_PATH).toBeUndefined()
+    expect(e.GSETTINGS_SCHEMA_DIR).toBeUndefined()
+  })
+
+  it('leaves a normal environment alone', () => {
+    const e = buildEnv({
+      baseEnv: base({ LD_LIBRARY_PATH: '/opt/lib', ARGV0: 'kept-without-appdir' }),
+      paneId: 'p1',
+      appVersion: '0.5.0',
+      zdotdirShimPath: SHIM,
+    })
+    expect(e.PATH).toBe('/usr/bin:/bin')
+    expect(e.LD_LIBRARY_PATH).toBe('/opt/lib')
+  })
+})

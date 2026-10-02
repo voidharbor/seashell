@@ -36,7 +36,8 @@ import {
 import { clearLastSession, loadLastSession, saveLastSession } from './state/last-session.js'
 import { createSnapshotGate } from './state/snapshot-gate.js'
 import { sessionIdsForPanes } from './state/session-lookup.js'
-import { resumeModesForPanes } from './state/resume-mode.js'
+import { parsePsOutput } from './monitor/sweep-parse.js'
+import { bypassConsented, resumeModesForPanes } from './state/resume-mode.js'
 
 /**
  * Every inbound payload is validated here, at the single registration point.
@@ -389,11 +390,31 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
   ipcMain.handle(CH.projectsSessionIds, async (_e, raw) => {
     const parsed = z
       .object({
-        panes: z.array(z.object({ paneId: PaneId, cwd: z.string().max(4096) })).max(MAX_TERM_PANES),
+        panes: z
+          .array(
+            z.object({
+              paneId: PaneId,
+              cwd: z.string().max(4096),
+              knownSid: z.string().max(64).optional(),
+              knownVerified: z.boolean().optional(),
+              label: z.string().max(512).optional(),
+              claude: z.boolean().optional(),
+            })
+          )
+          .max(MAX_TERM_PANES),
+        releasing: z.array(PaneId).max(MAX_TERM_PANES).optional(),
       })
       .safeParse(raw)
-    if (!parsed.success) return { ids: {} }
-    return { ids: await sessionIdsForPanes(parsed.data.panes) }
+    if (!parsed.success) return { ids: {}, sources: {} }
+    const shells = new Map(ptyManager.listPids().map((p) => [p.paneId, p.pid]))
+    return sessionIdsForPanes(parsed.data.panes, {
+      shellPidOf: (paneId) => shells.get(paneId) ?? null,
+      processChildren: async () => {
+        const stdout = await platform.sweepMemory()
+        return stdout ? parsePsOutput(stdout).childrenOf : null
+      },
+      startTokens: (pids) => platform.processStartTokens(pids),
+    }, parsed.data.releasing)
   })
 
   ipcMain.handle(CH.projectsResumeModes, async (_e, raw) => {
@@ -412,8 +433,11 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
           .max(MAX_TERM_PANES),
       })
       .safeParse(raw)
-    if (!parsed.success) return { modes: {} }
-    return { modes: await resumeModesForPanes(parsed.data.panes) }
+    if (!parsed.success) return { modes: {}, bypassConsented: false }
+    return {
+      modes: await resumeModesForPanes(parsed.data.panes),
+      bypassConsented: await bypassConsented(),
+    }
   })
 
   /**

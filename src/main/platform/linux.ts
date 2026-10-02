@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { darwin } from './darwin.js'
+import { procStartFromStat } from '../state/session-lookup.js'
 import type { Platform, ShellSpec } from './types.js'
 
 /**
@@ -55,6 +56,21 @@ export const linux: Platform = {
 
   loginShell(): ShellSpec {
     return shell
+  },
+
+  /** claude reads /proc/<pid>/stat on Linux, and so does this. */
+  async processStartTokens(pids: number[]): Promise<Map<number, string>> {
+    const out = new Map<number, string>()
+    for (const pid of pids) {
+      if (!Number.isInteger(pid) || pid <= 0) continue
+      try {
+        const token = procStartFromStat(await fs.promises.readFile(`/proc/${pid}/stat`, 'utf8'))
+        if (token !== undefined) out.set(pid, token)
+      } catch {
+        /* gone */
+      }
+    }
+    return out
   },
 
   /**

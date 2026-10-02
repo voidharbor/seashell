@@ -1,4 +1,5 @@
-import { psSweep, psSweepMemory, type KillRow } from '../monitor/procsweep.js'
+import { psStartTimes, psSweep, psSweepMemory, type KillRow } from '../monitor/procsweep.js'
+import { parsePsLstart } from '../state/session-lookup.js'
 import { ensureZdotdirShim } from '../pty/zdotdir.js'
 import type { KillRequest, KillResult, Platform, ShellSpec } from './types.js'
 
@@ -34,6 +35,10 @@ export const darwin: Platform = {
 
   installShellIntegration(): string | null {
     return ensureZdotdirShim()
+  },
+
+  async processStartTokens(pids: number[]): Promise<Map<number, string>> {
+    return parsePsLstart(await psStartTimes(pids))
   },
 
   sweepMemory(): Promise<string> {

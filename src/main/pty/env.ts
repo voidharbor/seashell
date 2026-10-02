@@ -78,6 +78,36 @@ function isShimPath(candidate: string, shim: string): boolean {
   return strip(candidate) === strip(shim)
 }
 
+/** Search-path variables the AppImage runtime prepends its mount point to. */
+const APPIMAGE_PATH_VARS = ['PATH', 'LD_LIBRARY_PATH', 'XDG_DATA_DIRS', 'GSETTINGS_SCHEMA_DIR'] as const
+
+/**
+ * Undoes what the Linux AppImage runtime adds to SeaShell's own environment,
+ * so a pane looks like any other terminal's. Only runs when APPDIR says we
+ * are inside an AppImage.
+ *
+ * ARGV0 is the one that did real damage: zsh uses an exported ARGV0 as
+ * argv[0] for every external command, so every program in every pane ran
+ * named `SeaShell.AppImage`. Anything that finds claude by its command line
+ * (the c-assistant session registry hook, the control socket's foreground
+ * check) found nothing. LD_LIBRARY_PATH pointed every pane program at the
+ * AppImage's private libraries, and the mount point led PATH.
+ */
+function scrubAppImageRuntime(env: NodeJS.ProcessEnv): void {
+  const appdir = env.APPDIR?.replace(/\/+$/, '')
+  if (!appdir || !appdir.startsWith('/')) return
+
+  const inside = (entry: string): boolean => entry === appdir || entry.startsWith(`${appdir}/`)
+  for (const key of APPIMAGE_PATH_VARS) {
+    const value = env[key]
+    if (value === undefined) continue
+    const kept = value.split(':').filter((entry) => entry !== '' && !inside(entry))
+    if (kept.length > 0) env[key] = kept.join(':')
+    else delete env[key]
+  }
+  for (const key of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'CHROME_DESKTOP']) delete env[key]
+}
+
 /**
  * Returns a new environment object for a spawned login shell. Never mutates
  * `baseEnv` (or, transitively, `process.env`) — callers must be free to
@@ -110,6 +140,8 @@ export function buildEnv(options: BuildEnvOptions): NodeJS.ProcessEnv {
       delete env[key]
     }
   }
+
+  scrubAppImageRuntime(env)
 
   // ZDOTDIR redirect: point zsh at SeaShell's shim dir, but remember the
   // user's real ZDOTDIR (falling back to $HOME, zsh's own default search

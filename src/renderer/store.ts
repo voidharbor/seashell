@@ -286,7 +286,8 @@ export type Action =
   | { type: 'explorer.toggle' }
   | { type: 'explorer.setRoot'; root: string }
   | { type: 'explorer.reveal'; path: string | null; isDir?: boolean }
-  | { type: 'metrics'; panes: PaneMetrics[]; system: SystemMetrics }
+  | { type: 'metrics'; panes: PaneMetrics[]; system: SystemMetrics | null }
+  | { type: 'panes.sessionIds'; ids: Readonly<Record<string, string>> }
   | { type: 'toast'; message: string | null }
 
 /**
@@ -767,7 +768,26 @@ export function reducer(state: AppState, action: Action): AppState {
 
       // `system` genuinely changes every tick, so the root object always does.
       // The tabs array is what the layout memos hang off, and it must not.
-      return { ...state, system: action.system, tabs: tabsChanged ? tabs : state.tabs }
+      return { ...state, system: action.system ?? state.system, tabs: tabsChanged ? tabs : state.tabs }
+    }
+
+    // The session each pane was just proven to be on, remembered so the next
+    // save can carry it forward if the pane cannot be resolved then.
+    case 'panes.sessionIds': {
+      let tabsChanged = false
+      const tabs = state.tabs.map((t) => {
+        let panes: Record<string, PaneState> | null = null
+        for (const [id, sid] of Object.entries(action.ids)) {
+          const p = t.panes[id]
+          if (!p || p.claudeSessionId === sid) continue
+          panes ??= { ...t.panes }
+          panes[id] = { ...p, claudeSessionId: sid }
+        }
+        if (!panes) return t
+        tabsChanged = true
+        return { ...t, panes }
+      })
+      return tabsChanged ? { ...state, tabs } : state
     }
 
     case 'toast':

@@ -1,4 +1,5 @@
 import type { SavedPane, SavedTab } from '../../shared/ipc.js'
+import { claudeTitleFromLabel } from '../../shared/claude-title.js'
 import type { AppState, PaneCommand, PaneState, TabState } from '../store.js'
 import { createInitialTree } from '../layout/tree.js'
 import type { RowNode } from '../layout/types.js'
@@ -94,8 +95,16 @@ export function savedCommandFor(pane: PaneState): PaneCommand {
  */
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export function paneToSaved(pane: PaneState, sessionId?: string): SavedPane {
-  const command = savedCommandFor(pane)
+/**
+ * `claudeRunning` is main's proof, from the process table, that a live claude
+ * is in this pane right now. It outranks the renderer's own inference, which
+ * rests on metrics ticks that a platform may never send (the Linux monitor
+ * sent none, so every pane where claude was typed by hand saved as a shell).
+ * A 'cmd' pane keeps its command: retyping it is what the user asked for.
+ */
+export function paneToSaved(pane: PaneState, sessionId?: string, claudeRunning = false): SavedPane {
+  const inferred = savedCommandFor(pane)
+  const command = claudeRunning && pane.kind === 'term' && inferred === 'zsh' ? 'claude' : inferred
   // Only a claude terminal pane records a session to resume; the id itself
   // must be UUID-shaped or it does not get written at all.
   const sid =
@@ -116,7 +125,11 @@ export function paneToSaved(pane: PaneState, sessionId?: string): SavedPane {
   }
 }
 
-export function tabToSaved(tab: TabState, sessionIds?: ReadonlyMap<string, string>): SavedTab {
+export function tabToSaved(
+  tab: TabState,
+  sessionIds?: ReadonlyMap<string, string>,
+  claudeRunning?: ReadonlySet<string>
+): SavedTab {
   return {
     id: tab.id,
     name: tab.name,
@@ -126,13 +139,21 @@ export function tabToSaved(tab: TabState, sessionIds?: ReadonlyMap<string, strin
     focusedPaneId: tab.focusedPaneId,
     tree: tab.tree,
     panes: Object.fromEntries(
-      Object.entries(tab.panes).map(([id, p]) => [id, paneToSaved(p, sessionIds?.get(id))])
+      Object.entries(tab.panes).map(([id, p]) => [
+        id,
+        paneToSaved(p, sessionIds?.get(id), claudeRunning?.has(id) ?? false),
+      ])
     ),
+    sessionIdsVerified: true,
   }
 }
 
-export function stateToTabs(state: AppState, sessionIds?: ReadonlyMap<string, string>): SavedTab[] {
-  return state.tabs.map((t) => tabToSaved(t, sessionIds))
+export function stateToTabs(
+  state: AppState,
+  sessionIds?: ReadonlyMap<string, string>,
+  claudeRunning?: ReadonlySet<string>
+): SavedTab[] {
+  return state.tabs.map((t) => tabToSaved(t, sessionIds, claudeRunning))
 }
 
 /**
@@ -149,6 +170,43 @@ const RESUME_MODE_FLAGS: Readonly<Record<string, string>> = {
   manual: '--permission-mode manual',
   dontAsk: '--permission-mode dontAsk',
   plan: '--permission-mode plan',
+}
+
+/**
+ * The mode a claude pane is launched in at restore.
+ *
+ * With `bypassConsented` (the user has accepted claude's own bypass warning,
+ * `skipDangerousModePermissionPrompt` in ~/.claude/settings.json), every pane
+ * comes back in bypassPermissions unless its session was last in plan or
+ * acceptEdits, which only a person picks. A recorded dontAsk or default is
+ * never a choice: it is what a bare `claude -r` falls back to from the
+ * settings defaultMode, and once recorded it used to come back forever, with
+ * every tool call denied and no prompt shown.
+ *
+ * Without consent the recorded mode is followed as before and bypass is never
+ * invented.
+ */
+export function claudeLaunchMode(recorded: string | undefined, bypassConsented: boolean): string | undefined {
+  if (!bypassConsented) return recorded
+  if (recorded === 'plan' || recorded === 'acceptEdits') return recorded
+  return 'bypassPermissions'
+}
+
+/** Sets the launch mode on every claude terminal pane about to be restored,
+ *  whether it resumes a session or starts cold. */
+export function applyLaunchModes(
+  tabs: TabState[],
+  recorded: Readonly<Record<string, string>>,
+  bypassConsented: boolean
+): void {
+  for (const tab of tabs) {
+    for (const pane of Object.values(tab.panes)) {
+      if (pane.kind !== 'term' || pane.command !== 'claude') continue
+      const mode = claudeLaunchMode(pane.claudeSessionId ? recorded[pane.id] : undefined, bypassConsented)
+      if (mode) pane.claudeResumeMode = mode
+      else delete pane.claudeResumeMode
+    }
+  }
 }
 
 /**
@@ -170,8 +228,10 @@ export function launchCommandText(pane: {
   claudeResumeMode?: string
 }): string | null {
   if (pane.command === 'claude') {
-    if (!pane.claudeSessionId || !SESSION_ID_RE.test(pane.claudeSessionId)) return 'claude'
     const flag = pane.claudeResumeMode ? RESUME_MODE_FLAGS[pane.claudeResumeMode] : undefined
+    if (!pane.claudeSessionId || !SESSION_ID_RE.test(pane.claudeSessionId)) {
+      return flag ? `claude ${flag}` : 'claude'
+    }
     return flag
       ? `claude ${flag} -r ${pane.claudeSessionId}`
       : `claude -r ${pane.claudeSessionId}`
@@ -234,6 +294,87 @@ export function tabsFromSaved(
   }
 
   return out
+}
+
+/** One pane for main's session lookup at restore; mirrors
+ *  ProjectsSessionIdsRequest['panes'][number]. */
+export interface RestoreLookupPane {
+  paneId: string
+  cwd: string
+  knownSid?: string
+  knownVerified: boolean
+  label?: string
+  claude: true
+}
+
+export interface RestorePlan {
+  tabs: TabState[]
+  /** The panes whose session main has to settle before anything is typed. */
+  lookup: RestoreLookupPane[]
+}
+
+/**
+ * Rebuilds a project's tabs and lists the panes whose session has to be
+ * settled first: every claude pane, carrying its saved id and whether that id
+ * can be trusted, and, in a tab an older build wrote, any shell pane whose
+ * title says claude was on screen in it (those builds could save a claude pane
+ * as a shell). Nothing here decides; main answers, and `applyRestoreIds`
+ * writes the answer back.
+ */
+export function planRestore(saved: SavedTab[], mintId: (prefix: string) => string): RestorePlan {
+  const tabs: TabState[] = []
+  const lookup: RestoreLookupPane[] = []
+
+  for (const savedTab of saved) {
+    const verified = savedTab.sessionIdsVerified === true
+    for (const tab of tabsFromSaved([savedTab], mintId)) {
+      tabs.push(tab)
+      for (const pane of Object.values(tab.panes)) {
+        if (pane.kind !== 'term') continue
+        const label = pane.labelIsCustom ? undefined : pane.label
+        const titled = label !== undefined && claudeTitleFromLabel(label) !== null
+        if (pane.command === 'claude' || (pane.command === 'zsh' && !verified && titled)) {
+          lookup.push({
+            paneId: pane.id,
+            cwd: pane.cwd,
+            ...(pane.claudeSessionId ? { knownSid: pane.claudeSessionId } : {}),
+            knownVerified: verified,
+            ...(label !== undefined ? { label } : {}),
+            claude: true,
+          })
+        }
+      }
+    }
+  }
+  return { tabs, lookup }
+}
+
+/**
+ * Writes main's answer into the planned tabs. A pane main resolved takes that
+ * id (and a shell pane becomes claude); a pane it did not resolve loses its
+ * saved id and restores as a fresh claude, because the lookup already kept
+ * every id it could stand behind. `ids === null` means the lookup itself
+ * failed: verified ids stand, unverified ones are dropped rather than trusted.
+ */
+export function applyRestoreIds(
+  tabs: TabState[],
+  lookup: readonly RestoreLookupPane[],
+  ids: Readonly<Record<string, string>> | null
+): void {
+  const asked = new Map(lookup.map((l) => [l.paneId, l]))
+  for (const tab of tabs) {
+    for (const pane of Object.values(tab.panes)) {
+      const req = asked.get(pane.id)
+      if (!req) continue
+      const sid = ids === null ? (req.knownVerified ? req.knownSid : undefined) : ids[pane.id]
+      if (sid && SESSION_ID_RE.test(sid)) {
+        pane.claudeSessionId = sid
+        pane.command = 'claude'
+      } else {
+        delete pane.claudeSessionId
+      }
+    }
+  }
 }
 
 export function savedToPane(id: string, sp: SavedPane): PaneState {

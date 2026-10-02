@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { isValidSessionId, transcriptDirFor } from './session-lookup.js'
 
@@ -27,6 +28,7 @@ export const PERMISSION_MODES = [
   'acceptEdits',
   'auto',
   'bypassPermissions',
+  'default',
   'dontAsk',
   'manual',
   'plan',
@@ -99,4 +101,34 @@ export async function resumeModesForPanes(
     }
   }
   return out
+}
+
+/**
+ * Whether the user has already said yes to bypassPermissions in claude itself.
+ *
+ * claude asks once before its first `--dangerously-skip-permissions` run and
+ * records the answer as `skipDangerousModePermissionPrompt`. That is the only
+ * consent SeaShell acts on when it relaunches panes in bypass: a user who never
+ * accepted it keeps the old behaviour, the transcript's own mode or none. A
+ * settings file that disables bypass mode outright wins over everything.
+ * [pure]
+ */
+export function bypassConsentFrom(settings: unknown): boolean {
+  if (typeof settings !== 'object' || settings === null) return false
+  const s = settings as { skipDangerousModePermissionPrompt?: unknown; permissions?: unknown }
+  const perms = (typeof s.permissions === 'object' && s.permissions !== null ? s.permissions : {}) as {
+    disableBypassPermissionsMode?: unknown
+  }
+  if (perms.disableBypassPermissionsMode === 'disable') return false
+  return s.skipDangerousModePermissionPrompt === true
+}
+
+/** Reads the consent from ~/.claude/settings.json; unreadable means no. */
+export async function bypassConsented(): Promise<boolean> {
+  try {
+    const file = path.join(os.homedir(), '.claude', 'settings.json')
+    return bypassConsentFrom(JSON.parse(await fs.readFile(file, 'utf8')))
+  } catch {
+    return false
+  }
 }
