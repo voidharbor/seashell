@@ -276,10 +276,12 @@ Mac and Linux hosts (the renderer and sidecar are portable; a host per OS is the
 
 | Candidate | processes | WS median MB | private median MB | notes |
 |---|---|---|---|---|
-| A Electron 43 at W10 | | | | |
-| B WebView2 renderer floor | | | | |
-| C Node sidecar floor | | | | |
-| D Native floor | | | | |
-| B + C | | | | the R1 number |
+| A Electron 43 at W10 | not measured | not measured | not measured | Edge was open. Workload verified: 10 panes, 10 prompts, 9 tabs at 1440x900; tree of 54 processes at run time. `bakeoff\A-electron.png` |
+| B WebView2 renderer floor | not measured | not measured | not measured | Edge was open. Workload verified: 10 xterm instances, WebGL in all 10, live zsh prompt in terminal 0; tree of 12. `bakeoff\B-webview2.png` |
+| C Node sidecar floor | not measured | not measured | not measured | Edge was open. Workload verified: 10 of 10 panes printed a prompt; tree of 51 (node 1, wsl.exe 20, conhost 20, wslhost 10). No window |
+| D Native floor | not measured | not measured | not measured | Edge was open. Workload verified: prompt in grid 0, ten grids drawn; tree of 6. `bakeoff\D-native.png` |
+| B + C | | not measured | | the R1 number |
 
-Rule applied: R1 / R2 / R3. Chosen: . Measured at: (time, Edge closed: yes/no, display: MSI 1x). Written by: the run, stage 0, Task 6.
+Rule applied: none. Chosen: none. `decide.mjs` has no B-webview2 or C-sidecar row to apply R1, R2 or R3 to, and the run does not pick a stack without the numbers (decision 1). Measured at: attempted 08:11 to 08:31 EDT 10/02; Edge closed: no (Microsoft Edge Startup Boost, `msedge.exe --no-startup-window` pid 13988 since 10/01 19:46, 7 msedge.exe processes, no window; the run did not start it and did not close it); display: MSI 1x. Process counts are tree sizes from `app-tree.ps1` at run time, not `measure-ram.ps1` medians. Written by: the run, stage 0, Task 6.
+
+To fill this table: quit Edge fully (Startup Boost included, so `Get-Process msedge` returns nothing), then from WSL in `~/seashell-wt/redesign` run `scripts/win/sync-tree.sh` and, one at a time, `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\seashell-build\redesign\scripts\bakeoff\run-<electron|webview2|sidecar|native>.ps1`, then `node scripts/bakeoff/decide.mjs /mnt/c/seashell-build/redesign/bakeoff/results.jsonl`.
