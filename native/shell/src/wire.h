@@ -16,7 +16,7 @@ public:
   void sendEvent(const nlohmann::json& p);                  // {k:'send', ch:'ui:event', p}
   void sendCommand(const std::string& cmd, nlohmann::json extra = {});   // {k:'send', ch:'ui:command', p:{command, ...extra}}
   void sendTerm(const nlohmann::json& p);                   // ch 'term:event'
-  void sendGeometry();                                      // ch 'shell:geometry' from Window + the font metrics (Task 12; 7.8x15 until then)
+  void sendGeometry();                                      // ch 'shell:geometry': the client rect, dpi, and the cell of the model's window.fontPx
   void ptyWrite(const std::string& paneId, const std::string& utf8);   // {k:'send', ch:'pty:write', p:{paneId, data}}
   void ptyResize(const std::string& paneId, int cols, int rows);
   void reply(int id, const std::string& ch, const nlohmann::json& p);

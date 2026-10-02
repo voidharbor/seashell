@@ -8,6 +8,7 @@
 #include <string>
 #include "core_proc.h"
 #include "grid.h"
+#include "grid_view.h"
 #include "model.h"
 #include "wire.h"
 
@@ -35,6 +36,7 @@ public:
   LRESULT onAppMessage(UINT msg, WPARAM w, LPARAM l);      // Window::WM_APP_*
   void onPeerEnvelope(const std::string& json);    // WM_COPYDATA from a second instance
   void onWindowDestroyed();
+  void paintBody();                                // the body child's WM_PAINT: every visible pane's grid
 
 private:
   int main(HINSTANCE hinst);
@@ -46,6 +48,7 @@ private:
   void onGridCmd(const nlohmann::json& cmd);
   void onPtyData(const std::string& paneId, const std::string& bytes);
   void drainFeed();                                // WM_APP_PTY_FEED
+  static void CALLBACK blinkTick(HWND, UINT, UINT_PTR, DWORD);
 
   HINSTANCE hinst_ = nullptr;
   bool testMode_ = false;
@@ -61,6 +64,8 @@ private:
   bool quitting_ = false;                          // app:beforeQuit sent, waiting for the core to exit
   UINT_PTR quitTimer_ = 0;
   std::map<std::string, std::unique_ptr<Grid>> grids_;   // by pane id, from grid:cmd create
+  std::map<std::string, std::unique_ptr<GridView>> views_;   // one per grid, drawing it
+  bool blinkOn_ = true;                            // the cursor blink phase, flipped every 530 ms
   std::map<std::string, std::string> feed_;        // pty bytes waiting for the next WM_APP_PTY_FEED
   bool feedPosted_ = false;
 };

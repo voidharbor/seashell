@@ -1,5 +1,6 @@
 #include "wire.h"
 #include "app.h"
+#include "fonts.h"
 #include "hostapi.h"
 #include "window.h"
 
@@ -68,11 +69,17 @@ void Wire::sendGeometry() {
   Window& w = Window::instance();
   RECT rc{};
   GetClientRect(w.hwnd(), &rc);
-  // Task 12 measures the real cell; until then the Consolas 13 px figure.
+  // The cell of the model's window.fontPx (13 before the first ui:model),
+  // measured at device pixels and sent in DIPs like the font size itself.
+  const WindowModel& wm = App::instance().model().window;
+  float scale = w.dpi().scale();
+  float fontPx = wm.fontPx > 0 ? (float)wm.fontPx : 13.f;
+  FontMetrics m = Fonts::metrics(fontPx * scale);
   json p = { { "clientW", rc.right - rc.left }, { "clientH", rc.bottom - rc.top }, { "dpi", w.dpi().dpi },
-             { "cellW", 7.8 }, { "cellH", 15 } };
+             { "cellW", m.cellW / scale }, { "cellH", m.cellH / scale }, { "uiScale", wm.uiScale > 0 ? wm.uiScale : 1.0 } };
   send("shell:geometry", p);
-  App::log("geometry sent %ldx%ld dpi %.0f", rc.right - rc.left, rc.bottom - rc.top, w.dpi().dpi);
+  App::log("geometry sent %ldx%ld dpi %.0f cell %.3fx%.3f at %.1f px", rc.right - rc.left, rc.bottom - rc.top, w.dpi().dpi,
+           m.cellW / scale, m.cellH / scale, fontPx);
 }
 
 void Wire::ptyWrite(const std::string& paneId, const std::string& utf8) {

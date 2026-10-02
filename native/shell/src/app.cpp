@@ -8,7 +8,10 @@
 #include <shobjidl.h>
 #include <cstdarg>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
+
+using Microsoft::WRL::ComPtr;
 
 namespace {
 // What the first instance publishes under Local\SeaShellHost-<instance>-hwnd so
@@ -22,6 +25,21 @@ const UINT kQuitGraceMs = 5000;
 const ULONGLONG kEarlyDeathMs = 5000;
 // Bytes kept for a pane whose grid:cmd create has not arrived yet.
 const size_t kMaxEarlyBytes = 4u << 20;
+// xterm.js's cursor blink interval.
+const UINT kBlinkMs = 530;
+
+// "#rrggbb" from the model's token table, else fallback (0x00RRGGBB).
+uint32_t tokenColor(const UiModel& m, const char* name, uint32_t fallback) {
+  auto it = m.tokens.find(name);
+  if (it == m.tokens.end() || it->second.size() != 7 || it->second[0] != '#') return fallback;
+  char* end = nullptr;
+  unsigned long v = strtoul(it->second.c_str() + 1, &end, 16);
+  return end && *end == 0 ? (uint32_t)v : fallback;
+}
+
+D2D1_COLOR_F colorF(uint32_t c) {
+  return D2D1::ColorF(((c >> 16) & 0xFF) / 255.f, ((c >> 8) & 0xFF) / 255.f, (c & 0xFF) / 255.f, 1.f);
+}
 }
 
 App& App::instance() { static App a; return a; }
@@ -150,15 +168,19 @@ void App::onGridCmd(const nlohmann::json& cmd) {
   auto num = [&](const char* k, int d) { return cmd.contains(k) && cmd[k].is_number() ? cmd[k].get<int>() : d; };
   if (op == "create") {
     // A second create for the same pane (a relaunched core) starts it afresh.
+    views_.erase(id);   // it draws the grid about to be replaced
     auto g = std::make_unique<Grid>(id, num("cols", 80), num("rows", 24), num("scrollback", 20000));
     g->setOutput([this, id](const std::string& bytes) { wire_.ptyWrite(id, bytes); });
     g->onTitle = [this, id](const std::string& t) { wire_.sendTerm({ { "type", "title" }, { "paneId", id }, { "title", t } }); };
     g->onCwd = [this, id](const std::string& uri) { wire_.sendTerm({ { "type", "cwd" }, { "paneId", id }, { "cwd", uri } }); };
     g->onBell = [this, id] { wire_.sendTerm({ { "type", "bell" }, { "paneId", id } }); };
     log("grid create %s %dx%d", id.c_str(), g->store().cols(), g->store().rows());
+    float scale = Window::instance().dpi().scale();
+    views_[id] = std::make_unique<GridView>(*g, (float)(cmd.value("fontPx", 13.0) * scale));
     grids_[id] = std::move(g);
     if (feed_.count(id) && !feedPosted_) { feedPosted_ = true; Window::instance().post(Window::WM_APP_PTY_FEED); }
   } else if (op == "dispose") {
+    views_.erase(id);
     grids_.erase(id);
     feed_.erase(id);
     log("grid dispose %s", id.c_str());
@@ -166,6 +188,8 @@ void App::onGridCmd(const nlohmann::json& cmd) {
     Grid* g = grid(id);
     if (!g) { log("error: grid:cmd resize for unknown pane %s", id.c_str()); return; }
     g->resize(num("cols", g->store().cols()), num("rows", g->store().rows()));
+    if (cmd.contains("fontPx") && cmd["fontPx"].is_number() && views_.count(id))
+      views_[id]->setFontPx((float)(cmd["fontPx"].get<double>() * Window::instance().dpi().scale()));
   } else {
     // focus, clear, find, paste, copy, exited: the input and UI tasks take these.
     log("on grid:cmd %s %s", op.c_str(), id.c_str());
@@ -197,10 +221,68 @@ void App::drainFeed() {
     Grid* g = grid(it->first);
     if (!g) { ++it; continue; }   // its create is still on the way
     g->feed(it->second.data(), it->second.size());
-    if (!g->takeDamage().empty()) dirty = true;   // Task 12 paints the rects; until then the whole body
+    dirty = true;   // the grid keeps its damage; its GridView takes it on the next paint
     it = feed_.erase(it);
   }
   if (dirty) Window::instance().invalidateBody();
+}
+
+// BeginDraw, the chrome background, every visible pane's grid at its model
+// rect, a plain title bar per pane until Task 15 draws the chrome, EndDraw.
+void App::paintBody() {
+  ID2D1HwndRenderTarget* rt = Gfx::instance().bodyTarget();
+  if (!rt) return;
+  LARGE_INTEGER t0, t1, freq;
+  QueryPerformanceCounter(&t0);
+  Window& win = Window::instance();
+  float scale = win.dpi().scale();
+  float top = (float)win.bodyRect().top;   // model rects are in window client DIPs; the body starts below the strip
+  rt->BeginDraw();
+  rt->SetTransform(D2D1::Matrix3x2F::Identity());
+  rt->Clear(colorF(tokenColor(model_, "--chrome", 0xece2f0)));
+  ComPtr<ID2D1SolidColorBrush> title;
+  rt->CreateSolidColorBrush(colorF(tokenColor(model_, "--chromeAlt", 0xe1d3e8)), title.GetAddressOf());
+  auto dev = [&](const Rect& r) {
+    return D2D1::RectF((float)(r.x * scale), (float)(r.y * scale) - top, (float)((r.x + r.w) * scale), (float)((r.y + r.h) * scale) - top);
+  };
+  for (const PaneModel& p : model_.panes) {
+    if (model_.zoomedPaneId && *model_.zoomedPaneId != p.id) continue;   // hidden behind the zoomed pane
+    if (p.kind != "term") continue;
+    auto it = views_.find(p.id);
+    if (it == views_.end()) continue;
+    GridView& v = *it->second;
+    D2D1_RECT_F pr = dev(p.rect), gr = dev(p.gridRect);
+    if (title && gr.top > pr.top) rt->FillRectangle(D2D1::RectF(pr.left, pr.top, pr.right, gr.top), title.Get());
+    if (p.fontPx > 0) v.setFontPx((float)(p.fontPx * scale));
+    v.setDpiScale(scale);
+    v.setRect(gr);
+    v.setExited(p.status == "exited");
+    v.setBlinkPhase(blinkOn_);
+    v.draw(rt, p.focused, nullptr, nullptr, 0);
+  }
+  HRESULT hr = rt->EndDraw();
+  QueryPerformanceCounter(&t1);
+  QueryPerformanceFrequency(&freq);
+  Driver::instance().noteFrame((t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart);   // the driver's stats
+  if (hr == D2DERR_RECREATE_TARGET) {
+    log("body target lost; recreating");
+    Gfx::instance().discardBodyTarget();   // each GridView sees the new target and rebuilds its brushes
+    win.invalidateBody();
+  } else if (FAILED(hr)) {
+    log("error: body EndDraw 0x%08lx", (unsigned long)hr);
+  }
+}
+
+// Repaints only while some visible pane has a focused, blinking, live cursor.
+void CALLBACK App::blinkTick(HWND, UINT, UINT_PTR, DWORD) {
+  App& a = instance();
+  a.blinkOn_ = !a.blinkOn_;
+  HWND h = Window::instance().hwnd();
+  if (!h || IsIconic(h)) return;
+  for (const PaneModel& p : a.model_.panes) {
+    auto it = a.views_.find(p.id);
+    if (it != a.views_.end() && it->second->wantsBlink(p.focused)) { Window::instance().invalidateBody(); return; }
+  }
 }
 
 // A second launch hands over app:secondInstance; nothing else is relayed.
@@ -281,17 +363,21 @@ int App::main(HINSTANCE hinst) {
 
   wire_.write = [this](const std::string& line) { core_.send(line); };
   wire_.onModel = [this](const UiModel& m) {
+    double oldFont = model_.window.fontPx;
     model_ = m;
     Window::instance().invalidateStrip();   // Task 15 draws it
     Window::instance().invalidateBody();
     if (!firstModel_) {
       firstModel_ = true;
       wire_.sendGeometry();
+    } else if (m.window.fontPx > 0 && m.window.fontPx != oldFont) {
+      wire_.sendGeometry();   // the core re-lays out with the cell of the new font
     }
   };
   wire_.onPtyData = [this](const std::string& paneId, const std::string& bytes) { onPtyData(paneId, bytes); };
   wire_.onGridCmd = [this](const nlohmann::json& cmd) { onGridCmd(cmd); };
   startCore();
+  SetTimer(nullptr, 0, kBlinkMs, blinkTick);
 
   MSG msg;
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
