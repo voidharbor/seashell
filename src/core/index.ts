@@ -105,6 +105,7 @@ async function start(): Promise<void> {
         return () => clearTimeout(t)
       },
       platform: 'win32',
+      log: (line) => process.stderr.write(line + '\n'),
     },
     { home: process.env.HOME ?? '/', version, chords: chordTableFromMenu(menu, 'win32') }
   )

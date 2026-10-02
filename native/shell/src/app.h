@@ -4,6 +4,9 @@
 #pragma once
 #include <windows.h>
 #include <string>
+#include "core_proc.h"
+#include "model.h"
+#include "wire.h"
 
 class App {
 public:
@@ -15,6 +18,9 @@ public:
   void requestQuit();                              // WM_CLOSE: Task 8 runs the core's drain first
   bool testMode() const { return testMode_; }      // SEASHELL_TEST_PORT is set: never take focus
   HINSTANCE hinst() const { return hinst_; }
+  Wire& wire() { return wire_; }
+  const UiModel& model() const { return model_; }
+  bool coreDead() const { return coreDead_; }        // Task 15 paints every pane's exit overlay
 
   // Hooks the window calls.
   void onResized();                                // Task 8: shell:geometry
@@ -27,10 +33,21 @@ private:
   int main(HINSTANCE hinst);
   bool signalFirstInstance(const std::wstring& inst);
   void publishWindow(const std::wstring& inst);
+  bool startCore();
+  void onCoreExit(DWORD code, LPARAM gen);
+  static void CALLBACK quitTimeout(HWND, UINT, UINT_PTR, DWORD);
 
   HINSTANCE hinst_ = nullptr;
   bool testMode_ = false;
   int exitCode_ = 0;
   HANDLE mutex_ = nullptr;
   HANDLE handoff_ = nullptr;                       // file mapping holding this instance's HWND
+  CoreProc core_;
+  Wire wire_;
+  UiModel model_;
+  bool coreDead_ = false;                          // died twice, or after its first 5 s: not restarted
+  bool coreDied_ = false;                          // an unexpected exit happened (only the first may relaunch)
+  bool firstModel_ = false;                        // this core run has sent its first ui:model
+  bool quitting_ = false;                          // app:beforeQuit sent, waiting for the core to exit
+  UINT_PTR quitTimer_ = 0;
 };

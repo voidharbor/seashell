@@ -46,4 +46,15 @@ describe('controller: session', () => {
     c.push('session:requestSnapshot', undefined); await new Promise((r) => setImmediate(r))
     expect(saves()).toBe(n + 2)
   })
+  it('logs the quit snapshot to the core log', async () => {
+    const f = fakeDeps()
+    const lines: string[] = []
+    const c = new Controller({ ...f.deps, log: (l) => lines.push(l) }, { home: '/Users/joshwald', version: '0.6.0', chords: [] })
+    await c.boot(GEO)
+    c.push('session:requestSnapshot', undefined); await new Promise((r) => setImmediate(r))
+    expect(lines).toEqual(['[core] snapshot cleared: nothing worth restoring'])
+    c.command('tab.new')
+    c.push('session:requestSnapshot', undefined); await new Promise((r) => setImmediate(r))
+    expect(lines[1]).toBe('[core] snapshot saved')
+  })
 })

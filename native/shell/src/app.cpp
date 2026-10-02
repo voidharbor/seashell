@@ -7,6 +7,7 @@
 #include <shobjidl.h>
 #include <cstdarg>
 #include <cstdint>
+#include <memory>
 
 namespace {
 // What the first instance publishes under Local\SeaShellHost-<instance>-hwnd so
@@ -14,6 +15,10 @@ namespace {
 // SeaShell is also titled "SeaShell".
 struct Handoff { uint64_t hwnd; uint32_t pid; };
 const char* kSecondInstance = "{\"k\":\"send\",\"ch\":\"app:secondInstance\",\"p\":{}}";
+// main's quit drain is capped at 4 s on win32; the core then exits on its own.
+const UINT kQuitGraceMs = 5000;
+// A core that dies this soon after starting gets one relaunch (spec 4.5).
+const ULONGLONG kEarlyDeathMs = 5000;
 }
 
 App& App::instance() { static App a; return a; }
@@ -39,23 +44,92 @@ void App::quit(int code) {
   }
 }
 
+// WM_CLOSE: run the core's quit drain (app:beforeQuit, which snapshots the
+// session and reaps the panes), then close once it exits or the grace runs out.
 void App::requestQuit() {
   log("quit requested");
+  if (quitting_) return;
+  if (!core_.alive()) { quit(0); return; }
+  quitting_ = true;
+  core_.beginQuit();
+  log("app:beforeQuit sent");
+  quitTimer_ = SetTimer(nullptr, 0, kQuitGraceMs, quitTimeout);
+}
+
+void CALLBACK App::quitTimeout(HWND, UINT, UINT_PTR id, DWORD) {
+  App& a = instance();
+  KillTimer(nullptr, id);
+  a.quitTimer_ = 0;
+  log("core still running %u ms after app:beforeQuit; ending it", kQuitGraceMs);
+  a.core_.stop(0);
   quit(0);
 }
 
-void App::onResized() {}
+bool App::startCore() {
+  firstModel_ = false;
+  if (!core_.start()) {
+    coreDead_ = true;
+    log("coreDead: the core did not start");
+    return false;
+  }
+  wire_.sendGeometry();   // the controller boots on the first geometry
+  return true;
+}
+
+void App::onCoreExit(DWORD code, LPARAM gen) {
+  if (gen != core_.generation()) { log("core exit code %lu from an earlier run; ignored", code); return; }
+  ULONGLONG ran = GetTickCount64() - core_.startedTick();
+  log("core exit code %lu after %llu ms", code, ran);
+  wire_.reset();
+  if (quitting_) {
+    if (quitTimer_) { KillTimer(nullptr, quitTimer_); quitTimer_ = 0; }
+    quit(0);
+    return;
+  }
+  // The shell sent app:beforeQuit or closed the pipe: a normal exit, not a crash.
+  if (core_.exitExpected()) return;
+  bool first = !coreDied_;
+  coreDied_ = true;
+  if (first && ran < kEarlyDeathMs) {
+    log("core relaunch: it exited within %llu ms of starting", kEarlyDeathMs);
+    if (startCore()) return;
+  }
+  coreDead_ = true;
+  // Task 15 paints "core exited" on every pane and shows this as the toast.
+  log("coreDead: The SeaShell core stopped (code %lu). Restart a pane or quit.", code);
+  Window::instance().invalidateStrip();
+  Window::instance().invalidateBody();
+}
+
+void App::onResized() {
+  HWND h = Window::instance().hwnd();
+  if (!core_.alive() || quitting_ || !h || IsIconic(h)) return;
+  RECT rc{};
+  GetClientRect(h, &rc);
+  if (rc.right <= rc.left || rc.bottom <= rc.top) return;
+  wire_.sendGeometry();
+}
 
 bool App::onInput(HWND, UINT, WPARAM, LPARAM) { return false; }
 
-LRESULT App::onAppMessage(UINT msg, WPARAM, LPARAM l) {
-  // Until Task 8 owns these, free what the sender allocated.
-  if (msg == Window::WM_APP_CORE_LINE) delete reinterpret_cast<std::string*>(l);
+LRESULT App::onAppMessage(UINT msg, WPARAM w, LPARAM l) {
+  if (msg == Window::WM_APP_CORE_LINE) {
+    std::unique_ptr<std::string> line(reinterpret_cast<std::string*>(l));
+    wire_.onCoreLine(std::move(*line));
+  } else if (msg == Window::WM_APP_CORE_EXIT) {
+    onCoreExit((DWORD)w, l);
+  }
   return 0;
 }
 
+// A second launch hands over app:secondInstance; nothing else is relayed.
 void App::onPeerEnvelope(const std::string& json) {
-  log("peer envelope %s", json.c_str());   // Task 8 forwards it to the core
+  nlohmann::json e = nlohmann::json::parse(json, nullptr, false);
+  bool ok = !e.is_discarded() && e.is_object() && e.value("k", "") == "send" && e.value("ch", "") == "app:secondInstance";
+  if (!ok) { log("error: peer envelope refused: %.200s", json.c_str()); return; }
+  if (!core_.alive()) { log("app:secondInstance dropped: no core"); return; }
+  core_.send(json);
+  log("app:secondInstance sent to the core");
 }
 
 void App::onWindowDestroyed() {
@@ -123,11 +197,31 @@ int App::main(HINSTANCE hinst) {
   if (!Window::instance().create(hinst, testMode_)) return 1;
   publishWindow(inst);
 
+  wire_.write = [this](const std::string& line) { core_.send(line); };
+  wire_.onModel = [this](const UiModel& m) {
+    model_ = m;
+    Window::instance().invalidateStrip();   // Task 15 draws it
+    Window::instance().invalidateBody();
+    if (!firstModel_) {
+      firstModel_ = true;
+      wire_.sendGeometry();
+    }
+  };
+  // Task 11 feeds the grids; until then the byte counts prove the wire.
+  wire_.onPtyData = [](const std::string& paneId, const std::string& bytes) {
+    log("on pty:data pane %s bytes %zu", paneId.c_str(), bytes.size());
+  };
+  wire_.onGridCmd = [](const nlohmann::json& cmd) {
+    log("on grid:cmd %s %s", cmd.value("op", "?").c_str(), cmd.value("paneId", "?").c_str());
+  };
+  startCore();
+
   MSG msg;
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
+  core_.stop(2000);   // a no-op once the drain above let it exit
   log("shell exit %d", exitCode_);
   CoUninitialize();
   CloseHandle(mutex_);

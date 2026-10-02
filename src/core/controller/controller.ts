@@ -71,6 +71,8 @@ export interface ControllerDeps {
   setTimer(fn: () => void, ms: number): () => void
   /** 'win32' for the keys.ts spelling. */
   platform: string
+  /** One line to the core's log (stderr); optional so tests need not pass it. */
+  log?(line: string): void
 }
 
 /** Scrollback per grid, the native design's fixed figure. */
@@ -904,6 +906,7 @@ export class Controller {
         if (force || this.lastSnapshot !== '') {
           this.lastSnapshot = ''
           await this.deps.invoke('session:clear', undefined)
+          if (force) this.deps.log?.('[core] snapshot cleared: nothing worth restoring')
         }
         return
       }
@@ -911,6 +914,7 @@ export class Controller {
       if (!force && encoded === this.lastSnapshot) return
       await this.deps.invoke('session:save', { tabs })
       this.lastSnapshot = encoded
+      if (force) this.deps.log?.('[core] snapshot saved')
     } catch {
       // Fires on a timer and at quit; the next write simply overwrites.
     }
