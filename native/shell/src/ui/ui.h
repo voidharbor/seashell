@@ -36,6 +36,7 @@ public:
   void mouseLeave(bool strip);                       // WM_MOUSELEAVE, or the pointer went onto the caption
   void captionPress();                               // a press on strip:empty (the window drag): blur the edit
   void captionDblClick();                            // dblclick strip:empty, which the core turns into a new tab
+  void cancelDrag();                                 // the body lost the capture mid divider drag: end it where it was
   // The driver's click by target: what a click on that target does (the
   // shell's own handling first, else the ui:event), without a pointer.
   void targetClick(const std::string& target, bool dbl, int button, Mods m);
@@ -97,6 +98,7 @@ private:
   EditWidget find_, rename_;
   std::string dragDivider_;
   float dragGrabDip_ = 0;                        // pointer minus the divider's leading edge, in DIP
+  float dragLastX_ = 0, dragLastY_ = 0;          // the last down or move sent for it, in DIP
   int restoreFocus_ = 0;                         // 0 Restore, 1 Start fresh
   bool coreDead_ = false;
   DWORD coreCode_ = 0;

@@ -339,7 +339,10 @@ LRESULT Window::onBody(HWND h, UINT msg, WPARAM w, LPARAM l) {
       App::instance().onInput(h, msg, w, l);   // the focused pane's grid takes the keys; focus loss resets the wheel ramp
       return 0;
     case WM_CAPTURECHANGED:
-      if ((HWND)l != h) App::instance().onInput(h, WM_KILLFOCUS, 0, 0);   // a lost drag ends like focus loss
+      if ((HWND)l != h) {   // a lost drag ends like focus loss
+        Ui::instance().cancelDrag();
+        App::instance().onInput(h, WM_KILLFOCUS, 0, 0);
+      }
       return 0;
     case WM_SETCURSOR:
       if (LOWORD(l) == HTCLIENT) {

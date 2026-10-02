@@ -226,6 +226,16 @@ void Ui::captionDblClick() {
   send("dblclick", "strip:empty", 0, 0, 0, Mods{});
 }
 
+// Without this a lost capture (Alt+Tab, a modal loop) would leave the drag on,
+// and every later pointer move would resize the panes with no button down.
+void Ui::cancelDrag() {
+  if (dragDivider_.empty()) return;
+  std::string target = std::move(dragDivider_);
+  dragDivider_.clear();
+  send("up", target, dragLastX_, dragLastY_, 0, Mods{});
+  Window::instance().invalidateBody();
+}
+
 // A click the shell answers itself, or the ui:event the core acts on.
 void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
   if (target == "menu") {
@@ -278,7 +288,12 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods) {
       if ("divider:" + dv.id == dragDivider_) d = &dv;
     bool vertical = !d || d->orientation != "horizontal";
     float ex = vertical ? xd - dragGrabDip_ : xd, ey = vertical ? yd : yd - dragGrabDip_;
-    if (msg == WM_MOUSEMOVE) { send("move", dragDivider_, ex, ey, 0, mods); return true; }
+    if (msg == WM_MOUSEMOVE) {
+      dragLastX_ = ex;
+      dragLastY_ = ey;
+      send("move", dragDivider_, ex, ey, 0, mods);
+      return true;
+    }
     if (msg == WM_LBUTTONUP) {
       send("up", dragDivider_, ex, ey, 0, mods);
       dragDivider_.clear();
@@ -323,8 +338,10 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods) {
         float edge = (float)(vertical ? d.rect.x : d.rect.y);
         dragGrabDip_ = (vertical ? xd : yd) - edge;
         dragDivider_ = target;
+        dragLastX_ = vertical ? edge : xd;
+        dragLastY_ = vertical ? yd : edge;
         SetCapture(win.body());
-        send("down", target, vertical ? edge : xd, vertical ? yd : edge, 0, mods);
+        send("down", target, dragLastX_, dragLastY_, 0, mods);
       }
       return true;
     }
