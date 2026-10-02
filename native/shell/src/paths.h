@@ -1,0 +1,21 @@
+// Environment, userData and the Windows/Linux path mapping, plus the saved
+// window bounds (src/main/window-bounds.ts, same file and keys).
+#pragma once
+#include <string>
+
+std::wstring envW(const wchar_t* name);               // "" when unset
+std::string toUtf8(const std::wstring& s);
+std::wstring fromUtf8(const std::string& s);
+
+std::wstring userDataWin();                           // SEASHELL_USER_DATA, default %APPDATA%\seashell
+std::string userDataLinux();                          // C:\a\b to /mnt/c/a/b
+std::string toLinuxPath(const std::wstring& winPath);  // C:\x to /mnt/c/x, \\wsl.localhost\<distro>\x to /x
+std::wstring toWindowsPath(const std::string& linuxPath);   // /mnt/c/x to C:\x, else \\wsl.localhost\Ubuntu-24.04\x
+std::wstring instanceName();                          // SEASHELL_INSTANCE, default "default"
+
+// Saved bounds are physical pixels (the shell is PerMonitorV2), the window's
+// last normal (unmaximized) rect plus whether it was maximized.
+struct SavedBounds { int x = 0, y = 0, width = 0, height = 0; bool maximized = false; };
+std::wstring boundsFile();                            // <userData>\window-bounds.json
+bool loadBounds(SavedBounds& out);                    // false when missing or unusable; clamped to a work area
+void saveBounds(const SavedBounds& b);                // never throws, creates userData if needed
