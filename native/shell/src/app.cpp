@@ -68,6 +68,7 @@ void CALLBACK App::quitTimeout(HWND, UINT, UINT_PTR id, DWORD) {
 
 bool App::startCore() {
   firstModel_ = false;
+  wire_.clearModel();   // the driver's model and wait never answer from an earlier core
   if (!core_.start()) {
     coreDead_ = true;
     log("coreDead: the core did not start");

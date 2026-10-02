@@ -29,6 +29,7 @@ public:
   std::function<void(const std::string& line)> write;       // CoreProc::send
   void reset();                                             // a new core: forget the pending invokes
   const nlohmann::json& lastModelJson() const { return lastModel_; }   // the last ui:model p as sent (the driver's model)
+  void clearModel() { lastModel_ = nullptr; }               // a new core run: its first ui:model replaces it
 
 private:
   void writeEnvelope(const nlohmann::json& e);
