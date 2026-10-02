@@ -1,4 +1,14 @@
-import { app, BrowserWindow, Menu, ipcMain, net, protocol, shell, type MenuItem } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  ipcMain,
+  net,
+  protocol,
+  screen,
+  shell,
+  type MenuItem,
+} from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
@@ -7,16 +17,24 @@ import { CH } from '../shared/ipc.js'
 import { Updater } from './update/updater.js'
 import { buildMenu } from './menu.js'
 import { registerWindowControls, reportMaximized } from './window-controls.js'
-import { windowChrome } from '../shared/window-chrome.js'
+import { ownsWindowControls, windowChrome } from '../shared/window-chrome.js'
+import { clampToWorkArea, loadSavedBounds, saveBounds } from './window-bounds.js'
 import { wslCursorSize } from '../shared/cursor-size.js'
 import { findMenuItem } from './accelerators.js'
 import { awaitSnapshot, registerIpc } from './ipc-router.js'
 import { PtyManager } from './pty/manager.js'
 import { DirWatcher } from './fs/watcher.js'
 import { MetricsMonitor } from './monitor/monitor.js'
-import { startControlServer, type ControlServer } from './control/server.js'
+import {
+  startControlServer,
+  startTcpControlServer,
+  type ControlServer,
+} from './control/server.js'
+import { controlJsonPath } from './control/endpoint.js'
 import { checkTtyForeground } from './control/foreground-check.js'
+import { platform } from './platform/index.js'
 import { screenKindOf } from './control/screen-kind.js'
+import { importLinuxState } from './state/import-linux.js'
 
 /**
  * A second instance for development and smoke tests. The single-instance lock
@@ -27,6 +45,13 @@ import { screenKindOf } from './control/screen-kind.js'
 if (process.env.SEASHELL_USER_DATA) {
   app.setPath('userData', path.resolve(process.env.SEASHELL_USER_DATA))
 }
+
+/**
+ * Windows groups and pins taskbar buttons by AppUserModelID. Without one set
+ * before the first window, a pinned SeaShell and the running one show up as
+ * two different buttons. Matches `appId` in electron-builder.yml.
+ */
+if (process.platform === 'win32') app.setAppUserModelId('dev.seashell.app')
 
 /**
  * Under WSLg the pointer would otherwise be sized from the whole multi-monitor
@@ -71,9 +96,14 @@ function resolveRendererFile(requestUrl: string): string | null {
 }
 
 function createWindow(): void {
+  // Saved bounds come back clamped to the work area of the display they best
+  // match, so a vanished or rearranged monitor never strands the window.
+  const saved = loadSavedBounds(app.getPath('userData'))
+  const placed = saved
+    ? clampToWorkArea(saved, screen.getDisplayMatching(saved).workArea)
+    : { width: 1440, height: 900 }
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    ...placed,
     minWidth: 900,
     minHeight: 560,
     ...windowChrome(process.platform),
@@ -145,12 +175,26 @@ function createWindow(): void {
     })
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.once('ready-to-show', () => {
+    if (saved?.maximized) mainWindow?.maximize()
+    mainWindow?.show()
+  })
+  {
+    const win = mainWindow
+    win.on('close', () => {
+      saveBounds(app.getPath('userData'), {
+        ...win.getNormalBounds(),
+        maximized: win.isMaximized(),
+      })
+    })
+  }
   reportMaximized(mainWindow)
 
-  // Off the Mac the frameless window never fires a menu accelerator, so match
-  // the menu's own shortcuts here and run the item (accelerators.ts).
-  if (process.platform !== 'darwin') {
+  // A frameless window never fires a menu accelerator, so match the menu's
+  // own shortcuts here and run the item (accelerators.ts). Only where the app
+  // owns the window controls: macOS and the native Windows frame fire them
+  // through the menu, and the shim would run each one twice there.
+  if (ownsWindowControls(process.platform)) {
     const win = mainWindow
     win.webContents.on('before-input-event', (e, input) => {
       const item = findMenuItem<MenuItem>(Menu.getApplicationMenu(), input)
@@ -246,7 +290,25 @@ if (!app.requestSingleInstanceLock()) {
   })
 }
 
-app.whenReady().then(() => {
+/**
+ * How long startup waits for the platform warm-up (win32: the WSL distro, home
+ * and shell probe) before opening the window anyway. A warm WSL answers in well
+ * under a second; a cold one (systemd starting after a reboot) can take many.
+ * Past the cap the probe finishes in the background, and nothing blocks on it:
+ * a pane opened before then starts without the shim, and the next one gets it.
+ */
+const WARM_UP_WAIT_MS = 15_000
+
+function warmUpPlatform(): Promise<void> {
+  if (!platform.warmUp) return Promise.resolve()
+  return Promise.race([
+    platform.warmUp().catch(() => undefined),
+    new Promise<void>((resolve) => setTimeout(resolve, WARM_UP_WAIT_MS)),
+  ])
+}
+
+// First Windows launch: bring projects + last session over from WSL. See import-linux.ts.
+app.whenReady().then(warmUpPlatform).then(() => importLinuxState(app.getPath('userData'))).then(() => {
   protocol.handle('app', async (req) => {
     const file = resolveRendererFile(req.url)
     if (!file) return new Response('Forbidden', { status: 403 })
@@ -277,17 +339,31 @@ app.whenReady().then(() => {
 
   registerIpc(ptyManager, { watcher })
 
-  void startControlServer({
-    socketPath: path.join(app.getPath('userData'), 'control.sock'),
-    writeToPane: (paneId, text) => pm.writeIfLive(paneId, text),
-    paneTty: (paneId) => pm.paneTty(paneId),
-    checkForeground: checkTtyForeground,
+  const controlDeps = {
+    writeToPane: (paneId: string, text: string) => pm.writeIfLive(paneId, text),
+    paneTty: (paneId: string) => pm.paneTty(paneId),
+    checkForeground: (tty: string) => (platform.checkForeground ? platform.checkForeground(tty) : checkTtyForeground(tty)),
     screenKind: paneScreenKind,
-  }).then(
+  }
+  // Windows has no AF_UNIX listen: there the same protocol runs on 127.0.0.1
+  // with a token, published in <userData>/control.json (control/endpoint.ts).
+  void (
+    process.platform === 'win32'
+      ? startTcpControlServer({
+          ...controlDeps,
+          infoPath: controlJsonPath(app.getPath('userData')),
+        })
+      : startControlServer({
+          ...controlDeps,
+          socketPath: path.join(app.getPath('userData'), 'control.sock'),
+        })
+  ).then(
     (server) => {
       controlServer = server
     },
-    () => {
+    (err: unknown) => {
+      // Pane delivery is off for this run; say why rather than going quiet.
+      console.warn('[seashell] control endpoint did not start:', err)
       controlServer = null
     }
   )
@@ -352,8 +428,16 @@ app.on('window-all-closed', () => {
  */
 const QUIT_DRAIN_TIMEOUT_MS = 8000
 
-/** How long quit will wait for the renderer's parting snapshot of the layout. */
-const SNAPSHOT_TIMEOUT_MS = 1000
+/**
+ * How long quit will wait for the renderer's parting snapshot of the layout.
+ *
+ * Longer on Windows: the snapshot's session lookup reads claude's state over
+ * \\wsl.localhost and asks WSL for its process table, which costs a second
+ * or more where Linux takes milliseconds. At 1 s every Windows quit lost the
+ * snapshot and fell back to the periodic one, up to 30 s stale. The wait ends
+ * as soon as the renderer answers, so a fast answer costs nothing.
+ */
+const SNAPSHOT_TIMEOUT_MS = process.platform === 'win32' ? 4000 : 1000
 
 let draining = false
 

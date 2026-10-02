@@ -9,15 +9,26 @@
  * check — the expensive `ps` call runs only for requests that could succeed.
  *
  * A Unix socket rather than a port: no network surface, filesystem mode 0600
- * is the authentication.
+ * is the authentication. Windows cannot listen on AF_UNIX, so there
+ * `startTcpControlServer` serves the same protocol on 127.0.0.1 with a random
+ * port and a token (control/endpoint.ts). Both share one connection handler;
+ * the only difference is how a request line is parsed (the TCP one checks the
+ * token first).
  */
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import { parseControlRequest } from './protocol.js'
+import { parseControlRequest, type ParseResult } from './protocol.js'
+import {
+  CONTROL_HOST,
+  endpointInfo,
+  gateRequest,
+  generateToken,
+  serializeEndpointInfo,
+} from './endpoint.js'
 
-export interface ControlServerDeps {
-  socketPath: string
+/** The collaborators every transport shares. */
+export interface ControlHandlerDeps {
   /** Returns false when the pane is unknown or its pty has exited. */
   writeToPane(paneId: string, text: string): boolean
   /** The pane's controlling tty (e.g. `ttys004`), or null if unknown/exited. */
@@ -31,8 +42,26 @@ export interface ControlServerDeps {
   idleTimeoutMs?: number
 }
 
+export interface ControlServerDeps extends ControlHandlerDeps {
+  socketPath: string
+}
+
+export interface TcpControlServerDeps extends ControlHandlerDeps {
+  /** Where the endpoint file goes: `<userData>/control.json`. */
+  infoPath: string
+  /** Tests may pin these; production leaves them unset (port 0, fresh token). */
+  port?: number
+  token?: string
+  pid?: number
+}
+
 export interface ControlServer {
   close(): Promise<void>
+}
+
+export interface TcpControlServer extends ControlServer {
+  port: number
+  token: string
 }
 
 const MAX_REQUEST_BYTES = 64 * 1024
@@ -50,8 +79,115 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
   fs.mkdirSync(path.dirname(deps.socketPath), { recursive: true })
 
   const connections = new Set<net.Socket>()
+  const server = net.createServer(connectionHandler(deps, parseControlRequest, connections))
 
-  const server = net.createServer((conn) => {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(deps.socketPath, () => resolve())
+  })
+  // Owner-only: filesystem permissions are the authentication.
+  fs.chmodSync(deps.socketPath, 0o600)
+
+  return {
+    close: async () => {
+      await closeServer(server, connections)
+      fs.rmSync(deps.socketPath, { force: true })
+    },
+  }
+}
+
+/**
+ * The Windows transport: 127.0.0.1 on a random port, every request gated on
+ * a 32-byte token, the endpoint published in `control.json` for clients to
+ * find. The file is written only after listen() succeeds (it names the real
+ * port) and removed on close, but only while it is still ours.
+ */
+export async function startTcpControlServer(deps: TcpControlServerDeps): Promise<TcpControlServer> {
+  const token = deps.token ?? generateToken()
+  const connections = new Set<net.Socket>()
+  const server = net.createServer(
+    connectionHandler(deps, (line) => gateRequest(line, token), connections)
+  )
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(deps.port ?? 0, CONTROL_HOST, () => resolve())
+  })
+  const addr = server.address()
+  const port = typeof addr === 'object' && addr !== null ? addr.port : 0
+
+  const info = serializeEndpointInfo(endpointInfo(port, token, deps.pid ?? process.pid))
+  const tmp = `${deps.infoPath}.${process.pid}.tmp`
+  try {
+    fs.mkdirSync(path.dirname(deps.infoPath), { recursive: true })
+    // Written whole then renamed, so a client never reads half a file. The
+    // mode is honoured on posix; on Windows the user profile's ACL is the
+    // protection, since userData lives under %APPDATA%.
+    //
+    // Known limit: from inside WSL, /mnt/c is mounted without the `metadata`
+    // option, so this file reads as mode 0777 to every Linux uid, and all of
+    // them act with the Windows user's token. Any process in the distro, under
+    // any uid, can read the token and type into a pane. The Unix socket's 0600
+    // limited that to one uid; this transport does not. Restoring it needs a
+    // peer check (a nonce in a 0600 file inside the WSL home) or a /mnt/c
+    // mount with metadata,umask=077.
+    fs.writeFileSync(tmp, info, { mode: 0o600 })
+    await renameWithRetry(tmp, deps.infoPath)
+  } catch (err) {
+    fs.rmSync(tmp, { force: true })
+    await closeServer(server, connections)
+    throw err
+  }
+
+  return {
+    port,
+    token,
+    close: async () => {
+      await closeServer(server, connections)
+      try {
+        // A newer instance may have replaced the file; leave its copy alone.
+        if (fs.readFileSync(deps.infoPath, 'utf8') === info)
+          fs.rmSync(deps.infoPath, { force: true })
+      } catch {
+        /* already gone */
+      }
+    },
+  }
+}
+
+/** Windows refuses a rename while any reader (Defender, a client reading the
+ *  old file over 9P) holds the target without delete sharing. Those holds are
+ *  brief, so a few short retries ride them out; one failure must not turn
+ *  pane delivery off for the whole run. */
+const RENAME_RETRY_DELAYS_MS = [50, 100, 200, 400, 800]
+
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(from, to)
+      return
+    } catch (err) {
+      const code = (err as { code?: unknown }).code
+      const delay = RENAME_RETRY_DELAYS_MS[attempt]
+      if (delay === undefined || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw err
+      await new Promise((resolve) => setTimeout(resolve, delay))
+    }
+  }
+}
+
+async function closeServer(server: net.Server, connections: Set<net.Socket>): Promise<void> {
+  for (const conn of connections) conn.destroy()
+  await new Promise<void>((resolve) => {
+    server.close(() => resolve())
+  })
+}
+
+function connectionHandler(
+  deps: ControlHandlerDeps,
+  parse: (line: string) => ParseResult,
+  connections: Set<net.Socket>
+): (conn: net.Socket) => void {
+  return (conn) => {
     connections.add(conn)
     conn.on('close', () => connections.delete(conn))
     conn.on('error', () => conn.destroy())
@@ -122,7 +258,7 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
     })
 
     async function handle(line: string): Promise<ControlResponse> {
-      const parsed = parseControlRequest(line)
+      const parsed = parse(line)
       if (!parsed.ok) return { ok: false, error: parsed.error }
       const req = parsed.req
 
@@ -158,22 +294,5 @@ export async function startControlServer(deps: ControlServerDeps): Promise<Contr
       }
       return { ok: true }
     }
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(deps.socketPath, () => resolve())
-  })
-  // Owner-only: filesystem permissions are the authentication.
-  fs.chmodSync(deps.socketPath, 0o600)
-
-  return {
-    close: async () => {
-      for (const conn of connections) conn.destroy()
-      await new Promise<void>((resolve) => {
-        server.close(() => resolve())
-      })
-      fs.rmSync(deps.socketPath, { force: true })
-    },
   }
 }

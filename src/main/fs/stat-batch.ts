@@ -12,9 +12,10 @@
 
 import { promises as fsp } from 'node:fs'
 import type { Stats } from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
 import type { FsStatBatchRequest, FsStatBatchResponse, FsStatBatchResult } from '../../shared/ipc.js'
+import { isLinuxPath } from '../../shared/wsl-path.js'
+import { fromHostPath, rendererHome, toHostPath } from './host-path.js'
 
 /**
  * Hard cap enforced here regardless of what the renderer sends. The
@@ -33,10 +34,16 @@ export const MAX_CANDIDATES = 512
  * proven so by the filesystem itself.
  */
 export async function statBatch(req: FsStatBatchRequest): Promise<FsStatBatchResponse> {
-  const cwdAbs = path.resolve(req.cwd)
+  // win32: a Linux cwd is stat'ed through its Windows form, and the answer is
+  // given back in the dialect the caller asked in. A Windows-shaped cwd (no
+  // WSL involved) is answered in Windows form, untranslated.
+  const cwdAbs = path.resolve(toHostPath(req.cwd))
+  const back = isLinuxPath(req.cwd) ? fromHostPath : (p: string) => p
   const candidates = req.candidates.slice(0, MAX_CANDIDATES)
 
-  const settled = await Promise.all(candidates.map((candidate, i) => statOne(cwdAbs, candidate, i)))
+  const settled = await Promise.all(
+    candidates.map((candidate, i) => statOne(cwdAbs, candidate, i, back))
+  )
 
   const results: FsStatBatchResult[] = []
   for (const r of settled) {
@@ -59,13 +66,22 @@ export async function statBatch(req: FsStatBatchRequest): Promise<FsStatBatchRes
  * `~foo` in the middle of a path is just a character.
  */
 function expandHome(candidate: string): string {
-  if (candidate === '~') return os.homedir()
-  if (candidate.startsWith('~/')) return path.join(os.homedir(), candidate.slice(2))
+  const home = rendererHome()
+  if (candidate === '~') return home
+  // On win32 the home is a Linux path, which must be joined the POSIX way
+  // before toHostPath maps it.
+  const join = isLinuxPath(home) ? path.posix.join : path.join
+  if (candidate.startsWith('~/')) return join(home, candidate.slice(2))
   return candidate
 }
 
-async function statOne(cwdAbs: string, candidate: string, i: number): Promise<FsStatBatchResult | undefined> {
-  const resolved = path.resolve(cwdAbs, expandHome(candidate))
+async function statOne(
+  cwdAbs: string,
+  candidate: string,
+  i: number,
+  back: (p: string) => string
+): Promise<FsStatBatchResult | undefined> {
+  const resolved = path.resolve(cwdAbs, toHostPath(expandHome(candidate)))
   // path.resolve() against an absolute cwd always yields an absolute path;
   // this check is a defensive backstop, not something expected to ever trip.
   if (!path.isAbsolute(resolved)) return undefined
@@ -87,5 +103,5 @@ async function statOne(cwdAbs: string, candidate: string, i: number): Promise<Fs
   const kind: FsStatBatchResult['kind'] = stat.isDirectory() ? 'dir' : stat.isFile() ? 'file' : 'other'
   const exec = (stat.mode & 0o111) !== 0
 
-  return { i, resolved: real, kind, size: stat.size, exec }
+  return { i, resolved: back(real), kind, size: stat.size, exec }
 }

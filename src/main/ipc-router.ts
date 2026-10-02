@@ -21,10 +21,12 @@ import { writeTextFile } from './fs/write.js'
 import { statBatch } from './fs/stat-batch.js'
 import { findBySuffix } from './fs/find-suffix.js'
 import { decideRoute, VIEWER_MAX_BYTES } from './fs/route.js'
-import { denyOpenPath, extOf } from './fs/path-guard.js'
+import { denyOpenPath, denyShellOpenOnWindows, extOf } from './fs/path-guard.js'
+import { fromHostPath, rendererHome, toHostPath } from './fs/host-path.js'
 import { statForOpen, type OpenTarget } from './fs/open-target.js'
 import { ensureNotes } from './links/notes.js'
 import { platform } from './platform/index.js'
+import { appInstanceId } from '../shared/wsl-shell.js'
 import { WINDOWS_IMAGE_SCRIPT, decodeBase64Output, saveClipboardImage } from './clipboard-image.js'
 import {
   MAX_NAME_LENGTH,
@@ -139,6 +141,26 @@ const snapshotGate = createSnapshotGate()
  * `timeoutMs` passes, whichever comes first. The timing lives in the gate; all
  * this adds is the window to ask.
  */
+/**
+ * The directory holding `.claude/` for the lookups: undefined for this
+ * process's own home (macOS, Linux), the platform's answer where it keeps it
+ * elsewhere (win32: the WSL home over UNC), and null when that platform cannot
+ * say right now. A null is retried once through the platform warm-up; it is
+ * never quietly replaced by `os.homedir()`, which on Windows is a profile with
+ * no claude state in it at all.
+ */
+async function lookupClaudeHome(): Promise<string | undefined | null> {
+  if (!platform.claudeHome) return undefined
+  const first = platform.claudeHome()
+  if (first !== null || !platform.warmUp) return first
+  try {
+    await platform.warmUp()
+  } catch {
+    /* still unknown */
+  }
+  return platform.claudeHome()
+}
+
 export function awaitSnapshot(win: BrowserWindow, timeoutMs: number): Promise<void> {
   return snapshotGate.request(() => {
     // A destroyed window has nobody to answer. The gate reads the throw as
@@ -149,8 +171,9 @@ export function awaitSnapshot(win: BrowserWindow, timeoutMs: number): Promise<vo
 }
 
 export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher }): void {
-  // WSL only: files copied in Windows Explorer never reach the Linux clipboard as
-  // paths, so ask Windows directly. Only called when a paste finds no text.
+  // WSL and Windows: files copied in Explorer never reach the clipboard as text,
+  // so ask Windows directly. Only called when a paste finds no text. The
+  // renderer turns the Windows paths into WSL ones (panes/drop.ts).
   ipcMain.handle(CH.clipboardWindowsFiles, async () => {
     const out = await windowsPowerShell(
       '[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-Clipboard -Format FileDropList -ErrorAction SilentlyContinue).FullName'
@@ -232,7 +255,8 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
     if (!parsed.success) return miss
 
     // The renderer is never an authority on paths: resolve and stat here.
-    const abs = path.resolve(parsed.data.path)
+    // On win32 its Linux path is stat'ed through its Windows form.
+    const abs = path.resolve(toHostPath(parsed.data.path))
     try {
       // Routed on the target for the same reason the open handler guards it —
       // decideRoute calls denyOpenPath, whose whole contract is that it is
@@ -243,7 +267,8 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
       const target = await statForOpen(abs)
       const ext = extOf(path.basename(abs))
       const route = decideRoute({
-        resolvedPath: target.real,
+        // Back in Linux form so the guard's /dev and /mnt rules still apply.
+        resolvedPath: fromHostPath(target.real),
         isDir: target.isDir,
         size: target.size,
         isExecutable: target.isExecutable,
@@ -272,7 +297,7 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
     if (!parsed.success) {
       return { ok: false, code: 'ENOENT', message: 'invalid write request' }
     }
-    return writeTextFile(parsed.data, os.homedir())
+    return writeTextFile(parsed.data, rendererHome())
   })
 
   /**
@@ -288,7 +313,7 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
     const parsed = OpenReq.safeParse(raw)
     if (!parsed.success) return { ok: false, code: 'ENOENT', message: 'invalid path' }
 
-    const abs = path.resolve(parsed.data.path)
+    const abs = path.resolve(toHostPath(parsed.data.path))
     const mime = IMAGE_MIME[extOf(path.basename(abs))]
     if (!mime) {
       return { ok: false, code: 'EUNSUPPORTED', message: 'not a previewable image' }
@@ -339,7 +364,9 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
   ipcMain.handle(CH.openWithDefaultApp, async (_e, raw): Promise<OpenPathResponse> => {
     const parsed = OpenReq.safeParse(raw)
     if (!parsed.success) return { ok: false, error: 'invalid path' }
-    const abs = path.resolve(parsed.data.path)
+    // win32: the renderer's Linux path becomes C:\... or the distro share
+    // before anything touches it; Explorer and the default app get that form.
+    const abs = path.resolve(toHostPath(parsed.data.path))
     let target: OpenTarget
     try {
       // Guard the target, not the link — see statForOpen. LaunchServices
@@ -348,10 +375,11 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
       target = await statForOpen(abs)
       if (
         denyOpenPath({
-          resolvedPath: target.real,
+          resolvedPath: fromHostPath(target.real),
           isExecutable: target.isExecutable,
           isDir: target.isDir,
-        })
+        }) ||
+        (process.platform === 'win32' && denyShellOpenOnWindows(target.real))
       ) {
         // Reveal the path the user actually clicked, not its target: that is
         // the row they can see.
@@ -370,7 +398,7 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
   ipcMain.handle(CH.openRevealInFinder, async (_e, raw): Promise<OpenPathResponse> => {
     const parsed = OpenReq.safeParse(raw)
     if (!parsed.success) return { ok: false, error: 'invalid path' }
-    shell.showItemInFolder(path.resolve(parsed.data.path))
+    shell.showItemInFolder(path.resolve(toHostPath(parsed.data.path)))
     return { ok: true }
   })
 
@@ -406,14 +434,33 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
       })
       .safeParse(raw)
     if (!parsed.success) return { ids: {}, sources: {} }
+    // No verdict (a save keeps every carried id, a restore resumes nothing)
+    // rather than reading the wrong ~/.claude.
+    const claudeHome = await lookupClaudeHome()
+    if (claudeHome === null) return { ids: {}, sources: {} }
     const shells = new Map(ptyManager.listPids().map((p) => [p.paneId, p.pid]))
+    // One process table per lookup; on win32 it also answers which of the
+    // recorded (Linux) pids are alive, since signal 0 cannot reach into WSL.
+    let sweep: Promise<string> | null = null
+    const sweepOnce = (): Promise<string> => (sweep ??= platform.sweepMemory())
     return sessionIdsForPanes(parsed.data.panes, {
       shellPidOf: (paneId) => shells.get(paneId) ?? null,
       processChildren: async () => {
-        const stdout = await platform.sweepMemory()
+        const stdout = await sweepOnce()
         return stdout ? parsePsOutput(stdout).childrenOf : null
       },
       startTokens: (pids) => platform.processStartTokens(pids),
+      claudeHome,
+      // win32 panes carry SEASHELL_APP_ID (wsl-shell.ts), and the registry is
+      // shared with any Linux SeaShell in the same distro.
+      appId: platform.id === 'win32' ? appInstanceId('win32', process.pid) : undefined,
+      livePids:
+        platform.id === 'win32'
+          ? async () => {
+              const stdout = await sweepOnce()
+              return stdout ? new Set(parsePsOutput(stdout).rows.keys()) : null
+            }
+          : undefined,
     }, parsed.data.releasing)
   })
 
@@ -434,9 +481,11 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
       })
       .safeParse(raw)
     if (!parsed.success) return { modes: {}, bypassConsented: false }
+    const claudeHome = await lookupClaudeHome()
+    if (claudeHome === null) return { modes: {}, bypassConsented: false }
     return {
-      modes: await resumeModesForPanes(parsed.data.panes),
-      bypassConsented: await bypassConsented(),
+      modes: await resumeModesForPanes(parsed.data.panes, claudeHome),
+      bypassConsented: await bypassConsented(claudeHome),
     }
   })
 
@@ -531,11 +580,11 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
 
   ipcMain.handle(CH.appGetPaths, (): AppPaths => {
     return {
-      home: os.homedir(),
+      home: rendererHome(),
       hostname: os.hostname(),
       userData: app.getPath('userData'),
       defaultShell: platform.loginShell().file,
-      cwdOfLaunch: os.homedir(),
+      cwdOfLaunch: rendererHome(),
     }
   })
 
@@ -554,15 +603,29 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
 
 const WINDOWS_POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 
+/** Windows PowerShell as this process reaches it: through /mnt/c under WSL,
+ *  natively on Windows, nowhere else. */
+function powerShellPath(): string | null {
+  if (process.platform === 'linux') return WINDOWS_POWERSHELL
+  if (process.platform === 'win32') {
+    const root = process.env['SystemRoot'] ?? 'C:\\Windows'
+    return path.win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  }
+  return null
+}
+
 /**
- * Run a PowerShell command on the Windows side of WSL and return its stdout, or
- * null anywhere that is not WSL, on a non-zero exit or on a timeout. `sta` is
+ * Run a Windows PowerShell command and return its stdout, or null where there
+ * is no Windows (macOS, plain Linux), on a non-zero exit or on a timeout. Under
+ * WSL it is the Windows side; on the native Windows build it is the same
+ * PowerShell run directly, so Explorer's copied files paste there too. `sta` is
  * needed for System.Windows.Forms.Clipboard.
  */
 async function windowsPowerShell(command: string, sta = false): Promise<string | null> {
-  if (process.platform !== 'linux') return null
+  const exe = powerShellPath()
+  if (exe === null) return null
   try {
-    await fs.access(WINDOWS_POWERSHELL)
+    await fs.access(exe)
   } catch {
     return null
   }
@@ -570,7 +633,7 @@ async function windowsPowerShell(command: string, sta = false): Promise<string |
   const args = ['-NoProfile', '-NonInteractive', ...(sta ? ['-Sta'] : []), '-Command', command]
   return new Promise((resolve) => {
     execFile(
-      WINDOWS_POWERSHELL,
+      exe,
       args,
       // A full-screen screenshot is a few MB of base64.
       { timeout: 8000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 },

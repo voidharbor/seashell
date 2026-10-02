@@ -1,4 +1,4 @@
-import type { SavedPane, SavedTab } from '../../shared/ipc.js'
+import type { PaneMetrics, ProjectsSessionIdsResponse, SavedPane, SavedTab } from '../../shared/ipc.js'
 import { claudeTitleFromLabel } from '../../shared/claude-title.js'
 import type { AppState, PaneCommand, PaneState, TabState } from '../store.js'
 import { createInitialTree } from '../layout/tree.js'
@@ -39,6 +39,8 @@ export type SerializablePane = Omit<
   // saved mode would go stale the moment the user cycled it, and a project
   // file is user data no flag should be composed from.
   | 'claudeResumeMode'
+  // An observation about this run of the pane, not about what it is.
+  | 'claudeSeen'
 >
 
 /**
@@ -60,6 +62,22 @@ const RESTORABLE_FOREGROUND: Readonly<Record<string, PaneCommand>> = {
 }
 
 /**
+ * The program a metrics tick says is in the foreground, or null when the tick
+ * says nothing (no tick yet, a platform that sends none, or a sweep that did
+ * not find the pane's own shell, which the monitor reports as a bare 'zsh'
+ * with no processes counted).
+ *
+ * `ps` reports a resolved path, and a program that rewrites its own process
+ * title can append to it: "claude bg-pty-host" is a real observed value. The
+ * leading token after the last slash is the program itself.
+ */
+export function foregroundProgram(metrics: PaneMetrics | undefined): string | null {
+  if (!metrics || !(metrics.procCount >= 1)) return null
+  const name = ((metrics.foregroundProcess ?? '').split(/\s+/)[0] ?? '').split('/').pop() ?? ''
+  return name === '' ? null : name
+}
+
+/**
  * What a pane should be recorded as having been running.
  *
  * The bug this fixes: since the `✻` button left the tab bar, nothing in the app
@@ -67,24 +85,33 @@ const RESTORABLE_FOREGROUND: Readonly<Record<string, PaneCommand>> = {
  * project recorded `'zsh'` and reopening it gave back a row of bare shells
  * instead of the agents that had been running in them.
  *
- * The app already knew — the monitor reports `foregroundProcess` on every tick,
- * which is what lets a pane badge itself `claude` in its own title bar. Nothing
- * ever wrote that back down. So a pane is saved as what it is *actually*
- * running rather than as whatever it was launched as.
+ * Evidence, strongest first:
+ * - `claudeRunning`: main found a live claude in this pane's process tree.
+ * - the last metrics tick names claude as the foreground.
+ * - the pane is a claude pane (restored as one, or carrying a session id only
+ *   a proof could have given it). It stays claude, id and all, until a tick
+ *   positively shows something else in the foreground after claude was seen
+ *   there. A missing tick, a failed sweep or an unknown foreground is not
+ *   evidence of anything: treating it as such is how one bad sweep once
+ *   re-saved a whole project as bare shells and lost every session id.
  *
- * A command the user chose explicitly always wins over an inferred one. They
- * asked for that; this is only guessing.
+ * A 'cmd' pane keeps its command: retyping it is what the user asked for.
  */
-export function savedCommandFor(pane: PaneState): PaneCommand {
-  if (pane.command !== 'zsh') return pane.command
-  if (pane.kind !== 'term') return pane.command
+export function savedCommandFor(pane: PaneState, claudeRunning = false): PaneCommand {
+  if (pane.kind !== 'term' || pane.command === 'cmd') return pane.command
+  if (claudeRunning) return 'claude'
 
-  // `ps` reports a resolved path, and a program that rewrites its own process
-  // title can append to it — "claude bg-pty-host" is a real observed value. The
-  // leading token after the last slash is the program itself.
-  const raw = pane.metrics?.foregroundProcess ?? ''
-  const name = (raw.split(/\s+/)[0] ?? '').split('/').pop() ?? ''
-  return RESTORABLE_FOREGROUND[name] ?? 'zsh'
+  const fg = foregroundProgram(pane.metrics)
+  if (fg !== null && Object.hasOwn(RESTORABLE_FOREGROUND, fg)) return RESTORABLE_FOREGROUND[fg]!
+
+  // A shell pane only ever gets an id from a proof that claude ran in it; a
+  // restored claude pane has to be seen running before a tick can retire it,
+  // or the first tick after restore (the shell, before claude has started)
+  // would save every pane as a shell.
+  const claudePane = pane.command === 'claude' || pane.claudeSessionId !== undefined
+  if (!claudePane) return 'zsh'
+  const seen = pane.command === 'zsh' || pane.claudeSeen === true
+  return seen && fg !== null ? 'zsh' : 'claude'
 }
 
 /**
@@ -103,8 +130,7 @@ const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
  * A 'cmd' pane keeps its command: retyping it is what the user asked for.
  */
 export function paneToSaved(pane: PaneState, sessionId?: string, claudeRunning = false): SavedPane {
-  const inferred = savedCommandFor(pane)
-  const command = claudeRunning && pane.kind === 'term' && inferred === 'zsh' ? 'claude' : inferred
+  const command = savedCommandFor(pane, claudeRunning)
   // Only a claude terminal pane records a session to resume; the id itself
   // must be UUID-shaped or it does not get written at all.
   const sid =
@@ -141,7 +167,10 @@ export function tabToSaved(
     panes: Object.fromEntries(
       Object.entries(tab.panes).map(([id, p]) => [
         id,
-        paneToSaved(p, sessionIds?.get(id), claudeRunning?.has(id) ?? false),
+        // No lookup at all (it failed or was never made) is not a verdict:
+        // the pane keeps the id it was last proven on. A lookup that ran and
+        // left the pane out did decide, and is followed.
+        paneToSaved(p, sessionIds ? sessionIds.get(id) : p.claudeSessionId, claudeRunning?.has(id) ?? false),
       ])
     ),
     sessionIdsVerified: true,
@@ -154,6 +183,44 @@ export function stateToTabs(
   claudeRunning?: ReadonlySet<string>
 ): SavedTab[] {
   return state.tabs.map((t) => tabToSaved(t, sessionIds, claudeRunning))
+}
+
+/** What a save knows from main's session lookup; see `saveLookupFrom`. */
+export interface SaveLookup {
+  ids: ReadonlyMap<string, string>
+  running: ReadonlySet<string>
+}
+
+/**
+ * Turns main's answer to a save's session lookup into what `stateToTabs`
+ * takes. `panes` is every terminal pane in the window, in the order they were
+ * sent; only the first `asked` were (the request is capped).
+ *
+ * Undefined means "no verdict", and every pane then saves the id it already
+ * carries: the lookup threw (`res` null), or it came back answering nothing at
+ * all while panes had ids to carry, which is what main sends for a request it
+ * could not parse, never a real answer (a carried id is only refused when
+ * another holder has it, and restore checks that again anyway). A pane past
+ * the cap was never asked, so it keeps its own id too.
+ */
+export function saveLookupFrom(
+  panes: readonly PaneState[],
+  asked: number,
+  res: ProjectsSessionIdsResponse | null
+): SaveLookup | undefined {
+  if (res === null) return undefined
+  const sent = panes.slice(0, asked)
+  if (Object.keys(res.sources).length === 0 && sent.some((p) => p.claudeSessionId !== undefined)) {
+    return undefined
+  }
+  const ids = new Map(Object.entries(res.ids))
+  for (const p of panes.slice(asked)) {
+    if (p.claudeSessionId !== undefined) ids.set(p.id, p.claudeSessionId)
+  }
+  return {
+    ids,
+    running: new Set(Object.keys(res.sources).filter((id) => res.sources[id] === 'process')),
+  }
 }
 
 /**

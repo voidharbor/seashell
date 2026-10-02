@@ -38,14 +38,18 @@ import { accelerator, zoomLabel } from '../shared/keys.js'
  * switch. A menu item whose command nothing handles is worse than no menu item:
  * it presents as a working feature and does nothing.
  */
-export function buildMenu(getWindow: () => BrowserWindow | null): void {
+export function buildMenu(
+  getWindow: () => BrowserWindow | null,
+  platform: NodeJS.Platform = process.platform
+): void {
+  const mac = platform === 'darwin'
   const send = (command: string) => () => {
     getWindow()?.webContents.send(CH.uiCommand, { command })
   }
 
-  const item = (label: string, mac: string, command: string): MenuItemConstructorOptions => ({
+  const item = (label: string, chord: string, command: string): MenuItemConstructorOptions => ({
     label,
-    accelerator: accelerator(mac, process.platform),
+    accelerator: accelerator(chord, platform),
     click: send(command),
   })
 
@@ -57,11 +61,18 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
         { type: 'separator' },
         item('Settings…', 'Cmd+,', 'app.settings'),
         { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit' },
+        // hide/hideOthers/unhide are macOS roles. Quit is a role only there:
+        // off the Mac the stock role carries CmdOrCtrl+Q on Linux, a bare
+        // Ctrl+Q (XON in a shell), so it is a plain item with no accelerator.
+        ...(mac
+          ? ([
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' },
+            ] as MenuItemConstructorOptions[])
+          : [{ label: platform === 'win32' ? 'Exit' : 'Quit', click: () => app.quit() }]),
       ],
     },
     {
@@ -122,9 +133,9 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
         item('Rebalance Panes', 'Cmd+Shift+R', 'layout.rebalance'),
         { type: 'separator' },
         // No accelerators on these three, deliberately — see the note below.
-        { label: `Zoom In\t${zoomLabel('=', process.platform)}`, click: send('ui.zoomIn') },
-        { label: `Zoom Out\t${zoomLabel('-', process.platform)}`, click: send('ui.zoomOut') },
-        { label: `Actual Size\t${zoomLabel('0', process.platform)}`, click: send('ui.zoomReset') },
+        { label: `Zoom In\t${zoomLabel('=', platform)}`, click: send('ui.zoomIn') },
+        { label: `Zoom Out\t${zoomLabel('-', platform)}`, click: send('ui.zoomOut') },
+        { label: `Actual Size\t${zoomLabel('0', platform)}`, click: send('ui.zoomReset') },
         // No menu items for the pane pair: they act on the focused pane, which
         // is a renderer concept, and the chords are listed in the tutorial.
         { type: 'separator' },
@@ -152,7 +163,23 @@ export function buildMenu(getWindow: () => BrowserWindow | null): void {
         ),
       ],
     },
-    { role: 'windowMenu' },
+    /**
+     * The stock Window menu only on the Mac. Off it, `windowMenu` expands to
+     * the minimize and close roles, whose built-in accelerators are
+     * CmdOrCtrl+M and CmdOrCtrl+W: bare Ctrl+M (carriage return) and Ctrl+W
+     * (delete word). Roles never pass through `accelerator()`, and on Windows
+     * the native frame registers them, so Ctrl+W in a pane closed the only
+     * window and quit the app. Plain items with no accelerator instead.
+     */
+    mac
+      ? { role: 'windowMenu' }
+      : {
+          label: 'Window',
+          submenu: [
+            { label: 'Minimize', click: () => getWindow()?.minimize() },
+            { label: 'Close Window', click: () => getWindow()?.close() },
+          ],
+        },
     {
       role: 'help',
       submenu: [

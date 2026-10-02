@@ -87,13 +87,14 @@ export interface ResumePaneRef {
  *  Any per-pane failure just leaves that pane out — restore then types the
  *  bare resume it always did. */
 export async function resumeModesForPanes(
-  panes: readonly ResumePaneRef[]
+  panes: readonly ResumePaneRef[],
+  home?: string
 ): Promise<Record<string, PermissionMode>> {
   const out: Record<string, PermissionMode> = {}
   for (const pane of panes) {
     if (!isValidSessionId(pane.sid)) continue
     try {
-      const file = path.join(transcriptDirFor(pane.cwd), `${pane.sid}.jsonl`)
+      const file = path.join(transcriptDirFor(pane.cwd, home), `${pane.sid}.jsonl`)
       const mode = parseLastPermissionMode(await readTailLines(file))
       if (mode) out[pane.paneId] = mode
     } catch {
@@ -123,10 +124,11 @@ export function bypassConsentFrom(settings: unknown): boolean {
   return s.skipDangerousModePermissionPrompt === true
 }
 
-/** Reads the consent from ~/.claude/settings.json; unreadable means no. */
-export async function bypassConsented(): Promise<boolean> {
+/** Reads the consent from ~/.claude/settings.json (under `home` when given,
+ *  the WSL home on win32); unreadable means no. */
+export async function bypassConsented(home: string = os.homedir()): Promise<boolean> {
   try {
-    const file = path.join(os.homedir(), '.claude', 'settings.json')
+    const file = path.join(home, '.claude', 'settings.json')
     return bypassConsentFrom(JSON.parse(await fs.readFile(file, 'utf8')))
   } catch {
     return false

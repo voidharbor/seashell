@@ -12,10 +12,11 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { promises as fsp } from 'node:fs'
-import type { Stats } from 'node:fs'
+import type { Dirent, Stats } from 'node:fs'
 import * as path from 'node:path'
 import type { FsDirEntry, FsReadDirRequest, FsReadDirResponse } from '../../shared/ipc.js'
 import { ALWAYS_HIDDEN_NAMES, GitignoreEngine, type GitignoreFs } from './gitignore.js'
+import { toHostPath } from './host-path.js'
 
 /**
  * Above this many entries, the directory is reported truncated and the
@@ -46,6 +47,16 @@ export function invalidateGitignoreCache(dirAbsPath: string): void {
   gitignoreEngine.invalidate(dirAbsPath)
 }
 
+/** The parts of a Stats the listing reads. */
+type EntryStat = Pick<Stats, 'size' | 'mtimeMs' | 'isDirectory' | 'isSymbolicLink'>
+
+const UNSTATTABLE_SYMLINK: EntryStat = {
+  size: 0,
+  mtimeMs: 0,
+  isDirectory: () => false,
+  isSymbolicLink: () => true,
+}
+
 const READDIR_ERROR_CODES = ['ENOENT', 'EACCES', 'ENOTDIR', 'ELOOP'] as const
 type ReadDirErrorCode = (typeof READDIR_ERROR_CODES)[number]
 
@@ -54,8 +65,13 @@ type ReadDirErrorCode = (typeof READDIR_ERROR_CODES)[number]
  * both groups sort case-insensitively, matching how Finder-like explorers
  * read to users.
  */
-export async function readDir(req: FsReadDirRequest): Promise<FsReadDirResponse> {
-  const resolved = path.resolve(req.path)
+export async function readDir(
+  req: FsReadDirRequest,
+  platform: NodeJS.Platform = process.platform
+): Promise<FsReadDirResponse> {
+  // On win32 the renderer's Linux path becomes C:\... or the distro share
+  // first; entries come back as bare names, so nothing needs translating back.
+  const resolved = path.resolve(toHostPath(req.path, platform))
 
   let real: string
   try {
@@ -64,22 +80,30 @@ export async function readDir(req: FsReadDirRequest): Promise<FsReadDirResponse>
     return errResult(err)
   }
 
-  let names: string[]
+  let dirents: Dirent[]
   try {
-    names = await fsp.readdir(real)
+    dirents = await fsp.readdir(real, { withFileTypes: true })
   } catch (err) {
     return errResult(err)
   }
 
-  const withStats: Array<{ name: string; abs: string; stat: Stats }> = []
-  for (const name of names) {
+  const withStats: Array<{ name: string; abs: string; stat: EntryStat }> = []
+  for (const dirent of dirents) {
+    const name = dirent.name
     if (ALWAYS_HIDDEN_NAMES.has(name)) continue
     const abs = path.join(real, name)
     try {
       const stat: Stats = await fsp.lstat(abs)
       withStats.push({ name, abs, stat })
     } catch {
-      // Vanished between readdir and lstat, or unreadable on its own — drop this one entry rather than fail the whole listing.
+      // Windows cannot lstat a WSL symlink through the distro share (it
+      // answers EISDIR), but readdir still knows it is one. List it the way
+      // lstat would on Linux, a symlink that is not a directory, so the tree
+      // matches; size and mtime are simply unknown.
+      if (platform === 'win32' && dirent.isSymbolicLink()) {
+        withStats.push({ name, abs, stat: UNSTATTABLE_SYMLINK })
+      }
+      // Otherwise it vanished between readdir and lstat, or is unreadable on its own: drop this one entry rather than fail the whole listing.
       continue
     }
   }

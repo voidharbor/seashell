@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,6 +9,19 @@ import {
   isPrimaryModifier,
   modifiersLabel,
 } from '../../src/shared/keys.js'
+
+const built = vi.hoisted(() => ({ template: [] as unknown[] }))
+vi.mock('electron', () => ({
+  app: { isPackaged: false, quit: () => {} },
+  shell: { openExternal: async () => {} },
+  Menu: {
+    buildFromTemplate: (t: unknown[]) => {
+      built.template = t
+      return {}
+    },
+    setApplicationMenu: () => {},
+  },
+}))
 
 /**
  * Off the Mac, Cmd is the Windows key and Windows keeps it (Win+D shows the
@@ -126,5 +139,80 @@ describe('event classification', () => {
     expect(isAppChord(ev({ ctrlKey: true, key: 'd' }), 'linux')).toBe(false)
     expect(isAppChord(ev({ shiftKey: true, key: 'D' }), 'linux')).toBe(false)
     expect(isAppChord(ev({ metaKey: true, key: 'd' }), 'linux')).toBe(false)
+  })
+})
+
+/**
+ * Roles never go through `accelerator()`, so the source scan above cannot see
+ * them. These are the accelerators Electron gives each stock role off the Mac
+ * (lib/browser/api/menu-item-roles.ts); a role missing from this table fails
+ * the walk below until someone looks up what it binds.
+ */
+const ROLE_ACCELERATORS: Record<string, Partial<Record<NodeJS.Platform, string>> & { other?: string }> = {
+  about: {},
+  help: {},
+  togglefullscreen: { other: 'F11' },
+  toggledevtools: { other: 'Ctrl+Shift+I' },
+  quit: { linux: 'CommandOrControl+Q' },
+  close: { other: 'CommandOrControl+W' },
+  minimize: { other: 'CommandOrControl+M' },
+  hide: { other: 'Command+H' },
+  hideothers: { other: 'Command+Alt+H' },
+  unhide: {},
+}
+
+interface TemplateItem {
+  role?: string
+  accelerator?: string
+  registerAccelerator?: boolean
+  submenu?: TemplateItem[]
+}
+
+/** Every accelerator the built template would register on `platform`, roles included. */
+async function registeredAccelerators(platform: NodeJS.Platform): Promise<string[]> {
+  const { buildMenu } = await import('../../src/main/menu.js')
+  buildMenu(() => null, platform)
+  const out: string[] = []
+  const walk = (items: TemplateItem[]): void => {
+    for (const it of items) {
+      const role = it.role?.toLowerCase()
+      if (role === 'windowmenu') {
+        // Expands to minimize and close off the Mac.
+        walk([{ role: 'minimize' }, { role: 'close' }])
+        continue
+      }
+      let accel = it.accelerator
+      if (accel === undefined && role !== undefined) {
+        const known = ROLE_ACCELERATORS[role]
+        expect(known, `unvetted menu role ${role}`).toBeDefined()
+        accel = known?.[platform] ?? known?.other
+      }
+      if (accel !== undefined && it.registerAccelerator !== false) out.push(accel)
+      if (it.submenu) walk(it.submenu)
+    }
+  }
+  walk(built.template as TemplateItem[])
+  return out
+}
+
+describe('the built menu, roles included', () => {
+  it.each(['win32', 'linux'] as const)('registers no bare Ctrl or Cmd chord on %s', async (platform) => {
+    const accels = await registeredAccelerators(platform)
+    expect(accels.length).toBeGreaterThan(25)
+    for (const a of accels) {
+      // CommandOrControl is Ctrl off the Mac; Command is the Windows key there.
+      expect(a, a).not.toMatch(/^(Command|Cmd|CommandOrControl|CmdOrCtrl|Super|Meta)\+/i)
+      if (a === 'Ctrl+,' || /^F\d+$/.test(a)) continue
+      expect(a, a).toMatch(/^Ctrl\+(Shift|Alt)\+/)
+    }
+  })
+
+  it('keeps the stock Window menu on the Mac only', async () => {
+    await registeredAccelerators('darwin')
+    const roles = (built.template as TemplateItem[]).map((t) => t.role)
+    expect(roles).toContain('windowMenu')
+    await registeredAccelerators('win32')
+    const off = JSON.stringify(built.template)
+    expect(off).not.toMatch(/"role":"(windowMenu|close|minimize|quit)"/)
   })
 })

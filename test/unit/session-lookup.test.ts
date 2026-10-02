@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pickFallbackSessionIds, pickSessionIds } from '../../src/main/state/session-lookup.js'
+import { pickFallbackSessionIds, pickSessionIds, entryBelongsTo } from '../../src/main/state/session-lookup.js'
 
 const A = '11111111-1111-4111-8111-111111111111'
 const B = '22222222-2222-4222-8222-222222222222'
@@ -121,5 +121,26 @@ describe('pickSessionIds still owns the registry lane', () => {
   it('ignores a registration whose process is gone', () => {
     const out = pickSessionIds([{ pane_id: 'p1', session_id: A, pid: 1 }], ['p1'], () => false)
     expect(out).toEqual({})
+  })
+})
+
+describe('registry entries and the app run that wrote them', () => {
+  it('a stamping build counts only its own stamp', () => {
+    expect(entryBelongsTo({ app_id: 'win32-7' }, 'win32-7')).toBe(true)
+    expect(entryBelongsTo({ app_id: 'win32-8' }, 'win32-7')).toBe(false)
+    expect(entryBelongsTo({}, 'win32-7')).toBe(false)
+  })
+
+  it('a build that stamps nothing never takes an entry another run claimed', () => {
+    expect(entryBelongsTo({}, undefined)).toBe(true)
+    expect(entryBelongsTo({ app_id: null }, undefined)).toBe(true)
+    expect(entryBelongsTo({ app_id: 'win32-7' }, undefined)).toBe(false)
+  })
+
+  it('filters the registry lane on it', () => {
+    const sid = '66666666-6666-4666-8666-666666666666'
+    const e = { pane_id: 'p1', session_id: sid, pid: 1, registered_at: 1, app_id: 'win32-9' }
+    expect(pickSessionIds([e], ['p1'], () => true)).toEqual({})
+    expect(pickSessionIds([e], ['p1'], () => true, 'win32-9')).toEqual({ p1: sid })
   })
 })

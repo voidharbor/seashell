@@ -18,19 +18,21 @@ describe('the win32 platform states its own limits', () => {
     expect(win32.capabilities.verifiedKill).toBe(false)
   })
 
-  it('does not claim metrics or cwd reporting it has not implemented', () => {
-    expect(win32.capabilities.processMetrics).toBe(false)
-    expect(win32.capabilities.cwdReporting).toBe(false)
+  it('claims metrics and cwd reporting, which now come from inside WSL', () => {
+    // The sweep is `wsl.exe -e ps` and the shim reports OSC 7 from the Linux
+    // shell; win32-sweep.test.ts covers both.
+    expect(win32.capabilities.processMetrics).toBe(true)
+    expect(win32.capabilities.cwdReporting).toBe(true)
   })
 
-  it('roots a pane at PowerShell, with the user profile left to run', () => {
+  it('roots a pane at wsl.exe running the Linux login shell, never PowerShell', () => {
     const shell = win32.loginShell()
-    expect(shell.file.toLowerCase()).toContain('powershell.exe')
+    expect(shell.file.toLowerCase()).toContain('wsl.exe')
+    expect(shell.file.toLowerCase()).not.toContain('powershell')
     // An argv array, never a command line.
     expect(Array.isArray(shell.args)).toBe(true)
-    // -NoProfile would break the reason panes are login shells at all: the
-    // user's own configuration is how their tools reach PATH.
-    expect(shell.args).not.toContain('-NoProfile')
+    // A login shell, so the user's own configuration puts their tools on PATH.
+    expect(shell.args[shell.args.length - 1]).toBe('-l')
   })
 
   it('reports no sample rather than inventing numbers', async () => {

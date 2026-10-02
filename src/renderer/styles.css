@@ -2009,6 +2009,13 @@ body.dragging .drawer__grip {
   padding-left: 0;
 }
 
+/* Native Windows keeps the DWM caption above the tab bar, so the bar is not a
+   title bar there and must not claim drag regions that could eat clicks. */
+.app--native-frame .tabbar,
+.app--native-frame .tabbar__gap {
+  -webkit-app-region: no-drag;
+}
+
 .tabbar__menu {
   -webkit-app-region: no-drag;
   width: calc(40px * var(--ui-scale));

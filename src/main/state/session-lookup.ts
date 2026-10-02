@@ -49,18 +49,37 @@ export interface RegistryEntry {
   pane_id?: unknown
   pid?: unknown
   registered_at?: unknown
+  /** SEASHELL_APP_ID of the pane the hook ran in: which SeaShell run owns it. */
+  app_id?: unknown
+}
+
+/**
+ * Whether a registry entry was written from a pane of this app run.
+ *
+ * Pane ids are only unique within one run (`pane-<counter>-<ms>`), and the
+ * Windows exe and a Linux SeaShell in the same distro share one registry, so
+ * both can mint `pane-2-812`. The Windows build stamps every pane with
+ * SEASHELL_APP_ID and passes its own as `appId`: an entry counts only when it
+ * carries that exact id. A build that stamps nothing (`appId` undefined)
+ * counts only entries that carry no id, never one another run claimed. [pure]
+ */
+export function entryBelongsTo(e: RegistryEntry, appId: string | undefined): boolean {
+  const stamped = typeof e.app_id === 'string' && e.app_id !== '' ? e.app_id : undefined
+  return appId === undefined ? stamped === undefined : stamped === appId
 }
 
 export function pickSessionIds(
   entries: RegistryEntry[],
   paneIds: string[],
-  isPidAlive: (pid: number) => boolean
+  isPidAlive: (pid: number) => boolean,
+  appId?: string
 ): Record<string, string> {
   const wanted = new Set(paneIds)
   const best = new Map<string, { sid: string; at: number }>()
 
   for (const e of entries) {
     if (typeof e.pane_id !== 'string' || !wanted.has(e.pane_id)) continue
+    if (!entryBelongsTo(e, appId)) continue
     if (!isValidSessionId(e.session_id)) continue
     const pid = typeof e.pid === 'number' ? e.pid : -1
     if (pid <= 0 || !isPidAlive(pid)) continue
@@ -158,12 +177,12 @@ export function pickFallbackSessionIds(
 /** claude stores a directory's transcripts under the path with every
  *  character that is not a letter or digit turned into a dash: slashes, but
  *  also spaces, dots and brackets ("Acme Widgets LLC" -> "Acme-Widgets-LLC"). */
-export function transcriptDirFor(cwd: string): string {
-  return path.join(os.homedir(), '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'))
+export function transcriptDirFor(cwd: string, home: string = os.homedir()): string {
+  return path.join(home, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'))
 }
 
-async function listSessionFiles(cwd: string): Promise<SessionFile[]> {
-  const dir = transcriptDirFor(cwd)
+async function listSessionFiles(cwd: string, home?: string): Promise<SessionFile[]> {
+  const dir = transcriptDirFor(cwd, home)
   let names: string[]
   try {
     names = await fs.readdir(dir)
@@ -470,42 +489,58 @@ export interface LookupDeps {
   processChildren: () => Promise<ReadonlyMap<number, readonly number[]> | null>
   /** The live start token for each pid, in the form claude records it. */
   startTokens: (pids: number[]) => Promise<Map<number, string>>
+  /** The directory holding `.claude/` when it is not this process's home: on
+   *  win32 the WSL home as a UNC path (platform.claudeHome). */
+  claudeHome?: string
+  /** The live pids, when claude's pids are not this OS's processes (win32,
+   *  where they live inside WSL). Null when the table could not be read, which
+   *  gives no verdict at all rather than counting every recorded pid as dead.
+   *  Absent means the local signal-0 probe. */
+  livePids?: () => Promise<ReadonlySet<number> | null>
+  /** This run's SEASHELL_APP_ID, on a build that stamps one into its panes
+   *  (win32). Registry entries are credited to a pane only when they carry it;
+   *  see `entryBelongsTo`. */
+  appId?: string
 }
 
-async function readRegistry(): Promise<RegistryEntry[]> {
-  const dir = path.join(os.homedir(), '.claude', 'session-registry')
-  const entries: RegistryEntry[] = []
+/**
+ * How many small JSON files are read at once. On win32 every read is a 9P
+ * round trip to \\wsl.localhost (hundreds of pid files took 1.8 s one after
+ * another), so they overlap; the cap keeps a huge directory from opening
+ * every handle at once.
+ */
+const READ_CONCURRENCY = 32
+
+/** Every `*.json` in `dir` matching `keep`, parsed; unreadable ones skipped. */
+async function readJsonDir(dir: string, keep: (name: string) => boolean): Promise<unknown[]> {
+  let names: string[]
   try {
-    for (const name of await fs.readdir(dir)) {
-      if (!name.endsWith('.json')) continue
+    names = (await fs.readdir(dir)).filter(keep)
+  } catch {
+    return [] // no such directory
+  }
+  const out: unknown[] = new Array(names.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < names.length) {
+      const i = next++
       try {
-        entries.push(JSON.parse(await fs.readFile(path.join(dir, name), 'utf8')) as RegistryEntry)
+        out[i] = JSON.parse(await fs.readFile(path.join(dir, names[i]!), 'utf8'))
       } catch {
-        /* one bad entry must not cost the rest */
+        /* torn, vanished mid-scan or one bad entry: it must not cost the rest */
       }
     }
-  } catch {
-    /* no registry at all */
   }
-  return entries
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, names.length) }, worker))
+  return out.filter((v) => v !== undefined)
 }
 
-async function readPidFiles(): Promise<unknown[]> {
-  const dir = path.join(os.homedir(), '.claude', 'sessions')
-  const out: unknown[] = []
-  try {
-    for (const name of await fs.readdir(dir)) {
-      if (!/^\d+\.json$/.test(name)) continue
-      try {
-        out.push(JSON.parse(await fs.readFile(path.join(dir, name), 'utf8')))
-      } catch {
-        /* torn or vanished mid-scan */
-      }
-    }
-  } catch {
-    /* claude has never run here, or keeps its state elsewhere */
-  }
-  return out
+async function readRegistry(home: string = os.homedir()): Promise<RegistryEntry[]> {
+  return (await readJsonDir(path.join(home, '.claude', 'session-registry'), (n) => n.endsWith('.json'))) as RegistryEntry[]
+}
+
+async function readPidFiles(home: string = os.homedir()): Promise<unknown[]> {
+  return readJsonDir(path.join(home, '.claude', 'sessions'), (n) => /^\d+\.json$/.test(n))
 }
 
 /** Titles live at the very end of a transcript (claude re-stamps them as the
@@ -526,10 +561,10 @@ async function readTail(file: string, bytes: number): Promise<string[]> {
 }
 
 /** sid -> titles, for every transcript of one directory. */
-async function titleIndex(cwd: string): Promise<Map<string, string[]>> {
+async function titleIndex(cwd: string, home?: string): Promise<Map<string, string[]>> {
   const index = new Map<string, string[]>()
-  const dir = transcriptDirFor(cwd)
-  for (const file of await listSessionFiles(cwd)) {
+  const dir = transcriptDirFor(cwd, home)
+  for (const file of await listSessionFiles(cwd, home)) {
     if (!isValidSessionId(file.sid)) continue
     try {
       index.set(file.sid, parseLastTitles(await readTail(path.join(dir, `${file.sid}.jsonl`), TITLE_TAIL_BYTES)))
@@ -566,17 +601,36 @@ export async function sessionIdsForPanes(
   deps: LookupDeps,
   releasing: readonly string[] = []
 ): Promise<ResolveResult> {
-  const entries = await readRegistry()
+  const home = deps.claudeHome
+  const entries = await readRegistry(home)
+  let alive: (pid: number) => boolean = pidAlive
+  if (deps.livePids) {
+    let live: ReadonlySet<number> | null = null
+    try {
+      live = await deps.livePids()
+    } catch {
+      /* unreadable: handled below */
+    }
+    // Fail closed. With no local probe, an unreadable table would make every
+    // recorded claude count as dead, every carried id look free, and a restore
+    // resume sessions another claude (a Linux SeaShell's, say) is writing:
+    // two claudes on one transcript. No verdict instead: a save keeps each
+    // pane's carried id (saveLookupFrom), a restore resumes nothing.
+    if (live === null) return { ids: {}, sources: {} }
+    const table = live
+    alive = (pid) => table.has(pid)
+  }
   const registryIds = pickSessionIds(
     entries,
     panes.map((p) => p.paneId),
-    pidAlive
+    alive,
+    deps.appId
   )
 
   let processIds: Record<string, string> = {}
   const liveSids = new Set<string>(
     entries
-      .filter((e) => typeof e.pid === 'number' && e.pid > 0 && pidAlive(e.pid))
+      .filter((e) => typeof e.pid === 'number' && e.pid > 0 && alive(e.pid))
       .map((e) => e.session_id)
       .filter(isValidSessionId)
   )
@@ -586,7 +640,7 @@ export async function sessionIdsForPanes(
     // too: without it no pane's own claude could be told apart from one
     // running elsewhere, and every carried id would look taken.
     if (children) {
-      const files = await readPidFiles()
+      const files = await readPidFiles(home)
       const pids = files
         .map((f) => (f as { pid?: unknown } | null)?.pid)
         .filter((p): p is number => typeof p === 'number' && p > 0)
@@ -614,13 +668,13 @@ export async function sessionIdsForPanes(
       .map((p) => p.cwd)
   )
   const titles = new Map<string, Map<string, string[]>>()
-  for (const cwd of needTitles) titles.set(cwd, await titleIndex(cwd))
+  for (const cwd of needTitles) titles.set(cwd, await titleIndex(cwd, home))
 
   // Only the cwd lane lists a directory, and only for a pane that never had an
   // id; a save of a window whose panes all resolved lists nothing.
   const files = new Map<string, SessionFile[]>()
   const listable = panes.filter((p) => p.knownSid === undefined && p.knownVerified !== true && p.claude !== false)
-  for (const cwd of new Set(listable.map((p) => p.cwd))) files.set(cwd, await listSessionFiles(cwd))
+  for (const cwd of new Set(listable.map((p) => p.cwd))) files.set(cwd, await listSessionFiles(cwd, home))
 
   return resolveSessionIds({
     panes,

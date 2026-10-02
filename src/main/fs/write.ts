@@ -27,6 +27,7 @@ import * as path from 'node:path'
 import type { FsWriteTextFileRequest, FsWriteTextFileResponse } from '../../shared/ipc.js'
 import { SNIFF_BYTES } from './read.js'
 import { VIEWER_MAX_BYTES } from './route.js'
+import { toHostPath } from './host-path.js'
 
 export async function writeTextFile(
   req: FsWriteTextFileRequest,
@@ -39,12 +40,14 @@ export async function writeTextFile(
   let real: string
   let scopeReal: string
   try {
-    real = await fsp.realpath(path.resolve(req.path))
+    // win32: both sides go to their Windows form, so the scope test below
+    // compares like with like.
+    real = await fsp.realpath(path.resolve(toHostPath(req.path)))
   } catch {
     return { ok: false, code: 'ENOENT', message: 'file not found' }
   }
   try {
-    scopeReal = await fsp.realpath(path.resolve(scopeDir))
+    scopeReal = await fsp.realpath(path.resolve(toHostPath(scopeDir)))
   } catch {
     return { ok: false, code: 'ESCOPE', message: 'scope directory not found' }
   }

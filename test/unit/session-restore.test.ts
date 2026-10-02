@@ -85,6 +85,12 @@ describe('capture — ids recorded per pane', () => {
     expect(saved.claudeSessionId).toBeUndefined()
   })
 
+  it('a pane carrying a proven id stays claude with it when nothing was observed', () => {
+    // No tick, no process-lane answer: the 17:32 shape. Not a reason to forget.
+    const saved = paneToSaved(pane({ command: 'zsh', claudeSessionId: SID }), SID)
+    expect(saved).toMatchObject({ command: 'claude', claudeSessionId: SID })
+  })
+
   it('a preview pane never records a session id', () => {
     const saved = paneToSaved(pane({ kind: 'file', filePath: '/x.md' }), SID)
     expect(saved.claudeSessionId).toBeUndefined()

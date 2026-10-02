@@ -13,15 +13,24 @@ describe('window chrome', () => {
     expect(ownsWindowControls('darwin')).toBe(false)
   })
 
-  it('is frameless with the menu bar hidden everywhere else', () => {
-    for (const platform of ['linux', 'win32']) {
-      expect(windowChrome(platform)).toMatchObject({ frame: false, autoHideMenuBar: true })
-      expect(ownsWindowControls(platform)).toBe(true)
+  it('is frameless with the menu bar hidden on Linux', () => {
+    expect(windowChrome('linux')).toMatchObject({ frame: false, autoHideMenuBar: true })
+    expect(ownsWindowControls('linux')).toBe(true)
+  })
+
+  it('keeps the native DWM caption on Windows, with only the menu strip hidden', () => {
+    expect(windowChrome('win32')).toEqual({ frame: true, autoHideMenuBar: true })
+    expect(ownsWindowControls('win32')).toBe(false)
+    for (const key of ['titleBarStyle', 'titleBarOverlay', 'transparent', 'hasShadow']) {
+      expect(windowChrome('win32')).not.toHaveProperty(key)
     }
   })
 
   it('marks Linux transparent, the switch that removes the 4px frame inset, and only Linux', () => {
-    expect(windowChrome('linux')).toMatchObject({ transparent: true, hasShadow: false })
+    expect(windowChrome('linux')).toMatchObject({
+      transparent: true,
+      hasShadow: false,
+    })
     for (const platform of ['win32', 'darwin']) {
       expect(windowChrome(platform)).not.toHaveProperty('transparent')
       expect(windowChrome(platform)).not.toHaveProperty('hasShadow')

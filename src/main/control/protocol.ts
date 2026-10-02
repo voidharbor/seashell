@@ -47,6 +47,16 @@ export function parseControlRequest(line: string): ParseResult {
   } catch {
     return { ok: false, error: 'invalid JSON' }
   }
+  return validateControlRequest(parsed)
+}
+
+/**
+ * The validation half of `parseControlRequest`, for a caller that has already
+ * parsed the line (the Windows TCP endpoint parses once to read the token,
+ * then hands the same object here). Unknown fields, `token` among them, are
+ * ignored.
+ */
+export function validateControlRequest(parsed: unknown): ParseResult {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     return { ok: false, error: 'request must be a JSON object' }
   }

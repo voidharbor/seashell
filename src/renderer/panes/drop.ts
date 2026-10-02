@@ -7,6 +7,8 @@
  *  - a text/uri-list of file:// URIs
  *  - plain text that is itself a path, including a Windows path like C:\Users\josh\a.pdf
  */
+import { windowsToLinux } from '../../shared/wsl-path.js'
+
 export interface DropInput {
   paths: string[]
   uriList?: string
@@ -19,11 +21,16 @@ export function shellQuote(p: string): string {
   return `'${p.replace(/'/g, `'\\''`)}'`
 }
 
-/** C:\a\b -> /mnt/c/a/b on Linux (WSL); anything else unchanged. */
+/**
+ * A Windows path as the WSL shell sees it: `C:\a\b` -> `/mnt/c/a/b` and
+ * `\\wsl.localhost\<distro>\a\b` (or `\\wsl$\...`) -> `/a/b`. Under WSLg
+ * (linux) and in the native Windows build (win32) every pane is a WSL shell, so
+ * both translate; a Linux path, another network share and every path on the
+ * Mac are left alone.
+ */
 export function windowsToWsl(p: string, platform: string): string {
-  const m = /^([A-Za-z]):[\\/](.*)$/.exec(p)
-  if (!m || platform !== 'linux') return p
-  return `/mnt/${(m[1] ?? "").toLowerCase()}/${(m[2] ?? "").replace(/\\/g, "/")}`
+  if (platform !== 'linux' && platform !== 'win32') return p
+  return windowsToLinux(p)
 }
 
 function fromUri(u: string): string | null {
@@ -47,7 +54,11 @@ export function dropText(input: DropInput, platform: string): string {
   }
   if (paths.length === 0 && input.text) {
     const lines = input.text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-    if (lines.every((l) => l.startsWith('/') || /^[A-Za-z]:[\\/]/.test(l) || l.startsWith('file://'))) {
+    if (
+      lines.every(
+        (l) => l.startsWith('/') || /^[A-Za-z]:[\\/]/.test(l) || /^\\\\wsl(\.localhost|\$)\\/i.test(l) || l.startsWith('file://')
+      )
+    ) {
       paths = lines.map((l) => (l.startsWith('file://') ? fromUri(l) ?? l : l))
     }
   }

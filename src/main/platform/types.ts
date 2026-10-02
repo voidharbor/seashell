@@ -56,9 +56,71 @@ export interface PlatformCapabilities {
   cwdReporting: boolean
 }
 
+/** What the pty manager knows when it opens a pane. */
+export interface PaneSpawnRequest {
+  paneId: string
+  /** The requested working directory, as the renderer sent it. */
+  cwd: string
+  appVersion: string
+  /** Whatever `installShellIntegration` returned. */
+  shellIntegration: string | null
+  /** The environment `buildEnv` produced for the pty process itself. */
+  env: NodeJS.ProcessEnv
+}
+
+/** The full pty spawn for one pane, or why the pane cannot open. */
+export type PaneSpawnResult =
+  | { ok: true; file: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }
+  | { ok: false; message: string }
+
+/** The process that really is a pane's shell, where that is not the pty's child. */
+export interface PaneShell {
+  pid: number
+  /** In `ps -o tty` form, e.g. `pts/3`. */
+  tty: string | null
+}
+
 export interface Platform {
   readonly id: NodeJS.Platform
   readonly capabilities: PlatformCapabilities
+
+  /**
+   * Optional: the whole spawn for a pane, cwd validation included. Absent
+   * means the default (`loginShell()` in the requested cwd). win32 uses it to
+   * run every pane through wsl.exe with the Linux cwd on the command line.
+   */
+  paneSpawn?(req: PaneSpawnRequest): PaneSpawnResult
+
+  /**
+   * Optional: the pane's real shell pid and tty, when the pty's own child is
+   * a launcher (win32: wsl.exe). Null until the shell has reported itself.
+   * Pids from here are the ones `sweepMemory` and `processStartTokens` see.
+   */
+  paneShell?(paneId: string): Promise<PaneShell | null>
+
+  /**
+   * Optional: whether claude owns the foreground of `ttyName`, for platforms
+   * where `ps` is not local (win32 asks inside WSL). Absent means the default
+   * check in control/foreground-check.ts.
+   */
+  checkForeground?(ttyName: string): Promise<boolean>
+
+  /**
+   * Optional: the directory holding `.claude/`, when it is not `os.homedir()`
+   * (win32: the WSL home as a `\\wsl.localhost\` path).
+   */
+  claudeHome?(): string | null
+
+  /** Optional: the home a pane opens in by default, when it is not `os.homedir()`. */
+  homeDir?(): string | null
+
+  /**
+   * Optional: learns, asynchronously, whatever `claudeHome`, `homeDir` and
+   * `paneSpawn` depend on (win32: the WSL distro, home and shell), so no IPC
+   * handler blocks on it. Safe to call repeatedly; it resolves once the
+   * attempt settles, successful or not.
+   */
+  warmUp?(): Promise<void>
 
   /** The shell every pane is rooted at. */
   loginShell(): ShellSpec

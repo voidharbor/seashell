@@ -13,6 +13,7 @@ import { promises as fsp } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import * as path from 'node:path'
 import type { FsReadTextFileRequest, FsReadTextFileResponse } from '../../shared/ipc.js'
+import { fromHostPath, toHostPath } from './host-path.js'
 
 /** Bytes scanned for a NUL byte before any decoding is attempted. */
 export const SNIFF_BYTES = 8192
@@ -32,18 +33,21 @@ type ReadTextErrorCode = 'EBINARY' | 'ETOOBIG' | 'ENOENT' | 'EACCES'
  * renderer supplies it, and is never trusted to have done that itself.
  */
 export async function readTextFile(req: FsReadTextFileRequest): Promise<FsReadTextFileResponse> {
-  const resolved = path.resolve(req.path)
+  // win32: the renderer's Linux path is opened through its Windows form.
+  const resolved = path.resolve(toHostPath(req.path))
 
-  let real: string
+  let hostReal: string
   try {
-    real = await fsp.realpath(resolved)
+    hostReal = await fsp.realpath(resolved)
   } catch (err) {
     return errResult(err)
   }
+  // `real` only appears in messages the renderer shows; it stays Linux-shaped.
+  const real = fromHostPath(hostReal)
 
   let handle: FileHandle
   try {
-    handle = await fsp.open(real, 'r')
+    handle = await fsp.open(hostReal, 'r')
   } catch (err) {
     return errResult(err)
   }

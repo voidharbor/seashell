@@ -10,6 +10,7 @@ import { insertPane, rebalance } from './layout/auto-arrange.js'
 import { dfsPaneOrder, removePane } from './layout/tree.js'
 import { MAX_PANES_PER_TAB } from './layout/types.js'
 import { clampIndex } from './term/zoom.js'
+import { foregroundProgram } from './projects/serialize.js'
 
 /** What a pane was launched as. Panes are always rooted at `/bin/zsh -l`; this
  *  records what the user asked for so a restart reproduces it. */
@@ -75,6 +76,13 @@ export interface PaneState {
   status: 'starting' | 'live' | 'exited'
   exit?: { code: number; signal: number | null }
   metrics?: PaneMetrics
+  /**
+   * A metrics tick has shown claude in this pane's foreground since it last
+   * started. Only after that can a tick showing something else retire a
+   * restored claude pane to a shell at save; before it, the shell is merely
+   * waiting for the `claude -r` it was just handed. Runtime only.
+   */
+  claudeSeen?: boolean
   /** Set when the pane wants attention: idle-waiting, or just finished. */
   attention?: Attention
   /** When `attention` became 'done', so the pulse can stop asking. */
@@ -623,7 +631,9 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'pane.restarting':
       return mapPane(state, action.paneId, (p) => {
-        const { exit: _drop, ...rest } = p
+        // A restarted pane starts its command over; whether claude ran in the
+        // last run says nothing about this one.
+        const { exit: _drop, claudeSeen: _seen, ...rest } = p
         return {
           ...rest,
           status: 'starting',
@@ -747,7 +757,9 @@ export function reducer(state: AppState, action: Action): AppState {
           const attentionAt =
             attention === 'done' && changed ? now : attention === null ? undefined : p.attentionAt
 
-          if (!changed && attentionAt === p.attentionAt && sameMetrics(p.metrics, m)) {
+          const seen = p.claudeSeen === true || foregroundProgram(m) === 'claude'
+
+          if (!changed && attentionAt === p.attentionAt && seen === (p.claudeSeen === true) && sameMetrics(p.metrics, m)) {
             panes[id] = p
             continue
           }
@@ -758,6 +770,7 @@ export function reducer(state: AppState, action: Action): AppState {
             metrics: m,
             ...(attention === null ? { attention: undefined } : { attention }),
             attentionAt,
+            ...(seen ? { claudeSeen: true } : {}),
           }
         }
 

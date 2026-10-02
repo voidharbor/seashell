@@ -51,6 +51,8 @@ import {
   applyLaunchModes,
   applyRestoreIds,
   planRestore,
+  saveLookupFrom,
+  type SaveLookup,
   savedCommandFor,
   stateToTabs,
   tabToSaved,
@@ -59,7 +61,14 @@ import { shouldOfferRestore } from './session/offer.js'
 import { RestoreCard } from './session/RestoreCard.js'
 import { UpdateBanner } from './update/UpdateBanner.js'
 import { MenuButton, WindowControls } from './chrome/WindowControls.js'
-import { MAX_TERM_PANES, type LastSession, type Project, type UpdateState } from '../shared/ipc.js'
+import { ownsWindowControls } from '../shared/window-chrome.js'
+import {
+  MAX_TERM_PANES,
+  type LastSession,
+  type Project,
+  type ProjectsSessionIdsResponse,
+  type UpdateState,
+} from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 import { dirtyPreviewPanes } from './viewer/FilePreview.js'
 
@@ -459,9 +468,9 @@ export function App(): React.JSX.Element {
    *
    * Captured at the moment of writing rather than remembered: a restarted
    * claude has a new id, and a save must record the current one, not the one
-   * from when the project was first created. Undefined when the registry cannot
-   * be reached, which every caller treats the same way, as panes that save as a
-   * plain claude.
+   * from when the project was first created. Undefined when the lookup gave no
+   * verdict, and then every pane saves the id it already carries rather than
+   * none (see saveLookupFrom).
    *
    * Shared by the two writers, the named project and the last-session snapshot,
    * because they are the same capture. Two copies of the `kind === 'term'`
@@ -475,31 +484,30 @@ export function App(): React.JSX.Element {
    * saves as claude even where the monitor never reported its foreground.
    */
   const collectSessionIds = useCallback(async (): Promise<
-    { ids: ReadonlyMap<string, string>; running: ReadonlySet<string> } | undefined
+    SaveLookup | undefined
   > => {
-    const livePanes = state.tabs.flatMap((t) =>
-      Object.values(t.panes)
-        .filter((p) => p.kind === 'term')
-        .map((p) => ({
-          paneId: p.id,
-          cwd: p.cwd,
-          ...(p.claudeSessionId ? { knownSid: p.claudeSessionId, knownVerified: true } : {}),
-          claude: savedCommandFor(p) === 'claude',
-        }))
-    )
+    const termPanes = state.tabs.flatMap((t) => Object.values(t.panes).filter((p) => p.kind === 'term'))
+    const asked = Math.min(termPanes.length, MAX_TERM_PANES)
+    const livePanes = termPanes.slice(0, asked).map((p) => ({
+      paneId: p.id,
+      cwd: p.cwd,
+      ...(p.claudeSessionId ? { knownSid: p.claudeSessionId, knownVerified: true } : {}),
+      claude: savedCommandFor(p) === 'claude',
+    }))
+    let res: ProjectsSessionIdsResponse | null = null
     try {
-      const res = await window.seashell.projects.sessionIds({ panes: livePanes.slice(0, MAX_TERM_PANES) })
-      const proven = Object.entries(res.ids).filter(
-        ([id]) => res.sources[id] === 'process' || res.sources[id] === 'registry'
+      res = await window.seashell.projects.sessionIds({ panes: livePanes })
+    } catch {
+      /* lookup unavailable: every pane keeps the id it already carries */
+    }
+    if (res) {
+      const r = res
+      const proven = Object.entries(r.ids).filter(
+        ([id]) => r.sources[id] === 'process' || r.sources[id] === 'registry'
       )
       if (proven.length > 0) dispatch({ type: 'panes.sessionIds', ids: Object.fromEntries(proven) })
-      return {
-        ids: new Map(Object.entries(res.ids)),
-        running: new Set(Object.keys(res.sources).filter((id) => res.sources[id] === 'process')),
-      }
-    } catch {
-      return undefined // lookup unavailable: panes save as plain claude
     }
+    return saveLookupFrom(termPanes, asked, res)
   }, [state])
 
   /** Closes every preview pane in the active tab, leaving the terminals alone. */
@@ -1413,7 +1421,11 @@ export function App(): React.JSX.Element {
     Object.values(t.panes).some((p) => p.zoomIndex !== undefined)
   )
   return (
-    <div className={'app' + (isMac ? '' : ' app--own-chrome')}>
+    <div
+      className={
+        'app' + (isMac ? '' : ' app--own-chrome') + (platform === 'win32' ? ' app--native-frame' : '')
+      }
+    >
       {/* The desktop behind the glass. Aero is the only theme that paints it,
           and it is what the translucent chrome above is translucent *against*
           — without it, backdrop-filter has nothing to blur and the frosted
@@ -1537,8 +1549,9 @@ export function App(): React.JSX.Element {
           ⚙
         </div>
 
-        {/* Off macOS the bar is the title bar, and these are its buttons. */}
-        {!isMac && <WindowControls />}
+        {/* On the frameless platforms the bar is the title bar, and these are
+            its buttons. Windows keeps its native caption, which has its own. */}
+        {ownsWindowControls(platform) && <WindowControls />}
       </div>
 
       <div className="body">

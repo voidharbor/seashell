@@ -10,10 +10,11 @@
  * `shell.openPath`. This module decides that boundary; route.ts and the
  * (non-pure) open handler both defer to it rather than re-deriving it.
  *
- * [pure] — imports only 'node:path', explicitly permitted.
+ * [pure]: imports only 'node:path' and the pure shared path translator.
  */
 
 import path from 'node:path'
+import { windowsToLinux } from '../../shared/wsl-path.js'
 
 export type SpecialFileType = 'fifo' | 'socket' | 'char-device' | 'block-device'
 
@@ -93,6 +94,34 @@ export const DENY_EXTENSIONS: ReadonlySet<string> = new Set([
   '.cpl',
   '.msc',
   '.pif',
+  // More things ShellExecute runs, installs or mounts as code rather than
+  // opening as a document.
+  '.jse',
+  '.wsc',
+  '.wsh',
+  '.sct',
+  '.shb',
+  '.shs',
+  '.scf',
+  '.msp',
+  '.mst',
+  '.appref-ms',
+  '.application',
+  '.gadget',
+  '.settingcontent-ms',
+  '.psm1',
+  '.psd1',
+  '.ps1xml',
+  '.diagcab',
+  '.appx',
+  '.appxbundle',
+  '.msix',
+  '.msixbundle',
+  '.xbap',
+  '.xll',
+  '.jnlp',
+  '.chm',
+  '.website',
 ])
 
 /** The in-app viewer's extension list (spec §8.6 "Viewer" row). Shared with
@@ -271,6 +300,35 @@ export const DOCUMENT_EXTENSIONS: ReadonlySet<string> = new Set([
   '.dwg',
 ])
 
+/**
+ * Windows-only additions for `shell.openPath`, kept out of DENY_EXTENSIONS
+ * because they are also everyday source files the in-app viewer shows on
+ * every platform. On Windows the default handler for these is Windows Script
+ * Host, so "open in default app" on one runs it.
+ */
+export const WIN32_SHELL_DENY_EXTENSIONS: ReadonlySet<string> = new Set(['.js', '.ws', '.vb'])
+
+/**
+ * The guard reasons about one path shape. The Windows build hands it either
+ * form of the same file (`C:\x\setup.exe` or `/mnt/c/x/setup.exe`,
+ * `\\wsl.localhost\<distro>\dev\sda` or `/dev/sda`), so a Windows-shaped
+ * path is first put back into its Linux form; every rule below then sees the
+ * same thing either way. Windows also drops trailing dots and spaces from a
+ * name when it opens it, so `evil.exe.` and `evil.exe ` launch as `evil.exe`;
+ * the extension is read the way Windows will read it.
+ */
+function guardPath(resolvedPath: string): { linux: string; ext: string; basename: string } {
+  const linux = windowsToLinux(resolvedPath)
+  const basename = path.posix.basename(linux)
+  return { linux, ext: extOf(basename.replace(/[. ]+$/, '')), basename }
+}
+
+/** The Windows-only half of the open guard, for the win32 open handler: true
+ *  when the default app for this type is a script host. */
+export function denyShellOpenOnWindows(resolvedPath: string): boolean {
+  return WIN32_SHELL_DENY_EXTENSIONS.has(guardPath(resolvedPath).ext)
+}
+
 /** True when `resolvedPath` is `/dev` or lives under it — device nodes that
  *  happen to carry a misleading extension must still never be opened. */
 export function isUnderDev(resolvedPath: string): boolean {
@@ -288,13 +346,15 @@ export function isUnderDev(resolvedPath: string): boolean {
 export function denyOpenPath(input: OpenGuardInput): boolean {
   if (input.isDir) return true
   if (input.specialType !== undefined) return true
-  if (isUnderDev(input.resolvedPath)) return true
+  const { linux, ext, basename } = guardPath(input.resolvedPath)
+  if (isUnderDev(linux)) return true
 
-  const ext = extOf(input.resolvedPath)
   if (DENY_EXTENSIONS.has(ext)) return true
+  // A name that ends in a dot or a space is opened by Windows under a
+  // different name than the one shown; there is no honest answer for it.
+  if (/[. ]$/.test(basename)) return true
 
   if (input.isExecutable) {
-    const basename = path.basename(input.resolvedPath)
     const knownSafe = VIEWER_EXTENSIONS.has(ext) || VIEWER_BASENAMES.has(basename) || DOCUMENT_EXTENSIONS.has(ext)
     if (!knownSafe) return true
   }

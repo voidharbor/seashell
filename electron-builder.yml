@@ -85,6 +85,9 @@ mac:
 # children, but a detached process survives and nothing counts it. That is the
 # one promise SeaShell exists to keep, so this is a build to TEST, not to ship.
 win:
+  # Multi-size .ico (16 to 256) made by build/make-ico.py from icon/icon-1024.png.
+  icon: build/icon.ico
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
   target:
     - target: dir
       arch: [x64]

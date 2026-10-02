@@ -8,10 +8,15 @@
  * that frame is Weston's own 59px title bar and 38px margins, drawn in a
  * style no Windows user has seen before, with Electron's menu strip under it.
  *
- * So off the Mac the window is frameless and the app draws the chrome itself:
+ * So on Linux the window is frameless and the app draws the chrome itself:
  * the tab bar is the title bar, WindowControls.tsx supplies the three
  * buttons, and the menu bar hides until Alt or the ≡ button asks for it.
  * Every accelerator in that menu keeps working while it is hidden.
+ *
+ * Native Windows is the other way round: it keeps the real DWM caption, so
+ * the user's own theme (an OpenGlass Win7 caption, say) draws the title bar,
+ * buttons, snap layouts and shadow. Only the menu strip is hidden, and with a
+ * native frame Electron fires the menu's accelerators itself.
  */
 
 export interface WindowChrome {
@@ -44,10 +49,15 @@ export function windowChrome(platform: string): WindowChrome {
   if (platform === 'linux') {
     return { frame: false, autoHideMenuBar: true, transparent: true, hasShadow: false }
   }
+  if (platform === 'win32') return { frame: true, autoHideMenuBar: true }
   return { frame: false, autoHideMenuBar: true }
 }
 
-/** Whether the renderer draws minimize, maximize and close itself. */
+/**
+ * Whether the renderer draws minimize, maximize and close itself. True only
+ * for the frameless platforms; macOS has its traffic lights and Windows its
+ * native caption.
+ */
 export function ownsWindowControls(platform: string): boolean {
-  return platform !== 'darwin'
+  return platform !== 'darwin' && platform !== 'win32'
 }

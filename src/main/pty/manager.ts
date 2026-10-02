@@ -29,6 +29,14 @@ interface PaneProc {
    * double-forked descendants that the parent-pid walk cannot reach.
    */
   ttyName: string | null
+  /**
+   * The pid the process table knows as this pane's shell. The pty's own child
+   * everywhere except win32, where that child is wsl.exe and the real shell is
+   * a Linux pid learned later from `platform.paneShell`. Null until known; a
+   * pane without it is left out of metrics and session lookup rather than
+   * rooted at a Windows pid that means something else inside WSL.
+   */
+  shellPid: number | null
   exited: boolean
   /**
    * Bytes this pane has written to its terminal since it spawned, monotonic.
@@ -50,6 +58,11 @@ interface PaneProc {
 /** Enough to hold several full ink repaints of claude's input area or a
  *  selector; anything older than that cannot be the current screen. */
 const TAIL_MAX_CHARS = 8192
+
+/** How often, and how long, to wait for a launcher-hosted shell to report its
+ *  pid (win32). A slow login (big .zshrc, cold WSL) gets about 30 s. */
+const SHELL_RESOLVE_INTERVAL_MS = 250
+const SHELL_RESOLVE_ATTEMPTS = 120
 
 export class PtyManager {
   private panes = new Map<string, PaneProc>()
@@ -124,12 +137,16 @@ export class PtyManager {
       this.batcher.removePane(req.paneId)
     }
 
-    let cwd = req.cwd
-    try {
-      if (!fs.statSync(cwd).isDirectory()) throw new Error('not a dir')
-    } catch {
-      // Refuse rather than silently landing somewhere unexpected.
-      return { ok: false, code: 'ECWD', message: `not a directory: ${cwd}` }
+    const cwd = req.cwd
+    // A platform with its own spawn (win32: wsl.exe) validates the cwd itself,
+    // because the cwd is a Linux path the Windows side cannot stat directly.
+    if (!platform.paneSpawn) {
+      try {
+        if (!fs.statSync(cwd).isDirectory()) throw new Error('not a dir')
+      } catch {
+        // Refuse rather than silently landing somewhere unexpected.
+        return { ok: false, code: 'ECWD', message: `not a directory: ${cwd}` }
+      }
     }
 
     if (this.zdotdir === null) this.zdotdir = platform.installShellIntegration()
@@ -141,15 +158,37 @@ export class PtyManager {
       zdotdirShimPath: this.zdotdir ?? '',
     })
 
-    const shell = platform.loginShell()
+    let file: string
+    let args: string[]
+    let spawnCwd = cwd
+    let spawnEnv = env
+    if (platform.paneSpawn) {
+      const spec = platform.paneSpawn({
+        paneId: req.paneId,
+        cwd,
+        appVersion: app.getVersion(),
+        shellIntegration: this.zdotdir,
+        env,
+      })
+      if (!spec.ok) return { ok: false, code: 'ECWD', message: spec.message }
+      file = spec.file
+      args = spec.args
+      spawnCwd = spec.cwd
+      spawnEnv = spec.env
+    } else {
+      const shell = platform.loginShell()
+      file = shell.file
+      args = shell.args
+    }
+
     let proc: pty.IPty
     try {
-      proc = pty.spawn(shell.file, shell.args, {
+      proc = pty.spawn(file, args, {
         name: 'xterm-256color',
-        cwd,
+        cwd: spawnCwd,
         cols: req.cols,
         rows: req.rows,
-        env: env as Record<string, string>,
+        env: spawnEnv as Record<string, string>,
         handleFlowControl: false,
       })
     } catch (err) {
@@ -171,11 +210,13 @@ export class PtyManager {
       decoder: new StringDecoder('utf8'),
       spawnedAt: Date.now(),
       ttyName,
+      shellPid: platform.paneShell ? null : proc.pid,
       exited: false,
       bytesOut: 0,
       tail: '',
     }
     this.panes.set(req.paneId, rec)
+    if (platform.paneShell) this.resolvePaneShell(rec)
     this.batcher.setPaneActive(req.paneId, true)
 
     proc.onData((chunk: string | Buffer) => {
@@ -246,11 +287,41 @@ export class PtyManager {
     }
   }
 
-  /** Live panes, with the monotonic output counter the monitor diffs. */
+  /** Live panes, with the monotonic output counter the monitor diffs. The
+   *  pid is the shell as the process sweep sees it (see `shellPid`). */
   listPids(): Array<{ paneId: string; pid: number; bytesOut: number }> {
-    return [...this.panes.values()]
-      .filter((r) => !r.exited)
-      .map((r) => ({ paneId: r.paneId, pid: r.proc.pid, bytesOut: r.bytesOut }))
+    const out: Array<{ paneId: string; pid: number; bytesOut: number }> = []
+    for (const r of this.panes.values()) {
+      if (!r.exited && r.shellPid !== null) out.push({ paneId: r.paneId, pid: r.shellPid, bytesOut: r.bytesOut })
+    }
+    return out
+  }
+
+  /**
+   * Polls `platform.paneShell` until the pane's shell has reported its pid and
+   * tty (the WSL shim writes them as zsh starts), or the pane goes away, or
+   * the shell never reports (bash ignores the shim): then the pane simply has
+   * no metrics and its control-socket writes are refused, as for any pane
+   * whose tty is unknown.
+   */
+  private resolvePaneShell(rec: PaneProc, attempt = 0): void {
+    const lookup = platform.paneShell
+    if (!lookup || rec.exited || this.panes.get(rec.paneId) !== rec) return
+    if (attempt >= SHELL_RESOLVE_ATTEMPTS) return
+    setTimeout(() => {
+      if (rec.exited || this.panes.get(rec.paneId) !== rec) return
+      lookup(rec.paneId).then(
+        (found) => {
+          if (found) {
+            rec.shellPid = found.pid
+            rec.ttyName = found.tty
+          } else {
+            this.resolvePaneShell(rec, attempt + 1)
+          }
+        },
+        () => this.resolvePaneShell(rec, attempt + 1)
+      )
+    }, SHELL_RESOLVE_INTERVAL_MS)
   }
 
   /**

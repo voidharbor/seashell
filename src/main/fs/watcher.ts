@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import { isWatchable, pickEvictions } from './watcher-pool.js'
+import { toHostPath } from './host-path.js'
 
 export interface DirWatcherDeps {
   emit: (dir: string) => void
@@ -39,7 +40,11 @@ export class DirWatcher {
     if (this.entries.has(dir) || !isWatchable(dir)) return
     let watcher: fs.FSWatcher
     try {
-      watcher = fs.watch(dir, { persistent: false })
+      // Keyed and reported by the renderer's own (Linux) path; only the watch
+      // itself goes through the Windows form on win32. Windows refuses to
+      // watch a WSL share today, which lands in `lost` below, and the
+      // explorer falls back to click-to-refresh for that directory.
+      watcher = fs.watch(toHostPath(dir), { persistent: false })
     } catch {
       this.d.lost(dir)
       return

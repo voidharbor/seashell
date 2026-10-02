@@ -124,6 +124,14 @@ describe('recording what a pane is actually running', () => {
     // is exactly the kind of guess not worth making.
     expect(savedCommandFor(running('grep'))).toBe('zsh')
     expect(savedCommandFor(running(''))).toBe('zsh')
+    // Names that exist on every object must not read through the prototype.
+    expect(savedCommandFor(running('toString'))).toBe('zsh')
+    expect(savedCommandFor(running('constructor'))).toBe('zsh')
+  })
+
+  it('main finding claude in the process tree outranks a tick that never named it', () => {
+    expect(savedCommandFor(pane('p1'), true)).toBe('claude')
+    expect(savedCommandFor(running('SeaShell.AppImage'), true)).toBe('claude')
   })
 
   it('never lets an inferred command override one the user chose', () => {
