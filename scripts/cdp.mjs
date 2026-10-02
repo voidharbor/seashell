@@ -5,14 +5,16 @@
 //   node scripts/cdp.mjs 9333 --dblclick 400 300 [modifiers]   (Alt=1 Ctrl=2 Meta=4 Shift=8)
 //   node scripts/cdp.mjs 9333 --key Escape
 //   node scripts/cdp.mjs 9333 --wheel 400 300 120 40 8
+//   node scripts/cdp.mjs 9333 --shot out.png
 // Uses Node's built-in WebSocket (Node 22+). Prints the JSON value of the expression.
+import fs from 'node:fs'
 const [port, ...rest] = process.argv.slice(2)
 if (!port) {
-  console.error('usage: cdp.mjs <port> <expression> | --click x y [modifiers] | --dblclick x y [modifiers] | --key Key | --wheel x y deltaY count gapMs')
+  console.error('usage: cdp.mjs <port> <expression> | --click x y [modifiers] | --dblclick x y [modifiers] | --key Key | --wheel x y deltaY count gapMs | --shot <file.png>')
   process.exit(2)
 }
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json()
-const page = targets.find((t) => t.type === 'page' && /index\.html|localhost/.test(t.url))
+const page = targets.find((t) => t.type === 'page' && /index\.html|localhost|bakeoff\.html/.test(t.url))
 if (!page) {
   console.error('no page target; targets were', targets.map((t) => t.url))
   process.exit(1)
@@ -56,6 +58,11 @@ if (rest[0] === '--click') {
     if (i < count - 1) await sleep(gapMs)
   }
   console.log('wheel dispatched', { x, y, deltaY, count, gapMs })
+} else if (rest[0] === '--shot') {
+  const file = rest[1]
+  const r = await send('Page.captureScreenshot', { format: 'png' })
+  fs.writeFileSync(file, Buffer.from(r.result.data, 'base64'))
+  console.log(JSON.stringify({ wrote: file, bytes: r.result.data.length }))
 } else {
   const res = await send('Runtime.evaluate', {
     expression: rest.join(' '),
