@@ -30,8 +30,8 @@ public:
   void focus(bool on);                                  // WM_SETFOCUS / WM_KILLFOCUS on the body
   // grid:cmd paste, copy, selectAll, clear. True when the op was one of these.
   bool gridCmd(const std::string& op, const std::string& paneId, const nlohmann::json& cmd);
-  // After pty bytes went into a grid: the selection and a scrolled-back
-  // viewport stay on their text while rows move into scrollback.
+  // After pty bytes went into a grid: the selection stays on its text while
+  // rows move into scrollback (the viewport is Grid's own).
   void noteFed(Grid& g, size_t sbBefore, const std::string& newestBefore, size_t sbCap);
   void dropPane(const std::string& paneId);
   const Selection* selection(const std::string& paneId) const;

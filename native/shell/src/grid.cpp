@@ -323,6 +323,8 @@ int Grid::cbPopLine(int cols, VTermScreenCell* cells, void* u) {
   for (int c = 0; c < cols; c++) g->fromCell(c < (int)r.cells.size() ? r.cells[(size_t)c] : blank, cells[c]);
   // A wide cell cut by the last column cannot come back whole.
   if (cols > 0 && cells[cols - 1].width == 2) g->fromCell(blank, cells[cols - 1]);
+  // Scrolled back: every row moved down one, so the viewport follows its text.
+  if (g->viewTop_ < 0) g->viewTop_ = std::min(0L, g->viewTop_ + 1);
   g->viewTop_ = std::max(g->viewTop_, -(long)g->store_.scrollbackLen());
   return 1;
 }

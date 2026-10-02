@@ -674,7 +674,8 @@ void GridInput::noteFed(Grid& g, size_t sbBefore, const std::string& newestBefor
   if (after > sbBefore) {
     long d = (long)(after - sbBefore);
     if (it != sel_.end()) it->second.shift(d, g.store());
-    if (g.viewTop() != 0) g.scrollView(-d);   // a scrolled-back viewport stays on its text
+    // A scrolled-back viewport already stays on its text: Grid::cbPushLine4
+    // moves viewTop once per pushed row.
   } else if (after == sbBefore && after >= sbCap && it != sel_.end() && it->second.active &&
              g.store().text(-1) != newestBefore) {
     // At the cap rows leave as fast as they arrive and the count cannot say
