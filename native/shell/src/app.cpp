@@ -116,7 +116,9 @@ bool App::onInput(HWND, UINT, WPARAM, LPARAM) { return false; }
 LRESULT App::onAppMessage(UINT msg, WPARAM w, LPARAM l) {
   if (msg == Window::WM_APP_CORE_LINE) {
     std::unique_ptr<std::string> line(reinterpret_cast<std::string*>(l));
+    size_t n = line->size();
     wire_.onCoreLine(std::move(*line));
+    CoreProc::lineHandled(n);
   } else if (msg == Window::WM_APP_CORE_EXIT) {
     onCoreExit((DWORD)w, l);
   } else if (msg == Window::WM_APP_DRIVER) {

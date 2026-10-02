@@ -25,6 +25,9 @@ public:
   bool exitExpected() const { return expected_; }   // the shell sent app:beforeQuit or closed the pipe
   LPARAM generation() const { return gen_; }
   ULONGLONG startedTick() const { return started_; }
+  // The UI thread handled a WM_APP_CORE_LINE of this many bytes (the reader's
+  // byte cap on lines posted and not yet handled).
+  static void lineHandled(size_t bytes);
 
 private:
   struct Run;

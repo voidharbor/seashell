@@ -43,7 +43,29 @@ bool postToWindow(UINT msg, WPARAM w, LPARAM l) {
     Sleep(5);
   }
 }
+
+// Bytes of core lines posted and not yet handled on the UI thread. A pty:data
+// line can be a megabyte of base64, so the message count alone does not bound
+// the shell: past this cap the reader waits, the pipe fills and the core's
+// writes (and the pty reads behind them) are throttled.
+const size_t kMaxQueuedLineBytes = 16u << 20;
+std::atomic<size_t> g_queuedLineBytes{ 0 };
+
+bool postLine(std::string* line) {
+  size_t n = line->size();
+  while (g_queuedLineBytes.load() > kMaxQueuedLineBytes) {
+    HWND h = Window::instance().hwnd();
+    if (!h || !IsWindow(h)) return false;
+    Sleep(2);
+  }
+  g_queuedLineBytes += n;
+  if (postToWindow(Window::WM_APP_CORE_LINE, 0, (LPARAM)line)) return true;
+  g_queuedLineBytes -= n;
+  return false;
+}
 }  // namespace
+
+void CoreProc::lineHandled(size_t bytes) { g_queuedLineBytes -= bytes; }
 
 struct CoreProc::Run {
   HANDLE proc = nullptr;
@@ -174,7 +196,7 @@ bool CoreProc::start() {
         if (end > start && pending[end - 1] == '\r') end--;
         if (end > start) {
           auto* line = new std::string(pending, start, end - start);
-          if (!postToWindow(Window::WM_APP_CORE_LINE, 0, (LPARAM)line)) delete line;
+          if (!postLine(line)) delete line;
         }
         start = nl + 1;
       }
