@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 #pragma comment(lib, "bcrypt.lib")
@@ -406,17 +407,61 @@ json Driver::text(const std::string& s) {
 }
 
 // By target: the ui:event the view would send for a click on that target.
+// By point: x, y in client DIPs, or row, col (a viewport cell of paneId, the
+// focused pane by default), as the button messages a real click sends to the
+// body, so the grid input path (Task 13) sees exactly what a mouse would do.
 json Driver::click(const json& req, const char* type) {
   std::string target = strArg(req, "target");
-  if (target.empty()) return fail("ENOTYET");   // x, y needs Task 15's hit rects
   int button = req.contains("button") && req["button"].is_number_integer() ? req["button"].get<int>() : 0;
   if (button < 0 || button > 2) return fail("EBADBUTTON");
   json mods = { { "ctrl", false }, { "alt", false }, { "shift", false } };
   if (req.contains("mods") && req["mods"].is_object())
     for (const char* k : { "ctrl", "alt", "shift" })
       if (req["mods"].contains(k) && req["mods"][k].is_boolean()) mods[k] = req["mods"][k];
-  App::instance().wire().sendEvent({ { "type", type }, { "target", target }, { "x", 0 }, { "y", 0 }, { "button", button }, { "mods", mods } });
-  return { { "ok", true }, { "target", target } };
+  if (!target.empty()) {
+    App::instance().wire().sendEvent({ { "type", type }, { "target", target }, { "x", 0 }, { "y", 0 }, { "button", button }, { "mods", mods } });
+    return { { "ok", true }, { "target", target } };
+  }
+  Window& win = Window::instance();
+  HWND body = win.body();
+  if (!body) return fail("ENOWINDOW");
+  float scale = win.dpi().scale();
+  float bx, by;
+  if (req.contains("row") && req["row"].is_number() && req.contains("col") && req["col"].is_number()) {
+    App& a = App::instance();
+    std::string id = strArg(req, "paneId");
+    if (id.empty()) id = a.defaultPaneId();
+    Grid* g = id.empty() ? nullptr : a.grid(id);
+    GridView* v = id.empty() ? nullptr : a.view(id);
+    if (!g || !v) return fail("ENOGRID");
+    D2D1_RECT_F c = v->cellRect(g->viewTop() + req["row"].get<long>(), req["col"].get<int>());
+    bx = (c.left + c.right) / 2;
+    by = (c.top + c.bottom) / 2;
+  } else if (req.contains("x") && req["x"].is_number() && req.contains("y") && req["y"].is_number()) {
+    bx = req["x"].get<float>() * scale;
+    by = req["y"].get<float>() * scale - (float)win.bodyRect().top;
+    if (by < 0) return fail("ENOTYET");   // the strip's hit rects are Task 15's
+  } else {
+    return fail("ENOTARGET");
+  }
+  heldMods_ = (mods["ctrl"].get<bool>() ? kModCtrl : 0) | (mods["shift"].get<bool>() ? kModShift : 0) |
+              (mods["alt"].get<bool>() ? kModAlt : 0);
+  static const UINT kDown[] = { WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN };
+  static const UINT kUp[] = { WM_LBUTTONUP, WM_MBUTTONUP, WM_RBUTTONUP };
+  static const UINT kDbl[] = { WM_LBUTTONDBLCLK, WM_MBUTTONDBLCLK, WM_RBUTTONDBLCLK };
+  static const WPARAM kMk[] = { MK_LBUTTON, MK_MBUTTON, MK_RBUTTON };
+  WPARAM mk = kMk[button] | (heldMods_ & kModCtrl ? MK_CONTROL : 0) | (heldMods_ & kModShift ? MK_SHIFT : 0);
+  WPARAM upMk = mk & ~kMk[button];
+  LPARAM pt = MAKELPARAM((int)std::lround(bx), (int)std::lround(by));
+  SendMessageW(body, WM_MOUSEMOVE, upMk, pt);
+  SendMessageW(body, kDown[button], mk, pt);
+  SendMessageW(body, kUp[button], upMk, pt);
+  if (strcmp(type, "dblclick") == 0) {
+    SendMessageW(body, kDbl[button], mk, pt);
+    SendMessageW(body, kUp[button], upMk, pt);
+  }
+  heldMods_ = -1;
+  return { { "ok", true }, { "x", bx / scale }, { "y", (by + win.bodyRect().top) / scale } };
 }
 
 void Driver::noteFrame(double ms) {
@@ -441,8 +486,14 @@ json Driver::stats() {
   for (const Sample& b : ptyBytes_) if (now - b.at <= kStatsWindowMs) bytes += b.v;
   PROCESS_MEMORY_COUNTERS pmc{ sizeof pmc };
   double wsMB = GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc) ? pmc.WorkingSetSize / (1024.0 * 1024.0) : 0;
+  // The focused pane's grid: its mouse tracking mode (VTERM_PROP_MOUSE_*, 0 is
+  // none) and its selection's text ("" when nothing is selected).
+  App& a = App::instance();
+  std::string id = a.defaultPaneId();
+  Grid* g = id.empty() ? nullptr : a.grid(id);
   return { { "frameMs", { { "p50", percentile(ms, 0.5) }, { "p95", percentile(ms, 0.95) } } },
-           { "framesLast5s", ms.size() }, { "ptyBytesLast5s", (long long)bytes }, { "shellWsMB", std::round(wsMB * 10) / 10 } };
+           { "framesLast5s", ms.size() }, { "ptyBytesLast5s", (long long)bytes }, { "shellWsMB", std::round(wsMB * 10) / 10 },
+           { "paneId", id }, { "mouseMode", g ? g->mouseMode() : 0 }, { "selection", a.input().selectionText(id) } };
 }
 
 // The visible rows of a pane's grid (the focused pane when paneId is empty),

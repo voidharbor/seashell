@@ -8,6 +8,7 @@
 #include <string>
 #include "core_proc.h"
 #include "grid.h"
+#include "grid_input.h"
 #include "grid_view.h"
 #include "model.h"
 #include "wire.h"
@@ -28,6 +29,9 @@ public:
   bool coreAlive() const { return core_.alive(); }
   DWORD corePid() const { return core_.pid(); }      // wsl.exe, the shell's own child (the driver's coreKill)
   Grid* grid(const std::string& paneId);             // nullptr when the core never created it
+  GridView* view(const std::string& paneId);         // the view drawing that grid, or nullptr
+  Grid* focusedGrid();                               // the model's focused pane's grid; keys go here
+  GridInput& input() { return input_; }
   std::string defaultPaneId() const;                 // the focused pane, else the first grid (the driver's default)
 
   // Hooks the window calls.
@@ -65,6 +69,8 @@ private:
   UINT_PTR quitTimer_ = 0;
   std::map<std::string, std::unique_ptr<Grid>> grids_;   // by pane id, from grid:cmd create
   std::map<std::string, std::unique_ptr<GridView>> views_;   // one per grid, drawing it
+  std::map<std::string, size_t> sbCap_;            // each grid's scrollback cap, from grid:cmd create
+  GridInput input_;                                // keys, mouse, selection and clipboard (Task 13)
   bool blinkOn_ = true;                            // the cursor blink phase, flipped every 530 ms
   std::map<std::string, std::string> feed_;        // pty bytes waiting for the next WM_APP_PTY_FEED
   bool feedPosted_ = false;

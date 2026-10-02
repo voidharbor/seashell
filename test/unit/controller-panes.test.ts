@@ -84,4 +84,28 @@ describe('controller: panes over time', () => {
     expect(c.model().find.open).toBe(false)
     expect(f.grid().at(-1)).toMatchObject({ op: 'findClear' })
   })
+  it('pathclick toasts the resolved path, the miss text, or nothing off a path', async () => {
+    const f = fakeDeps()
+    const stats: unknown[] = []
+    f.handlers['fs:statBatch'] = (p) => {
+      stats.push(p)
+      const req = p as { candidates: string[] }
+      return { results: req.candidates[0] === '/repo/package.json' ? [{ i: 0, resolved: '/repo/package.json', kind: 'file' }] : [] }
+    }
+    const c = new Controller(f.deps, { home: '/Users/joshwald', version: '0.6.0', chords: [] })
+    await c.boot(GEO)
+    const id = c.model().panes[0]!.id
+    const flush = () => new Promise((r) => setTimeout(r, 0))
+    const line = '% echo /repo/package.json'
+    c.term({ type: 'pathclick', paneId: id, line, index: line.indexOf('package'), mods })
+    await flush()
+    expect(stats).toHaveLength(1)
+    expect(c.model().toast).toBe('/repo/package.json')
+    c.term({ type: 'pathclick', paneId: id, line: 'cat /nope/x.txt', index: 6, mods })
+    await flush()
+    expect(c.model().toast).toMatch(/^No file at \/nope\/x\.txt from /)
+    c.term({ type: 'pathclick', paneId: id, line: 'echo copyme', index: 7, mods })
+    await flush()
+    expect(stats).toHaveLength(2)
+  })
 })

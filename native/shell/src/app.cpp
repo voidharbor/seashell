@@ -132,7 +132,21 @@ void App::onResized() {
   wire_.sendGeometry();
 }
 
-bool App::onInput(HWND, UINT, WPARAM, LPARAM) { return false; }
+// Keys go to the focused pane's grid (chords run without one); mouse messages
+// to the grid under the pointer. The strip's own targets are Task 15's.
+bool App::onInput(HWND from, UINT msg, WPARAM w, LPARAM l) {
+  if (msg == WM_SETFOCUS || msg == WM_KILLFOCUS) {
+    input_.focus(msg == WM_SETFOCUS);
+    return false;
+  }
+  if (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) return input_.key(focusedGrid(), msg, w, l);
+  if (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) {
+    // Only the body's client coordinates map onto the grids; a wheel carries screen coordinates.
+    if (from != Window::instance().body() && msg != WM_MOUSEWHEEL) return false;
+    return input_.mouse(msg, w, l);
+  }
+  return false;
+}
 
 LRESULT App::onAppMessage(UINT msg, WPARAM w, LPARAM l) {
   if (msg == Window::WM_APP_CORE_LINE) {
@@ -153,6 +167,17 @@ LRESULT App::onAppMessage(UINT msg, WPARAM w, LPARAM l) {
 Grid* App::grid(const std::string& paneId) {
   auto it = grids_.find(paneId);
   return it == grids_.end() ? nullptr : it->second.get();
+}
+
+GridView* App::view(const std::string& paneId) {
+  auto it = views_.find(paneId);
+  return it == views_.end() ? nullptr : it->second.get();
+}
+
+Grid* App::focusedGrid() {
+  for (const PaneModel& p : model_.panes)
+    if (p.focused && p.kind == "term") return grid(p.id);
+  return nullptr;
 }
 
 std::string App::defaultPaneId() const {
@@ -177,11 +202,15 @@ void App::onGridCmd(const nlohmann::json& cmd) {
     log("grid create %s %dx%d", id.c_str(), g->store().cols(), g->store().rows());
     float scale = Window::instance().dpi().scale();
     views_[id] = std::make_unique<GridView>(*g, (float)(cmd.value("fontPx", 13.0) * scale));
+    sbCap_[id] = (size_t)std::max(0, num("scrollback", 20000));
+    input_.dropPane(id);   // a selection on the grid being replaced
     grids_[id] = std::move(g);
     if (feed_.count(id) && !feedPosted_) { feedPosted_ = true; Window::instance().post(Window::WM_APP_PTY_FEED); }
   } else if (op == "dispose") {
+    input_.dropPane(id);
     views_.erase(id);
     grids_.erase(id);
+    sbCap_.erase(id);
     feed_.erase(id);
     log("grid dispose %s", id.c_str());
   } else if (op == "resize") {
@@ -190,8 +219,11 @@ void App::onGridCmd(const nlohmann::json& cmd) {
     g->resize(num("cols", g->store().cols()), num("rows", g->store().rows()));
     if (cmd.contains("fontPx") && cmd["fontPx"].is_number() && views_.count(id))
       views_[id]->setFontPx((float)(cmd["fontPx"].get<double>() * Window::instance().dpi().scale()));
+  } else if (input_.gridCmd(op, id, cmd)) {
+    log("on grid:cmd %s %s", op.c_str(), id.c_str());   // paste, copy, selectAll, clear
+    return;   // gridCmd repaints what it changed
   } else {
-    // focus, clear, find, paste, copy, exited: the input and UI tasks take these.
+    // focus (keys follow the model's focused pane), find, exited: Tasks 14 and 15.
     log("on grid:cmd %s %s", op.c_str(), id.c_str());
     return;
   }
@@ -220,7 +252,10 @@ void App::drainFeed() {
   for (auto it = feed_.begin(); it != feed_.end();) {
     Grid* g = grid(it->first);
     if (!g) { ++it; continue; }   // its create is still on the way
+    size_t sb = g->store().scrollbackLen();
+    std::string newest = g->store().text(-1);
     g->feed(it->second.data(), it->second.size());
+    input_.noteFed(*g, sb, newest, sbCap_.count(it->first) ? sbCap_[it->first] : 20000);
     dirty = true;   // the grid keeps its damage; its GridView takes it on the next paint
     it = feed_.erase(it);
   }
@@ -258,7 +293,8 @@ void App::paintBody() {
     v.setRect(gr);
     v.setExited(p.status == "exited");
     v.setBlinkPhase(blinkOn_);
-    v.draw(rt, p.focused, nullptr, nullptr, 0);
+    if (Grid* g = grid(p.id)) v.setAppScrollbar(g->altScreen() && g->mouseMode() != VTERM_PROP_MOUSE_NONE);
+    v.draw(rt, p.focused, input_.selection(p.id), nullptr, 0);
   }
   HRESULT hr = rt->EndDraw();
   QueryPerformanceCounter(&t1);
@@ -365,6 +401,7 @@ int App::main(HINSTANCE hinst) {
   wire_.onModel = [this](const UiModel& m) {
     double oldFont = model_.window.fontPx;
     model_ = m;
+    input_.setChords(m.chords);
     Window::instance().invalidateStrip();   // Task 15 draws it
     Window::instance().invalidateBody();
     if (!firstModel_) {

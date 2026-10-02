@@ -34,6 +34,9 @@ public:
   // the overlay app scrollbar (term/app-scrollbar.ts), shown when altScreen && mouseMode
   void setAppScrollbar(bool on); bool appScrollbarHit(float x, float y, int* part) const;
   void appScrollNotches(int notches);        // app-scroll.ts applyNotches: positive is up
+  int appOffset() const { return appOffset_; }   // AppScrollState, for the thumb drag (Task 13)
+  int appRange() const { return appRange_; }
+  D2D1_RECT_F rect() const { return rect_; }
   enum { kBarNone = 0, kBarAbove = 1, kBarThumb = 2, kBarBelow = 3 };
 
 private:

@@ -53,6 +53,7 @@ bool Window::create(HINSTANCE hinst, bool noActivate) {
   wc.lpszClassName = kHostClass;
   if (!RegisterClassExW(&wc)) { App::log("error: RegisterClassEx host %lu", GetLastError()); return false; }
   WNDCLASSEXW bc{ sizeof bc };
+  bc.style = CS_DBLCLKS;   // WM_LBUTTONDBLCLK: word select and path click (Task 13)
   bc.lpfnWndProc = bodyProc;
   bc.hInstance = hinst;
   bc.hCursor = LoadCursorW(nullptr, IDC_IBEAM);
@@ -221,6 +222,10 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       break;
     case WM_NCHITTEST:
       return hitTest(POINT{ GET_X_LPARAM(l), GET_Y_LPARAM(l) });
+    case WM_SETFOCUS:
+      // Activation focuses the top-level window; the keys belong to the body.
+      if (body_) SetFocus(body_);
+      return 0;
     case WM_ACTIVATE:
     case WM_DWMCOMPOSITIONCHANGED:
       extendFrame();
@@ -290,6 +295,13 @@ LRESULT Window::onBody(HWND h, UINT msg, WPARAM w, LPARAM l) {
       return 0;
     case WM_DISPLAYCHANGE:
       InvalidateRect(h, nullptr, FALSE);
+      return 0;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+      App::instance().onInput(h, msg, w, l);   // the focused pane's grid takes the keys; focus loss resets the wheel ramp
+      return 0;
+    case WM_CAPTURECHANGED:
+      if ((HWND)l != h) App::instance().onInput(h, WM_KILLFOCUS, 0, 0);   // a lost drag ends like focus loss
       return 0;
     default:
       if ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || (msg >= WM_KEYFIRST && msg <= WM_KEYLAST)) {

@@ -35,6 +35,8 @@ import { launchCommandText } from '../../renderer/projects/serialize.js'
 import { isLocalHost, parseOsc7 } from '../../renderer/term/osc7.js'
 import { DONE_ATTENTION_MS } from '../../renderer/panes/attention.js'
 import { dropText } from '../../renderer/panes/drop.js'
+import { tokenizeLine } from '../../renderer/links/tokenizer.js'
+import { resolvePathClick } from '../../renderer/links/resolve.js'
 import { chordLabel } from '../../shared/keys.js'
 import type {
   AppPaths,
@@ -401,10 +403,44 @@ export class Controller {
       case 'bell':
         this.dispatch({ type: 'pane.bell', paneId: e.paneId, at: this.deps.now() })
         break
-      default:
-        // Path clicks reveal and preview files, which need the explorer and the
-        // preview panes (Phase 2). Selections are the shell's own business.
+      case 'pathclick':
+        void this.pathClick(e.paneId, e.line, e.index)
         break
+      default:
+        // Selections are the shell's own business.
+        break
+    }
+  }
+
+  /**
+   * `PaneView.tsx` onDoubleClick over the shell's logical line: the candidate
+   * under the clicked character, resolved against the pane's cwd. Revealing
+   * and previewing need the explorer and the preview panes (Phase 2), so a hit
+   * toasts the resolved path for now; a miss toasts its message as before. No
+   * candidate under the click stays silent, as it does in the renderer.
+   */
+  private async pathClick(paneId: string, line: string, index: number): Promise<void> {
+    const pane = paneById(this.s, paneId)
+    if (!pane || typeof line !== 'string' || !Number.isInteger(index)) return
+    const cand = tokenizeLine(line).find((c) => index >= c.start && index < c.end)
+    if (!cand) return
+    const searchRoot = this.home
+    try {
+      const out = await resolvePathClick(
+        {
+          hit: { path: cand.path, start: cand.start, end: cand.end, absY: 0 },
+          rows: { prevRow: null, nextRow: null, startCol: cand.start, endCol: cand.end, cols: line.length },
+          cwd: pane.cwd,
+          searchRoot,
+        },
+        {
+          statBatch: (req) => this.deps.invoke('fs:statBatch', req),
+          findBySuffix: (req) => this.deps.invoke('fs:findBySuffix', req),
+        }
+      )
+      this.toast(out.kind === 'hit' ? out.hit.resolved : out.message)
+    } catch (err) {
+      this.deps.log?.(`pathclick failed: ${(err as Error).message}`)
     }
   }
 
