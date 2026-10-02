@@ -101,23 +101,48 @@ export interface DialogShim {
   showOpenDialog(...args: unknown[]): Promise<{ canceled: boolean; filePaths: string[] }>
 }
 
-/** The one virtual window `src/main` addresses. */
+/** The window's webContents: sends reach the pipe or the controller; its events never fire. */
+export interface WebContentsShim {
+  send(ch: string, p: unknown): void
+  isDestroyed(): boolean
+  isLoading(): boolean
+  on(ev: string, fn: (...a: never[]) => unknown): WebContentsShim
+  once(ev: string, fn: (...a: never[]) => unknown): WebContentsShim
+  off(ev: string, fn: (...a: never[]) => unknown): WebContentsShim
+  setWindowOpenHandler(fn: (...a: never[]) => unknown): void
+}
+
+/**
+ * The one virtual window `src/main` addresses. The shell owns the real window,
+ * so its state reads as a plain visible, unmaximized window and the actions
+ * (maximize, close, loadURL, ...) do nothing here.
+ */
 export interface WindowShim {
-  webContents: { send(ch: string, p: unknown): void; isDestroyed(): boolean }
+  webContents: WebContentsShim
   isDestroyed(): boolean
   focus(): void
   getBounds(): Rect
-  on(ev: string, fn: (...a: unknown[]) => void): WindowShim
-  once(ev: string, fn: (...a: unknown[]) => void): WindowShim
+  getNormalBounds(): Rect
+  on(ev: string, fn: (...a: never[]) => unknown): WindowShim
+  once(ev: string, fn: (...a: never[]) => unknown): WindowShim
+  off(ev: string, fn: (...a: never[]) => unknown): WindowShim
   setTitle(t: string): void
   isMinimized(): boolean
+  isMaximized(): boolean
+  isVisible(): boolean
   restore(): void
   show(): void
+  maximize(): void
+  unmaximize(): void
+  minimize(): void
+  close(): void
+  loadURL(url: string): Promise<void>
 }
 
 export declare class BrowserWindowShim {
   static getAllWindows(): WindowShim[]
   static getFocusedWindow(): WindowShim | null
+  static fromWebContents(wc: unknown): WindowShim | null
 }
 
 export interface Shim {
@@ -177,6 +202,24 @@ function overlap(a: Rect, b: Rect): number {
   const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
   const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
   return w > 0 && h > 0 ? w * h : 0
+}
+
+/**
+ * Pane bytes cross the pipe as base64 (design spec 4.2): the batcher hands over
+ * decoded UTF-8 text, the shell feeds raw bytes to its grids.
+ */
+export function ptyDataForPipe(p: unknown): unknown {
+  if (!p || typeof p !== 'object') return p
+  const batches = (p as { batches?: unknown }).batches
+  if (!Array.isArray(batches)) return p
+  return {
+    ...p,
+    batches: batches.map((b: unknown) => {
+      if (!b || typeof b !== 'object') return b
+      const data = (b as { data?: unknown }).data
+      return typeof data === 'string' ? { ...b, data: Buffer.from(data, 'utf8').toString('base64') } : b
+    }),
+  }
 }
 
 export function createShim(opts: ShimOptions): Shim {
@@ -257,28 +300,39 @@ export function createShim(opts: ShimOptions): Shim {
   })
 
   // ---- the virtual window ----
-  const webContents = {
+  const webContents: WebContentsShim = {
     send(ch: string, p: unknown) {
-      if (CORE_PUSH_TO_SHELL.includes(ch)) opts.write(encodeEnvelope({ k: 'on', ch, p }))
+      if (ch === 'pty:data') opts.write(encodeEnvelope({ k: 'on', ch, p: ptyDataForPipe(p) }))
+      else if (CORE_PUSH_TO_SHELL.includes(ch)) opts.write(encodeEnvelope({ k: 'on', ch, p }))
       else opts.onPush(ch, p)
     },
     isDestroyed: () => false,
+    isLoading: () => false,
+    on: () => webContents,
+    once: () => webContents,
+    off: () => webContents,
+    setWindowOpenHandler() {},
   }
   const win: WindowShim = {
     webContents,
     isDestroyed: () => false,
     focus() {},
     getBounds: () => ({ x: 0, y: 0, width: 0, height: 0 }),
-    on() {
-      return win
-    },
-    once() {
-      return win
-    },
+    getNormalBounds: () => ({ x: 0, y: 0, width: 0, height: 0 }),
+    on: () => win,
+    once: () => win,
+    off: () => win,
     setTitle() {},
     isMinimized: () => false,
+    isMaximized: () => false,
+    isVisible: () => true,
     restore() {},
     show() {},
+    maximize() {},
+    unmaximize() {},
+    minimize() {},
+    close() {},
+    loadURL: () => Promise.resolve(),
   }
   class BrowserWindowImpl {
     static getAllWindows(): WindowShim[] {
@@ -286,6 +340,9 @@ export function createShim(opts: ShimOptions): Shim {
     }
     static getFocusedWindow(): WindowShim | null {
       return win
+    }
+    static fromWebContents(wc: unknown): WindowShim | null {
+      return wc === webContents ? win : null
     }
     constructor() {
       return win as never

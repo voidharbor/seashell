@@ -14,7 +14,10 @@ await build({
   outfile: 'out/core/index.cjs',
   external: ['node-pty'],
   alias: { electron: './src/core/electron-shim-default.ts' },
-  define: { 'process.env.SEASHELL_CORE_VERSION': JSON.stringify(version) },
+  // src/main/index.ts reads import.meta.url at the top level; cjs has no import.meta, so
+  // it becomes the bundle's own file URL.
+  define: { 'process.env.SEASHELL_CORE_VERSION': JSON.stringify(version), 'import.meta.url': '__seashellImportMetaUrl' },
+  banner: { js: "const __seashellImportMetaUrl = require('node:url').pathToFileURL(__filename).href;" },
   sourcemap: false,
   logLevel: 'info',
 })
