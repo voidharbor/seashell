@@ -155,6 +155,7 @@ void Ui::layout() {
   viewPanes(none);
   viewDividers(none);
   viewStatus(none);
+  viewUpdate(none);
   viewDrawer(none);
   viewFindBar(none);
   viewMenu(none);
@@ -336,7 +337,7 @@ void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
     return;
   }
   if (target == "find:bar" || target == "restore:card" || target == "toast" || target == "status" || target == "splash" ||
-      target == "drawer:head" || startsWith(target, "tip"))
+      target == "drawer:head" || target == "update:bar" || startsWith(target, "tip"))
     return;
   send("click", target, xDip, yDip, 0, m);
 }
@@ -690,6 +691,7 @@ void Ui::drawBody(ID2D1RenderTarget* rt) {
   viewPanes(p);
   viewDividers(p);
   viewStatus(p);
+  viewUpdate(p);
   viewDrawer(p);
 }
 

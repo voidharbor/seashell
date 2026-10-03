@@ -1,5 +1,6 @@
 // What draws over the panes: the find bar, the toast, the empty state, the
-// splash, the restore card (6.3 cards and dialogs) and the tooltip.
+// splash, the restore card (6.3 cards and dialogs) and the tooltip; and the
+// update banner in its band above the status bar (Task 14).
 #include "ui/ui.h"
 #include "gfx.h"
 #include "paths.h"
@@ -87,6 +88,45 @@ void Ui::viewFindBar(Painter& p) {
   find_.draw(p, field, UiFont{ 12 }, 0x1E1E1E, m_.find.miss, caretOn_);
 }
 
+// The update banner (UpdateBanner.tsx; plan Task 14) in the band the core's
+// layout leaves above the status bar: toastBg with a 1 px #a0a0a0 top line,
+// the text at the left, the buttons at the right as win7Buttons (Download,
+// Install and Relaunch and Try again are the primary ones, btn--primary,
+// drawn with the default ring), and a thin accent bar along the bottom for a
+// download's progress.
+void Ui::viewUpdate(Painter& p) {
+  if (!haveModel_ || !m_.update || coreDead_) return;
+  const UpdateBannerModel& u = *m_.update;
+  float s = p.scale(), d = dpi();
+  D2D1_RECT_F band = dev(u.rect);
+  if (band.bottom - band.top < 4 * s || band.right <= band.left) return;
+  hit(false, band, "update:bar");
+  if (p.live()) {
+    p.fillRect(band, t_.toastBg);
+    p.fillRect(D2D1::RectF(band.left, band.top, band.right, band.top + std::max(1.f, std::round(d))), 0xA0A0A0);
+  }
+  float bh = std::round(std::min(22 * s, band.bottom - band.top - 4 * s));
+  float by = std::round((band.top + band.bottom) / 2 - bh / 2);
+  float x = band.right - 12 * s;
+  for (auto it = u.buttons.rbegin(); it != u.buttons.rend(); ++it) {
+    std::wstring label = fromUtf8(it->label);
+    float bw = std::max(72 * s, std::ceil(p.textWidth(label, UiFont{ 12 })) + 24 * s);
+    D2D1_RECT_F b = D2D1::RectF(std::round(x - bw), by, std::round(x), by + bh);
+    std::string t = "update:" + it->id;
+    hit(false, b, t);
+    bool primary = it->id == "download" || it->id == "install" || it->id == "retry";
+    p.win7Button(b, btn(t, primary), label);
+    x = b.left - 8 * s;
+  }
+  p.text(D2D1::RectF(band.left + 12 * s, band.top, std::max(band.left + 12 * s, x - 4 * s), band.bottom), fromUtf8(u.text), UiFont{ 12 },
+         t_.toastText, Align::Left, true);
+  if (u.progress && p.live()) {
+    float f = (float)std::clamp(*u.progress, 0.0, 1.0);
+    float h = std::max(2.f, std::round(2 * s));
+    p.fillRect(D2D1::RectF(band.left, band.bottom - h, band.left + std::round((band.right - band.left) * f), band.bottom), t_.accent);
+  }
+}
+
 void Ui::viewOverlays(Painter& p) {
   Window& win = Window::instance();
   RECT rc{};
@@ -120,8 +160,10 @@ void Ui::viewOverlays(Painter& p) {
     UiFont f{ 12 };
     float tw = std::min(std::ceil(p.textWidth(toast, f)) + 32 * s, W - 24 * s);
     float th = 32 * s;
-    D2D1_RECT_F r = D2D1::RectF(std::round(W / 2 - tw / 2), std::round(H - statusH - 14 * s - th), std::round(W / 2 + tw / 2),
-                                std::round(H - statusH - 14 * s));
+    // Above the update banner while it shows, as the renderer's body ends there.
+    float bottom = m_.update && !coreDead_ ? dev(m_.update->rect).top : H - statusH;
+    D2D1_RECT_F r = D2D1::RectF(std::round(W / 2 - tw / 2), std::round(bottom - 14 * s - th), std::round(W / 2 + tw / 2),
+                                std::round(bottom - 14 * s));
     hit(false, r, "toast");
     card(p, r, t_);
     p.text(inset(r, 14 * s, 0), toast, f, t_.toastText, Align::Center, true);

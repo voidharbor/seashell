@@ -43,6 +43,8 @@ $dpi = (Get-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name Appli
 if (-not $dpi) { $dpi = 96 }
 $w = [int][math]::Round(1440 * $dpi / 96); $h = [int][math]::Round(900 * $dpi / 96)
 Set-Content -Path "$ud\window-bounds.json" -Value "{`"x`":100,`"y`":100,`"width`":$w,`"height`":$h,`"maximized`":false}" -Encoding Ascii
+# The tutorial was seen (plan Task 14): no first-run sheet holds the keys or dims the window.
+Set-Content -Path "$ud\ui-state.json" -Value '{"tutorialSeen":true}' -Encoding Ascii
 
 # Release layout: no SEASHELL_CORE_DIR, so the shell stages resources\core.
 Remove-Item Env:SEASHELL_CORE_DIR -ErrorAction SilentlyContinue

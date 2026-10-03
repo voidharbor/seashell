@@ -399,7 +399,7 @@ app.whenReady().then(warmUpPlatform).then(() => importLinuxState(app.getPath('us
   })
   ipcMain.on(CH.updateDownload, () => void updater.download())
   ipcMain.on(CH.updateInstall, () => void updater.install())
-  setTimeout(() => void updater.start(), 5000)
+  if (platform.updater !== 'off') setTimeout(() => void updater.start(), 5000)
   void reportLastInstall()
 
   app.on('activate', () => {

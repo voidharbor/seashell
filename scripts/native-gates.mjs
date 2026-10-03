@@ -230,11 +230,28 @@ async function waitGone(pid, timeoutMs) {
   return !pidAlive(pid)
 }
 
+// Every scratch a gate prepares starts with the tutorial seen (plan Task 14):
+// on a fresh userData the first-run tutorial sheet would hold the keyboard and
+// dim the window. Whatever else ui-state.json already holds is kept.
+function seedUiState(udLinux) {
+  mkdirSync(udLinux, { recursive: true })
+  const file = `${udLinux}/ui-state.json`
+  let state = {}
+  try {
+    state = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {}
+  if (typeof state !== 'object' || state === null || Array.isArray(state)) state = {}
+  writeFileSync(file, JSON.stringify({ ...state, tutorialSeen: true }, null, 2))
+}
+
 // Launches release\win-native\SeaShell.exe for the scratch `name` without
 // SEASHELL_CORE_DIR (the core is staged, spec 4.5) and with the test driver
-// on, so the window never takes focus. Returns the Windows pid.
-function launchShell(name) {
+// on, so the window never takes focus. Returns the Windows pid. The scratch's
+// ui-state.json says the tutorial was seen unless `tutorial` is set (the
+// tutorial's own check launches it on a fresh userData).
+function launchShell(name, { tutorial = false } = {}) {
   const ud = `${SCRATCH_WIN}\\${name}`
+  if (!tutorial) seedUiState(toLocal(ud))
   const ps = [
     `Set-Location '${RELEASE_WIN}'`,
     `New-Item -ItemType Directory -Force -Path '${ud}' | Out-Null`,
@@ -631,6 +648,7 @@ async function gateNesting(ud) {
   const nestLinux = toLocal(nestUd)
   rmSync(nestLinux, { recursive: true, force: true })
   mkdirSync(nestLinux, { recursive: true })
+  seedUiState(nestLinux)
   const launchLog = `/tmp/seashell-nest-launch-${process.pid}.log`
   rmSync(launchLog, { force: true })
   const others = new Set(releaseShellPids())   // release shells already up (the main scratch)
@@ -681,7 +699,7 @@ async function gateNesting(ud) {
 
 // ---------------------------------------------------------------------- main
 
-export { BUILD_WIN, RELEASE_WIN, SCRATCH_WIN, PIDS, toLocal, sleep, drive, model, must, focusedPane, run, gridRows, waitText, launchShell, waitFile, quitShell, writeBounds, paneTty, claudeOn, pidAlive }
+export { BUILD_WIN, RELEASE_WIN, SCRATCH_WIN, PIDS, toLocal, sleep, drive, model, must, focusedPane, run, gridRows, waitText, launchShell, waitFile, quitShell, writeBounds, seedUiState, paneTty, claudeOn, pidAlive }
 
 if (isMain) {
   const runners = { env: gateEnv, throughput: gateThroughput, latency: gateLatency, relay: gateRelay, restore: gateRestore, control: gateControl, nesting: gateNesting }

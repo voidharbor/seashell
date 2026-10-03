@@ -1,5 +1,8 @@
 // Builds the W10 workload (spec section 2): 9 tabs, 10 plain zsh panes.
-// Pure except for main(), which writes two files into a SCRATCH userData dir.
+// Pure except for main(), which writes three files into a SCRATCH userData
+// dir: the session, an empty projects list, and a ui-state.json that says the
+// tutorial was seen (plan Task 14), so no first-run tutorial sheet sits over
+// the restored window.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -35,6 +38,7 @@ function main() {
   mkdirSync(outDir, { recursive: true })
   writeFileSync(join(outDir, 'last-session.json'), JSON.stringify(buildW10(cwd), null, 2))
   writeFileSync(join(outDir, 'projects.json'), JSON.stringify({ schemaVersion: 1, projects: [] }, null, 2))
+  writeFileSync(join(outDir, 'ui-state.json'), JSON.stringify({ tutorialSeen: true }, null, 2))
   console.log(`wrote W10 session into ${outDir}`)
 }
 

@@ -2,15 +2,38 @@
  * Fake controller deps shared by the controller tests. Kept out of the
  * `*.test.ts` files so importing it never re-registers another file's tests.
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { onTestFinished } from 'vitest'
 import type { ControllerDeps } from '../../src/core/controller/controller.js'
 import type { GridCmd, UiModel } from '../../src/core/controller/model.js'
+
+/**
+ * A userData of each fake's own, seeded with a `ui-state.json` that says the
+ * tutorial was seen, so boot opens no first-run tutorial (plan Task 14) and
+ * every test sees the window it always saw. The controller's saves land here
+ * and nowhere else; the directory goes when the test that made it finishes.
+ * controller-tutorial.test.ts points `app:getPaths` at a fresh, unseeded one.
+ */
+function seededUserData(): string {
+  const ud = mkdtempSync(join(tmpdir(), 'ss-fake-ud-'))
+  writeFileSync(join(ud, 'ui-state.json'), JSON.stringify({ tutorialSeen: true }))
+  try {
+    onTestFinished(() => rmSync(ud, { recursive: true, force: true }))
+  } catch {
+    /* made outside a test: left in the temp directory */
+  }
+  return ud
+}
 
 /** `home` is what `app:getPaths` answers, which boot takes as home and the explorer's root. */
 export function fakeDeps(home = '/Users/joshwald') {
   const sent: Array<[string, unknown]> = []
   const shellOut: Array<[string, unknown]> = []
+  const userData = seededUserData()
   const handlers: Record<string, (p: unknown) => unknown> = {
-    'app:getPaths': () => ({ home, hostname: 'jarvis', userData: '/mnt/c/scratch/ud', defaultShell: '/usr/bin/zsh', cwdOfLaunch: home, platform: 'win32', host: 'native' }),
+    'app:getPaths': () => ({ home, hostname: 'jarvis', userData, defaultShell: '/usr/bin/zsh', cwdOfLaunch: home, platform: 'win32', host: 'native' }),
     'session:load': () => null,
     'pty:spawn': () => ({ ok: true, pid: 100 }),
     'pty:kill': () => ({ ok: true, survivors: 0 }),

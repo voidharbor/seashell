@@ -41,6 +41,9 @@ export function createWslhost(io: WslhostIo): Platform {
     ...linux,
     controlTransport: 'tcp',
     paneAppId: appId,
+    // Plan decision 6: today's checker would offer the Linux AppImage; the
+    // banner is built and tested with an injected state instead.
+    updater: 'off',
     terminalFontPath: () => null,
 
     installShellIntegration(): string | null {

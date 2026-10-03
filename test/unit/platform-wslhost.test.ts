@@ -58,4 +58,7 @@ describe('wslhost platform', () => {
     expect(p.terminalFontPath()).toBeNull()
     expect(p.id).toBe('linux')
   })
+  it('turns the update check off (plan decision 6: the checker would offer the Linux AppImage)', () => {
+    expect(createWslhost(io().io).updater).toBe('off')
+  })
 })

@@ -122,3 +122,20 @@ export function drawerRects(area: Rect, height: number, headerH: number): Drawer
   const gridRect = { x: rect.x, y: top, w: rect.w, h: bottom - top }
   return { rect, gripRect, gridRect }
 }
+
+/** The update banner's band at uiScale 1 (`.update-banner`: 6 DIP padding around a 24 DIP button row, less the border). */
+export const UPDATE_BANNER_DIP = 28
+
+/**
+ * The window under the tab strip, top to bottom (`app.tsx:1423-1805`): the
+ * body, the update banner while it shows (`bannerH` 0 while it does not), then
+ * the status bar. Everything in DIP; `clientW` and `clientH` are the client
+ * area's.
+ */
+export function windowBands(clientW: number, clientH: number, tabStripH: number, statusH: number, bannerH: number): { body: Rect; banner: Rect | null } {
+  const w = Math.max(0, clientW)
+  const bodyH = Math.max(0, clientH - tabStripH - statusH - bannerH)
+  const body = { x: 0, y: tabStripH, w, h: bodyH }
+  const banner = bannerH > 0 ? { x: 0, y: tabStripH + bodyH, w, h: bannerH } : null
+  return { body, banner }
+}

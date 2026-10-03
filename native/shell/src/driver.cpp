@@ -409,6 +409,15 @@ json Driver::execute(const json& req) {
     App::instance().overrideComposition(on);
     return { { "ok", true }, { "dwm", App::dwmColorization() } };
   }
+  if (cmd == "coreSend") {
+    // A {k:'send'} envelope straight to the core (Task 14): the core acts on
+    // a test:* channel only because the shell started it with
+    // SEASHELL_TEST_MODE=1, which only a test run (this driver) does.
+    std::string ch = strArg(req, "ch");
+    if (ch.empty()) return fail("ENOCH");
+    App::instance().wire().send(ch, req.contains("p") ? req["p"] : json::object());
+    return { { "ok", true } };
+  }
   if (cmd == "key") return key(strArg(req, "chord"));
   if (cmd == "text") return text(strArg(req, "s"));
   if (cmd == "click") return click(req, "click");

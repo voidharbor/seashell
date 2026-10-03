@@ -1,7 +1,8 @@
 /**
  * The sheets the core draws through the shell (native design spec section 7):
- * the Settings sheet from `src/renderer/settings/SettingsPanel.tsx` and the
- * Projects sheet from `src/renderer/projects/ProjectsPanel.tsx`.
+ * the Settings sheet from `src/renderer/settings/SettingsPanel.tsx`, the
+ * Projects sheet from `src/renderer/projects/ProjectsPanel.tsx` and the
+ * tutorial from `src/renderer/tutorial/Tutorial.tsx`.
  * Pure: the shell draws a `SheetModel`, the controller applies its clicks.
  *
  * Only Aero is drawn on the native build, so the other themes, the pane frames
@@ -25,6 +26,7 @@ import { xtermThemeFrom } from '../../renderer/term/palette.js'
 import { chordLabel } from '../../shared/keys.js'
 import type { Project } from '../../shared/ipc.js'
 import type { SheetField, SheetModel } from './model.js'
+import type { TutorialStep } from './tutorial-steps.js'
 
 /** The card's width at uiScale 1 (`.sheet__card`: min(620px, 88%)); the shell caps it at 88 percent of the body. */
 export const SETTINGS_SHEET_WIDTH = 620
@@ -320,5 +322,57 @@ export function projectsSheet(st: ProjectsSheetState, now: number, uiScale = 1):
     ],
     buttons: [{ id: 'done', label: 'Done', isDefault: true, disabled: false }],
     focusField: 'name',
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The tutorial (Tutorial.tsx; inventory row T)
+// ---------------------------------------------------------------------------
+
+/** The card's width at uiScale 1 (`.tut__card`: min(560px, 86%)). */
+export const TUTORIAL_SHEET_WIDTH = 560
+
+/**
+ * Tutorial.tsx:293-356 as a sheet: the step counter as the card's title, one
+ * section for the step shown (its title, its paragraphs as notes, its key
+ * table as a `rows` field with the chord as the name and the action as the
+ * meta), the dots as the `step` buttons, the `dontShow` check, then Skip,
+ * Back (greyed on the first step) and Next (`Get started` on the last, the
+ * default). The shell draws the tutorial's dots and key table its own way.
+ */
+export function tutorialSheet(steps: readonly TutorialStep[], step: number, dontShow: boolean, uiScale = 1): SheetModel {
+  const i = Math.max(0, Math.min(steps.length - 1, step))
+  const cur = steps[i]!
+  const last = i === steps.length - 1
+  const fields: SheetField[] = cur.body.map((text, n) => ({ id: `body${n}`, kind: 'note' as const, label: text }))
+  if (cur.keys.length > 0) {
+    fields.push({
+      id: 'keys',
+      kind: 'rows',
+      label: '',
+      rows: cur.keys.map(([chord, action], n) => ({ id: String(n), name: chord, meta: action, confirming: false })),
+    })
+  }
+  fields.push(
+    {
+      id: 'step',
+      kind: 'buttons',
+      label: '',
+      options: steps.map((s, n) => ({ id: String(n), label: String(n + 1), selected: n === i, disabled: false, tooltip: s.title, swatch: null })),
+    },
+    // Tutorial.tsx:240-249 and 330-338; checked by default, so the tour shows once.
+    { id: 'dontShow', kind: 'check', label: 'Don’t show this again', value: dontShow },
+  )
+  return {
+    kind: 'tutorial',
+    title: `${i + 1} / ${steps.length}`,
+    width: TUTORIAL_SHEET_WIDTH * uiScale,
+    sections: [{ title: cur.title, fields }],
+    buttons: [
+      { id: 'skip', label: 'Skip', isDefault: false, disabled: false },
+      { id: 'back', label: 'Back', isDefault: false, disabled: i === 0 },
+      { id: 'next', label: last ? 'Get started' : 'Next', isDefault: true, disabled: false },
+    ],
+    focusField: null,
   }
 }

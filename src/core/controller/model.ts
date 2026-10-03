@@ -31,7 +31,12 @@
  * field, `sheet:<kind>:<fieldId>:<optionId>` for a buttons option,
  * `sheet:<kind>:btn:<id>` for a bottom button, `sheet:close`, and
  * `sheet:<kind>` itself for `key Escape`. The Projects sheet's rows:
- * `sheet:projects:row:<id>:delete|confirm|cancel|add|open`.
+ * `sheet:projects:row:<id>:delete|confirm|cancel|add|open`. The tutorial
+ * (`sheet:tutorial`) takes `key` Escape, ArrowLeft and ArrowRight; its dots are
+ * `sheet:tutorial:step:<n>`, its check `sheet:tutorial:dontShow`, its buttons
+ * `sheet:tutorial:btn:skip|back|next`.
+ *
+ * The update banner (Phase 2): `update:download|page|later|install|retry|dismiss`.
  */
 
 export interface Rect {
@@ -244,6 +249,21 @@ export interface SheetModel {
   focusField: string | null
 }
 
+/**
+ * The strip above the status bar (`UpdateBanner.tsx`): one phase of
+ * `UpdateState` with its text and at most two buttons, null while idle or
+ * while the offered version was put off with Later.
+ */
+export interface UpdateBannerModel {
+  phase: 'available' | 'downloading' | 'ready' | 'error'
+  text: string
+  buttons: Array<{ id: 'download' | 'page' | 'later' | 'install' | 'retry' | 'dismiss'; label: string }>
+  /** 0 to 1 while a download with a known size runs, else null. */
+  progress: number | null
+  /** The band the body leaves for it above the status bar, DIP (the core's layout). */
+  rect: Rect
+}
+
 export interface UiModel {
   seq: number
   window: {
@@ -283,6 +303,7 @@ export interface UiModel {
   sidebar: SidebarModel
   drawer: DrawerModel
   sheet: SheetModel | null
+  update: UpdateBannerModel | null
 }
 
 export interface Mods {

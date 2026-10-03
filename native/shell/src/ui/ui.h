@@ -96,6 +96,7 @@ private:
   void viewExitOverlay(Painter& p, const PaneModel& pm, D2D1_RECT_F grid);   // panes.cpp
   void viewDividers(Painter& p);                 // dividers.cpp
   void viewStatus(Painter& p);                   // status.cpp
+  void viewUpdate(Painter& p);                   // overlays.cpp: the update banner in its band above the status bar
   void viewFindBar(Painter& p);                  // overlays.cpp
   void viewOverlays(Painter& p);                 // overlays.cpp: toast, empty state, splash, restore card, tooltip
   void viewSidebar(Painter& p);                  // sidebar.cpp: the explorer column, its scrollbar, the strip and the grip

@@ -289,6 +289,8 @@ bool CoreProc::start() {
   };
   std::wstring cdp = envW(L"SEASHELL_CDP_PORT");
   if (!cdp.empty()) args.push_back(L"SEASHELL_CDP_PORT=" + cdp);
+  // Under the test driver the core accepts the driver's test:* sends (coreSend; Task 14).
+  if (!envW(L"SEASHELL_TEST_PORT").empty()) args.push_back(L"SEASHELL_TEST_MODE=1");
   args.push_back(L"/usr/bin/node");
   // global.gc for the core's idle collector (src/core/idle-gc.ts).
   args.push_back(L"--expose-gc");

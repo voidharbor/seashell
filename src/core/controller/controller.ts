@@ -12,8 +12,9 @@
  * source. Behaviour that is not ported yet toasts "<name> arrives in phase 2".
  * The session snapshot and restore live in `session.ts`, the status bar's
  * strings in `status.ts`, the file explorer's tree in `explorer.ts`, the
- * Projects sheet's saves and opens in `projects.ts`.
- * The shell drawer (`DrawerShell.tsx`) is one more grid per pane, here.
+ * Projects sheet's saves and opens in `projects.ts`, the tutorial's steps in
+ * `tutorial-steps.ts`. The shell drawer (`DrawerShell.tsx`) is one more grid
+ * per pane, here, and so is the update banner (`UpdateBanner.tsx`).
  */
 import path from 'node:path'
 import {
@@ -53,14 +54,26 @@ import type {
   OpenPathResponse,
   PtyKillResponse,
   PtySpawnResponse,
+  UpdateState,
 } from '../../shared/ipc.js'
-import { DRAWER_HEADER_DIP, drawerRects, layOut, layOutZoomed, splitBody, type BodySplit, type LaidOut } from './layout.js'
+import {
+  DRAWER_HEADER_DIP,
+  drawerRects,
+  layOut,
+  layOutZoomed,
+  splitBody,
+  UPDATE_BANNER_DIP,
+  windowBands,
+  type BodySplit,
+  type LaidOut,
+} from './layout.js'
 import { ExplorerState, FLASH_MS, type Listing } from './explorer.js'
 import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-state.js'
 import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
 import { mem, statusModel } from './status.js'
 import { colorizationToTokens, isColorization, withAccent } from './colorization.js'
-import { accentOptionId, cleanNewPaneCommand, paletteOverride, SETTINGS_CHECKS, settingsSheet } from './sheets.js'
+import { accentOptionId, cleanNewPaneCommand, paletteOverride, SETTINGS_CHECKS, settingsSheet, tutorialSheet } from './sheets.js'
+import { STEPS, type TutorialStep } from './tutorial-steps.js'
 import { Projects } from './projects.js'
 import { ACCENTS, PALETTE_ORDER, type PaletteKey } from '../../renderer/theme/tokens.js'
 import { TAB_STRIP_ORDER, type TabStripMode } from '../../renderer/settings/settings.js'
@@ -77,6 +90,7 @@ import type {
   TermEvent,
   UiEvent,
   UiModel,
+  UpdateBannerModel,
 } from './model.js'
 
 export interface ControllerDeps {
@@ -111,10 +125,8 @@ const FIND_DEBOUNCE_MS = 120
 const TAB_STRIP_PX = 38
 const STATUS_PX = 28
 
-/** Commands owned by Phase 2. Each toasts `<name> arrives in phase 2`. */
-const PHASE2_COMMANDS: Readonly<Record<string, string>> = {
-  'help.tutorial': 'The tutorial',
-}
+/** Commands owned by Phase 2. Each toasts `<name> arrives in phase 2`; none is left. */
+const PHASE2_COMMANDS: Readonly<Record<string, string>> = {}
 
 /** Pane title-bar controls owned by Phase 2, keyed by the target's last part. */
 const PHASE2_TARGETS: Readonly<Record<string, string>> = {
@@ -231,7 +243,17 @@ export class Controller {
   /** The grip drag: the grid area's bottom edge, measured at the press (`app.tsx:267-292`). */
   private drawerDrag: { bottom: number } | null = null
   /** The open sheet (one at a time); null while none is up. */
-  private sheetKind: 'settings' | 'projects' | null = null
+  private sheetKind: 'settings' | 'projects' | 'tutorial' | null = null
+  /** The tutorial's steps for this platform, its step shown and its check (Tutorial.tsx state). */
+  private readonly steps: TutorialStep[]
+  private tutorialStep = 0
+  private tutorialDontShow = true
+  /** The first-run tutorial was considered: it shows once per launch at most, after the restore card. */
+  private firstRunDone = false
+  /** The last `update:state` from main's updater (`app.tsx:121-122`). */
+  private updateState: UpdateState = { phase: 'idle' }
+  /** The version put off with Later this session; starts as the saved one (`app.tsx:123-130`). */
+  private updateDismissed: string | null = null
   /** The Projects sheet's state and actions (projects.ts). */
   private readonly projects: Projects
   private last: UiModel
@@ -240,6 +262,7 @@ export class Controller {
     this.deps = deps
     this.opts = opts
     this.home = opts.home
+    this.steps = STEPS(deps.platform)
     this.projects = new Projects({
       invoke: <T = unknown>(ch: string, p: unknown) => this.deps.invoke<T>(ch, p),
       state: () => this.s,
@@ -273,6 +296,7 @@ export class Controller {
     if (this.paths?.userData) {
       this.uiFile = path.posix.join(this.paths.userData, 'ui-state.json')
       this.ui = loadUiState(this.uiFile)
+      this.updateDismissed = this.ui.dismissedUpdate
       // A saved `Dark` tab strip paints before the shell's first colorization.
       this.rebuildTokens()
     }
@@ -291,6 +315,7 @@ export class Controller {
       this.emit()
     } else {
       this.newTab()
+      this.firstRunTutorial()
     }
     this.armSnapshot()
   }
@@ -336,6 +361,10 @@ export class Controller {
       if (this.openSheet('projects')) {
         this.projects.opened(name === 'app.saveTab' ? 'tab' : name === 'app.saveProject' ? 'window' : undefined)
       }
+      return
+    }
+    if (name === 'help.tutorial') {
+      this.openTutorial()
       return
     }
     const phase2 = PHASE2_COMMANDS[name]
@@ -470,6 +499,10 @@ export class Controller {
     }
     if (t === 'sheet:close' || t.startsWith('sheet:')) {
       this.sheetEvent(t, e)
+      return
+    }
+    if (t.startsWith('update:')) {
+      if (e.type === 'click' && e.button === 0) this.updateClick(t.slice('update:'.length))
       return
     }
     // A right or middle press reaches the core only to close the explorer's
@@ -700,8 +733,18 @@ export class Controller {
         if (typeof dir === 'string') this.explorer?.markLost(dir)
         break
       }
+      case 'update:state': {
+        // main's updater (off on wslhost in this build; plan decision 6), or
+        // a test:update the core maps here in test mode (src/core/index.ts).
+        const next = coerceUpdateState(p)
+        if (!next) break
+        this.updateState = next
+        // The body gains or loses the banner's band: the grids resize.
+        this.sync()
+        this.emit()
+        break
+      }
       default:
-        // update:state belongs to Phase 2 (the update banner).
         break
     }
   }
@@ -1410,6 +1453,7 @@ export class Controller {
         this.restoring = false
         if (restored.length === 0) this.newTab()
         else this.dispatch({ type: 'tabs.replace', tabs: restored })
+        this.firstRunTutorial()
       })
   }
 
@@ -1418,6 +1462,7 @@ export class Controller {
     this.restoreCandidate = null
     void this.deps.invoke('session:clear', undefined).catch(() => undefined)
     this.newTab()
+    this.firstRunTutorial()
   }
 
   /** The 30 s snapshot clock (`app.tsx:624-634`), re-armed after every tick. */
@@ -1557,16 +1602,22 @@ export class Controller {
     return levelAt(this.ui.zoomIndex).ui
   }
 
-  /** The window body in DIP: the client area below the tab strip and above the status bar. */
-  private body(): Rect | null {
+  /**
+   * The client area in DIP under the tab strip: the body, then the update
+   * banner's band while it shows, then the status bar (layout.ts windowBands).
+   */
+  private bands(): { body: Rect; banner: Rect | null } | null {
     const g = this.geo
     if (!g) return null
     const scale = g.dpi > 0 ? g.dpi / 96 : 1
     const ui = this.uiScale()
-    const top = TAB_STRIP_PX * ui
-    const w = g.clientW / scale
-    const h = g.clientH / scale - top - STATUS_PX * ui
-    return { x: 0, y: top, w: Math.max(0, w), h: Math.max(0, h) }
+    const bannerH = this.bannerState() ? UPDATE_BANNER_DIP * ui : 0
+    return windowBands(g.clientW / scale, g.clientH / scale, TAB_STRIP_PX * ui, STATUS_PX * ui, bannerH)
+  }
+
+  /** The window body in DIP: the client area below the tab strip and above the banner and the status bar. */
+  private body(): Rect | null {
+    return this.bands()?.body ?? null
   }
 
   /** The body split into the explorer column, its grip and the grid (`app.tsx:1562-1586`). */
@@ -1994,7 +2045,7 @@ export class Controller {
   // ---------------------------------------------------------------------------
 
   /** False when the restore card is up: it is modal and answers first (app.tsx shows no sheet over it). */
-  private openSheet(kind: 'settings' | 'projects'): boolean {
+  private openSheet(kind: 'settings' | 'projects' | 'tutorial'): boolean {
     if (this.restoreCandidate) return false
     if (this.sbMenu) this.sbMenu = null
     this.sheetKind = kind
@@ -2040,6 +2091,10 @@ export class Controller {
 
   private sheetEvent(t: string, e: UiEvent): void {
     if (this.sheetKind === null) return
+    if (this.sheetKind === 'tutorial') {
+      this.tutorialEvent(t, e)
+      return
+    }
     const base = `sheet:${this.sheetKind}`
     if (e.type === 'key' && e.key === 'Escape') {
       if (t === base || t.startsWith(`${base}:`)) this.closeSheet()
@@ -2085,6 +2140,179 @@ export class Controller {
       if ((TAB_STRIP_ORDER as readonly string[]).includes(option)) this.setSetting('tabStrip', option as TabStripMode)
     }
     // Theme (Aero only), pane frame and CRT glass are greyed: nothing to apply.
+  }
+
+  // ---------------------------------------------------------------------------
+  // The tutorial (Tutorial.tsx; app.tsx:114, 958-959, 1775-1777, 1803)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Once per launch, after boot and after the restore card was answered when
+   * one was up: the tutorial opens unless it was seen. With no userData to
+   * remember it in, it counts as seen (Tutorial.tsx:20-28: showing it on every
+   * launch would be far worse than never showing it).
+   */
+  private firstRunTutorial(): void {
+    if (this.firstRunDone) return
+    this.firstRunDone = true
+    if (this.uiFile !== null && !this.ui.tutorialSeen) this.openTutorial()
+  }
+
+  /** A fresh mount: the first step, the check ticked (Tutorial.tsx:240-249). */
+  private openTutorial(): void {
+    if (this.restoreCandidate) return
+    this.tutorialStep = 0
+    this.tutorialDontShow = true
+    this.openSheet('tutorial')
+  }
+
+  /** Tutorial.tsx `close`: the check ticked marks it seen; unticked leaves the flag as it was. */
+  private closeTutorial(): void {
+    if (this.tutorialDontShow && !this.ui.tutorialSeen) {
+      this.ui = { ...this.ui, tutorialSeen: true }
+      this.saveUi()
+    }
+    this.closeSheet()
+  }
+
+  private setTutorialStep(step: number): void {
+    const next = Math.max(0, Math.min(this.steps.length - 1, step))
+    if (next === this.tutorialStep) return
+    this.tutorialStep = next
+    this.emit()
+  }
+
+  /**
+   * The sheet's keys (Tutorial.tsx:273-291: Escape closes, the arrows step and
+   * stop at either end; the shell's sheet holds the keyboard, so a terminal
+   * never sees them) and its clicks: a dot, the check, Skip, Back and Next.
+   */
+  private tutorialEvent(t: string, e: UiEvent): void {
+    const base = 'sheet:tutorial'
+    if (t !== 'sheet:close' && t !== base && !t.startsWith(`${base}:`)) return
+    if (e.type === 'key') {
+      if (e.key === 'Escape') this.closeTutorial()
+      else if (e.key === 'ArrowLeft') this.setTutorialStep(this.tutorialStep - 1)
+      else if (e.key === 'ArrowRight') this.setTutorialStep(this.tutorialStep + 1)
+      return
+    }
+    if (e.type !== 'click') return
+    if (t === 'sheet:close' || t === `${base}:btn:skip`) {
+      this.closeTutorial()
+    } else if (t === `${base}:btn:back`) {
+      this.setTutorialStep(this.tutorialStep - 1)
+    } else if (t === `${base}:btn:next`) {
+      if (this.tutorialStep >= this.steps.length - 1) this.closeTutorial()
+      else this.setTutorialStep(this.tutorialStep + 1)
+    } else if (t === `${base}:dontShow`) {
+      this.tutorialDontShow = !this.tutorialDontShow
+      this.emit()
+    } else if (t.startsWith(`${base}:step:`)) {
+      const n = Number(t.slice(`${base}:step:`.length))
+      if (Number.isInteger(n) && n >= 0 && n < this.steps.length) this.setTutorialStep(n)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // The update banner (UpdateBanner.tsx; app.tsx:1385-1398, 1744-1764)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * What the banner shows (app.tsx:1390-1398): nothing while idle, and an
+   * offer already refused is not an offer, so an `available` for the version
+   * put off with Later stays hidden. A download, a ready install or an error
+   * is always shown through.
+   */
+  private bannerState(): Exclude<UpdateState, { phase: 'idle' }> | null {
+    const s = this.updateState
+    if (s.phase === 'idle') return null
+    if (s.phase === 'available' && s.version === this.updateDismissed) return null
+    return s
+  }
+
+  /** The banner's text and buttons, UpdateBanner.tsx:17-80 verbatim. */
+  private updateModel(): UpdateBannerModel | null {
+    const s = this.bannerState()
+    const rect = this.bands()?.banner
+    if (!s || !rect) return null
+    switch (s.phase) {
+      case 'available':
+        return {
+          phase: 'available',
+          text: `SeaShell ${s.version} is available.`,
+          buttons: [s.canInstall ? { id: 'download', label: 'Download' } : { id: 'page', label: 'Release page' }, { id: 'later', label: 'Later' }],
+          progress: null,
+          rect,
+        }
+      case 'downloading':
+        return {
+          phase: 'downloading',
+          text: `Downloading ${s.version}: ${s.total > 0 ? `${Math.floor((s.received / s.total) * 100)}%` : `${Math.floor(s.received / 1024 / 1024)} MB`}`,
+          buttons: [],
+          progress: s.total > 0 ? Math.max(0, Math.min(1, s.received / s.total)) : null,
+          rect,
+        }
+      case 'ready':
+        return {
+          phase: 'ready',
+          text: `SeaShell ${s.version} is ready. Installing closes every pane and relaunches.`,
+          buttons: [
+            { id: 'install', label: 'Install and Relaunch' },
+            { id: 'later', label: 'Later' },
+          ],
+          progress: null,
+          rect,
+        }
+      case 'error':
+        return {
+          phase: 'error',
+          text: `Update ${s.version} failed: ${s.message}`,
+          // A failure is usually a blip, so the first button is another go.
+          buttons: [
+            { id: 'retry', label: 'Try again' },
+            { id: 'dismiss', label: 'Dismiss' },
+          ],
+          progress: null,
+          rect,
+        }
+    }
+  }
+
+  /**
+   * A banner button, only while the banner shows it. Download and Try again
+   * ask main's updater to download, Install and Relaunch to install; the
+   * release page goes to main's guarded `open:externalHttp` (never a raw
+   * open). Later and Dismiss hide the banner and remember the version for the
+   * session; Later also saves it, a failure is not a refusal (app.tsx:1748-1762).
+   */
+  private updateClick(id: string): void {
+    const s = this.bannerState()
+    if (!s || !this.updateModel()?.buttons.some((b) => b.id === id)) return
+    switch (id) {
+      case 'download':
+      case 'retry':
+        this.deps.send('update:download', undefined)
+        break
+      case 'install':
+        this.deps.send('update:install', undefined)
+        break
+      case 'page':
+        if (s.phase === 'available') void this.deps.invoke('open:externalHttp', { url: s.pageUrl }).catch(() => undefined)
+        break
+      case 'later':
+      case 'dismiss':
+        this.updateDismissed = s.version
+        if (s.phase !== 'error') {
+          this.ui = { ...this.ui, dismissedUpdate: s.version }
+          this.saveUi()
+        }
+        this.updateState = { phase: 'idle' }
+        this.sync()
+        this.emit()
+        break
+      default:
+        break
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2170,7 +2398,10 @@ export class Controller {
           ? settingsSheet(this.ui.settings, this.deps.platform, ui)
           : this.sheetKind === 'projects'
             ? this.projects.sheet(ui)
-            : null,
+            : this.sheetKind === 'tutorial'
+              ? tutorialSheet(this.steps, this.tutorialStep, this.tutorialDontShow, ui)
+              : null,
+      update: this.updateModel(),
     }
   }
 
@@ -2243,6 +2474,36 @@ export class Controller {
       linked: p.linkId !== undefined,
       linkEnabled: isTerm(p),
     }
+  }
+}
+
+/**
+ * `update:state` as main's updater sends it (`UpdateState`, src/shared/ipc.ts);
+ * null for anything malformed, which leaves the banner as it was.
+ */
+function coerceUpdateState(p: unknown): UpdateState | null {
+  const s = p as Record<string, unknown> | null
+  if (typeof s !== 'object' || s === null) return null
+  const version = typeof s['version'] === 'string' ? s['version'] : null
+  const num = (k: string): number | null => (typeof s[k] === 'number' && Number.isFinite(s[k]) ? (s[k] as number) : null)
+  switch (s['phase']) {
+    case 'idle':
+      return { phase: 'idle' }
+    case 'available':
+      return version !== null && typeof s['pageUrl'] === 'string'
+        ? { phase: 'available', version, pageUrl: s['pageUrl'], canInstall: s['canInstall'] === true }
+        : null
+    case 'downloading': {
+      const received = num('received')
+      const total = num('total')
+      return version !== null && received !== null && total !== null ? { phase: 'downloading', version, received, total } : null
+    }
+    case 'ready':
+      return version !== null ? { phase: 'ready', version } : null
+    case 'error':
+      return version !== null && typeof s['message'] === 'string' ? { phase: 'error', version, message: s['message'] } : null
+    default:
+      return null
   }
 }
 

@@ -70,8 +70,19 @@ process.stdout.on('error', (err: Error) => shellGone(`stdout failed: ${err.messa
 // skip the drain that reaps nohup'd and disowned pane processes.
 for (const sig of ['SIGTERM', 'SIGHUP', 'SIGINT'] as const) process.on(sig, () => shellGone(sig))
 
+/**
+ * The shell passes SEASHELL_TEST_MODE=1 when it runs under its test driver
+ * (SEASHELL_TEST_PORT): only then does the driver's `coreSend` of a
+ * `test:update` stand in for main's updater (plan decision 6).
+ */
+const testMode = process.env.SEASHELL_TEST_MODE === '1'
+
 function route(ch: string, p: unknown): void {
   const c = controller!
+  if (ch === 'test:update') {
+    if (testMode) c.push('update:state', p)
+    return
+  }
   if (ch === 'ui:event') c.event(p as never)
   // push, not command: edit.paste carries the shell's clipboard text with it.
   else if (ch === 'ui:command') c.push(ch, p)

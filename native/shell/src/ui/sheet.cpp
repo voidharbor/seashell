@@ -11,7 +11,11 @@
 // the name bold over its meta in badgeText, Delete, Add and Open at the right
 // (Delete in danger and Cancel while the row confirms); a field with no label
 // takes no label line, and a button with no caption of its own is its label,
-// at the left with its note beside it.
+// at the left with its note beside it. The tutorial (Task 14; Tutorial.tsx and
+// styles.css .tut) lays its parts out its own way: the step counter as a quiet
+// title, the step's title large in the accent, its paragraphs at 13 DIP, its
+// key table as kbd boxes beside the actions, and the step buttons as a row of
+// dots; the arrows reach the core as keys on the sheet.
 #include "ui/sheet.h"
 #include "ui/ui.h"
 #include "app.h"
@@ -61,6 +65,15 @@ struct RowButton {
 constexpr RowButton kRowButtons[] = { { "delete", L"Delete", false, false }, { "add", L"Add", false, false }, { "open", L"Open", false, true } };
 constexpr RowButton kRowConfirm[] = { { "confirm", L"Delete", true, false }, { "cancel", L"Cancel", false, false } };
 constexpr float kRowH = 40;         // name over meta (.proj__row: 7 px padding, a 2 px gap)
+
+// The tutorial's figures at uiScale 1 (styles.css .tut__title, .tut__key kbd, .tut__dots).
+constexpr float kTutTitle = 18;     // .tut__title 19 px, Segoe UI's larger face
+constexpr float kTutBody = 13;      // .tut__body 13.5 px
+constexpr float kKbdMinW = 74;      // .tut__key kbd min-width
+constexpr float kKbdH = 22;         // 3 px padding around 12 px text plus the 2 px bottom border
+constexpr float kKeyGap = 7;        // .tut__keys gap
+constexpr float kDot = 7;           // .tut__dot
+constexpr float kDotHit = 15;       // the press target around a dot
 }  // namespace
 
 void Ui::syncSheet(const UiModel& old) {
@@ -141,6 +154,7 @@ void Ui::viewSheet(Painter& p) {
   float W = (float)rc.right, H = (float)rc.bottom;
   float s = p.scale(), d = dpi();
   const std::string base = "sheet:" + sh.kind;
+  const bool tutorial = sh.kind == "tutorial";
 
   // The dim takes every press that misses the card.
   D2D1_RECT_F all = D2D1::RectF(0, 0, W, H);
@@ -168,11 +182,34 @@ void Ui::viewSheet(Painter& p) {
     for (const SheetSection& sec : sh.sections) {
       if (!first) y += 8 * s;
       first = false;
-      if (paint) p.text(D2D1::RectF(x0, y, x0 + w, y + 20 * s), fromUtf8(sec.title), UiFont{ 12, true }, t_.badgeText, Align::Left, true);
-      y += 22 * s;
+      if (tutorial) {
+        if (paint) p.text(D2D1::RectF(x0, y, x0 + w, y + 28 * s), fromUtf8(sec.title), UiFont{ kTutTitle, true }, t_.accent, Align::Left, true);
+        y += 34 * s;
+      } else {
+        if (paint) p.text(D2D1::RectF(x0, y, x0 + w, y + 20 * s), fromUtf8(sec.title), UiFont{ 12, true }, t_.badgeText, Align::Left, true);
+        y += 22 * s;
+      }
       for (const SheetField& f : sec.fields) {
         std::string ft = base + ":" + f.id;
-        if (f.kind == "buttons") {
+        if (tutorial && f.kind == "buttons") {
+          // .tut__dots: centred, 7 DIP apart, the current one in the accent; not Tab stops.
+          float gap = kDot * s, dot = std::round(kDot * s), hitW = kDotHit * s;
+          float rowW = (float)f.options.size() * dot + (float)std::max<size_t>(1, f.options.size()) * gap - gap;
+          y += 12 * s;
+          float x = std::round(x0 + (w - rowW) / 2);
+          float cy = std::round(y + hitW / 2);
+          for (const SheetOption& o : f.options) {
+            D2D1_RECT_F dr = D2D1::RectF(x, cy - dot / 2, x + dot, cy - dot / 2 + dot);
+            std::string t = ft + ":" + o.id;
+            reg(D2D1::RectF(x + dot / 2 - hitW / 2, cy - hitW / 2, x + dot / 2 + hitW / 2, cy + hitW / 2), t);
+            if (paint && p.live() && dr.bottom > clip.top && dr.top < clip.bottom) {
+              uint32_t c = o.selected ? t_.accent : hovered(t) ? mixRgb(t_.toastText, 0xE6E6E6, 0.35f) : mixRgb(t_.toastText, 0xE6E6E6, 0.12f);
+              p.roundedRect(dr, kDot / 2, c, 1, 0, 0);
+            }
+            x += dot + gap;
+          }
+          y += hitW + 10 * s;
+        } else if (f.kind == "buttons") {
           if (!f.label.empty()) {
             if (paint) p.text(D2D1::RectF(x0, y, x0 + w, y + sheet::kLine * s), fromUtf8(f.label), UiFont{ 12 }, t_.toastText, Align::Left, true);
             y += sheet::kLine * s + 2 * s;
@@ -276,6 +313,22 @@ void Ui::viewSheet(Painter& p) {
           if (paint) p.text(D2D1::RectF(x0, y, x0 + lw, y + sheet::kLine * s), fromUtf8(f.label), UiFont{ 12 }, t_.toastText, Align::Left, true);
           float nh = f.note.empty() ? 0 : paragraph(p, x0, y + sheet::kLine * s, lw, fromUtf8(f.note), UiFont{ 11 }, t_.badgeText, paint, clip);
           y += std::max(sheet::kBtnH * s, sheet::kLine * s + nh) + 8 * s;
+        } else if (tutorial && f.kind == "rows") {
+          // .tut__keys: each chord in a kbd box (a 2 DIP bottom border), the action beside it in badgeText.
+          y += 8 * s;
+          for (const SheetRow& row : f.rows) {
+            std::wstring chord = fromUtf8(row.name);
+            float kw = std::max(kKbdMinW * s, std::ceil(p.textWidth(chord, UiFont{ 12 })) + 16 * s);
+            D2D1_RECT_F kb = D2D1::RectF(std::round(x0), std::round(y), std::round(x0 + kw), std::round(y + kKbdH * s));
+            if (paint && p.live() && kb.bottom > clip.top && kb.top < clip.bottom) {
+              p.roundedRect(kb, 4, t_.titleBar, 1, t_.divider, 1);
+              p.fillRect(D2D1::RectF(kb.left + 2 * s, kb.bottom - std::max(1.f, std::round(p.dpiScale())), kb.right - 2 * s, kb.bottom), t_.divider);
+              p.text(kb, chord, UiFont{ 12 }, t_.toastText, Align::Center, true);
+              p.text(D2D1::RectF(kb.right + 12 * s, kb.top, x0 + w, kb.bottom), fromUtf8(row.meta), UiFont{ 12 }, t_.badgeText, Align::Left, true);
+            }
+            y += kKbdH * s + kKeyGap * s;
+          }
+          y += 4 * s;
         } else if (f.kind == "rows") {
           if (f.rows.empty()) y += paragraph(p, x0, y, w, fromUtf8(f.note), UiFont{ 11 }, t_.badgeText, paint, clip) + 2 * s;
           for (const SheetRow& row : f.rows) {
@@ -321,7 +374,8 @@ void Ui::viewSheet(Painter& p) {
           }
           y += 6 * s;
         } else {
-          y += paragraph(p, x0, y, w, fromUtf8(f.note.empty() ? f.label : f.note), UiFont{ 12 }, t_.toastText, paint, clip) + 8 * s;
+          UiFont nf{ tutorial ? kTutBody : 12 };
+          y += paragraph(p, x0, y, w, fromUtf8(f.note.empty() ? f.label : f.note), nf, t_.toastText, paint, clip) + 8 * s;
         }
       }
     }
@@ -344,8 +398,9 @@ void Ui::viewSheet(Painter& p) {
     p.roundedRect(D2D1::RectF(card.left + p.px(1), card.top + p.px(2), card.right + p.px(2), card.bottom + p.px(3)), t_.radius, 0x000000, 0.18f, 0, 0);
     p.roundedRect(card, t_.radius, t_.toastBg, 1, 0xA0A0A0, 1);
   }
-  p.text(D2D1::RectF(card.left + pad, card.top + 14 * s, card.right - pad, card.top + 40 * s), fromUtf8(sh.title), UiFont{ 14, true }, t_.toastText,
-         Align::Left, true);
+  // The tutorial's title is its step counter, quiet as .tut__step.
+  p.text(D2D1::RectF(card.left + pad, card.top + 14 * s, card.right - pad, card.top + 40 * s), fromUtf8(sh.title), UiFont{ tutorial ? 12.f : 14.f, !tutorial },
+         tutorial ? t_.badgeText : t_.toastText, Align::Left, true);
 
   // The body, scrolled.
   D2D1_RECT_F view = D2D1::RectF(card.left + pad, card.top + head, card.right - pad, card.top + head + bodyH);
@@ -411,8 +466,10 @@ bool Ui::sheetKey(UINT msg, WPARAM w, LPARAM l, Mods m) {
     return true;
   }
   if (msg != WM_KEYDOWN) return true;
-  if (w == VK_ESCAPE) {
-    App::instance().wire().sendEvent({ { "type", "key" }, { "target", base }, { "key", "Escape" },
+  if (w == VK_ESCAPE || w == VK_LEFT || w == VK_RIGHT) {
+    // Escape closes any sheet; the tutorial steps on the arrows (Tutorial.tsx:273-291).
+    const char* name = w == VK_ESCAPE ? "Escape" : w == VK_LEFT ? "ArrowLeft" : "ArrowRight";
+    App::instance().wire().sendEvent({ { "type", "key" }, { "target", base }, { "key", name },
                                        { "mods", { { "ctrl", m.ctrl }, { "alt", m.alt }, { "shift", m.shift } } } });
     return true;
   }

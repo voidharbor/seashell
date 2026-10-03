@@ -94,6 +94,13 @@ export interface Platform {
   readonly paneAppId?: string
 
   /**
+   * 'off' skips main's update check where the checker would offer the wrong
+   * build (wslhost: the native Windows shell, whose core runs the Linux
+   * checker, until Phase 3). Absent means on.
+   */
+  readonly updater?: 'on' | 'off'
+
+  /**
    * Optional: the whole spawn for a pane, cwd validation included. Absent
    * means the default (`loginShell()` in the requested cwd). win32 uses it to
    * run every pane through wsl.exe with the Linux cwd on the command line.

@@ -361,6 +361,33 @@ struct SheetModel {
   }
 };
 
+// The update banner (Phase 2 Task 14): a strip above the status bar in the
+// band rect the core's layout leaves for it. Targets: update:<button id>.
+struct UpdateButton {
+  std::string id, label;          // 'download' | 'page' | 'later' | 'install' | 'retry' | 'dismiss'
+  static UpdateButton parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    return UpdateButton{ str(j, "id"), str(j, "label") };
+  }
+};
+
+struct UpdateBannerModel {
+  std::string phase;              // 'available' | 'downloading' | 'ready' | 'error'
+  std::string text;
+  std::vector<UpdateButton> buttons;
+  std::optional<double> progress; // 0..1 while a download of known size runs
+  Rect rect;                      // DIP, client coordinates
+  static UpdateBannerModel parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    UpdateBannerModel u;
+    u.phase = str(j, "phase"); u.text = str(j, "text");
+    u.buttons = list<UpdateButton>(j, "buttons");
+    u.progress = optNum(j, "progress");
+    if (const json* r = field(j, "rect")) u.rect = Rect::parse(*r);
+    return u;
+  }
+};
+
 struct WindowModel {
   std::string title;
   double uiScale = 1, fontPx = 0, tabStripH = 0, statusH = 0;
@@ -396,6 +423,7 @@ struct UiModel {
   SidebarModel sidebar;
   DrawerModel drawer;
   std::optional<SheetModel> sheet;
+  std::optional<UpdateBannerModel> update;
 
   static UiModel parse(const nlohmann::json& j) {
     using namespace model_detail;
@@ -435,6 +463,7 @@ struct UiModel {
     if (const json* s = field(j, "sidebar")) m.sidebar = SidebarModel::parse(*s);
     if (const json* d = field(j, "drawer")) m.drawer = DrawerModel::parse(*d);
     if (const json* sh = field(j, "sheet"); sh && sh->is_object()) m.sheet = SheetModel::parse(*sh);
+    if (const json* u = field(j, "update"); u && u->is_object()) m.update = UpdateBannerModel::parse(*u);
     return m;
   }
 };
