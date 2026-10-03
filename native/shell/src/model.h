@@ -273,9 +273,85 @@ struct DrawerModel {
   }
 };
 
+// Sheets (Phase 2 Task 12): one at a time, drawn over a dimmed window.
+// Targets: sheet:<kind>:<fieldId>, sheet:<kind>:<fieldId>:<optionId>,
+// sheet:<kind>:btn:<id>, sheet:close; key Escape goes to sheet:<kind>.
+struct SheetOption {
+  std::string id, label;
+  bool selected = false, disabled = false;
+  std::optional<std::string> tooltip, swatch;   // swatch: '#rrggbb'
+  static SheetOption parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    SheetOption o;
+    o.id = str(j, "id"); o.label = str(j, "label");
+    o.selected = flag(j, "selected"); o.disabled = flag(j, "disabled");
+    o.tooltip = optStr(j, "tooltip"); o.swatch = optStr(j, "swatch");
+    return o;
+  }
+};
+
+struct SheetField {
+  std::string id;
+  std::string kind = "note";        // 'buttons' | 'check' | 'text' | 'button' | 'note'
+  std::string label;
+  bool check = false;               // value, for a check
+  std::string text;                 // value, for a text field or a button's caption
+  std::vector<SheetOption> options;
+  std::string placeholder;
+  int maxLen = 0;
+  std::string note;
+  static SheetField parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    SheetField f;
+    f.id = str(j, "id"); f.kind = str(j, "kind", "note"); f.label = str(j, "label");
+    f.check = flag(j, "value"); f.text = str(j, "value");
+    f.options = list<SheetOption>(j, "options");
+    f.placeholder = str(j, "placeholder"); f.maxLen = integer(j, "maxLen"); f.note = str(j, "note");
+    return f;
+  }
+};
+
+struct SheetSection {
+  std::string title;
+  std::vector<SheetField> fields;
+  static SheetSection parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    return SheetSection{ str(j, "title"), list<SheetField>(j, "fields") };
+  }
+};
+
+struct SheetButton {
+  std::string id, label;
+  bool isDefault = false, disabled = false;
+  static SheetButton parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    return SheetButton{ str(j, "id"), str(j, "label"), flag(j, "isDefault"), flag(j, "disabled") };
+  }
+};
+
+struct SheetModel {
+  std::string kind, title;
+  double width = 620;               // DIP, uiScale in; the shell caps it at 88 percent of the body
+  std::vector<SheetSection> sections;
+  std::vector<SheetButton> buttons;
+  std::optional<std::string> focusField;
+  static SheetModel parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    SheetModel m;
+    m.kind = str(j, "kind"); m.title = str(j, "title"); m.width = num(j, "width", 620);
+    m.sections = list<SheetSection>(j, "sections");
+    m.buttons = list<SheetButton>(j, "buttons");
+    m.focusField = optStr(j, "focusField");
+    return m;
+  }
+};
+
 struct WindowModel {
   std::string title;
   double uiScale = 1, fontPx = 0, tabStripH = 0, statusH = 0;
+  // The terminal palette override as xterm ITheme keys ('background',
+  // 'green', 'brightBlack', ...); absent for 'native' (the shell's own table).
+  std::optional<std::map<std::string, std::string>> palette;
 };
 
 struct StatusModel {
@@ -304,6 +380,7 @@ struct UiModel {
   std::map<std::string, std::string> tokens;   // the Aero token table (Task 16)
   SidebarModel sidebar;
   DrawerModel drawer;
+  std::optional<SheetModel> sheet;
 
   static UiModel parse(const nlohmann::json& j) {
     using namespace model_detail;
@@ -313,6 +390,12 @@ struct UiModel {
     if (const json* w = field(j, "window")) {
       m.window.title = str(*w, "title"); m.window.uiScale = num(*w, "uiScale", 1);
       m.window.fontPx = num(*w, "fontPx"); m.window.tabStripH = num(*w, "tabStripH"); m.window.statusH = num(*w, "statusH");
+      if (const json* pal = field(*w, "palette"); pal && pal->is_object()) {
+        std::map<std::string, std::string> keys;
+        for (auto it = pal->begin(); it != pal->end(); ++it)
+          if (it.value().is_string()) keys[it.key()] = it.value().get<std::string>();
+        m.window.palette = std::move(keys);
+      }
     }
     m.tabs = list<TabModel>(j, "tabs");
     m.tabFull = flag(j, "tabFull"); m.sleep = flag(j, "sleep");
@@ -336,6 +419,7 @@ struct UiModel {
         if (it.value().is_string()) m.tokens[it.key()] = it.value().get<std::string>();
     if (const json* s = field(j, "sidebar")) m.sidebar = SidebarModel::parse(*s);
     if (const json* d = field(j, "drawer")) m.drawer = DrawerModel::parse(*d);
+    if (const json* sh = field(j, "sheet"); sh && sh->is_object()) m.sheet = SheetModel::parse(*sh);
     return m;
   }
 };

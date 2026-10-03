@@ -127,8 +127,11 @@ void Ui::viewOverlays(Painter& p) {
     p.text(inset(r, 14 * s, 0), toast, f, t_.toastText, Align::Center, true);
   }
 
+  // A sheet (sheet.cpp) over everything but the tooltip.
+  viewSheet(p);
+
   // The restore card over everything: a full-window dim and a centred panel.
-  if (modal()) {
+  if (modal() && m_.restore) {
     D2D1_RECT_F all = D2D1::RectF(0, 0, W, H);
     hit(false, all, "restore:card");
     p.fillRect(all, 0x000000, 0.4f);

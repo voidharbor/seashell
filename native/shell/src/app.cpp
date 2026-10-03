@@ -3,6 +3,7 @@
 #include "gfx.h"
 #include "log.h"
 #include "paths.h"
+#include "ui/sheet.h"
 #include "ui/ui.h"
 #include "window.h"
 #include "version.h"
@@ -12,12 +13,16 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 
 using Microsoft::WRL::ComPtr;
 using json = nlohmann::json;
 
 namespace {
+// The terminal palette every grid draws with: Homebrew, or UiModel.window.palette (Settings).
+TermPalette g_palette = kHomebrew;
+
 // What the first instance publishes under Local\SeaShellHost-<instance>-hwnd so
 // a second launch finds its window exactly, never by title: Josh's Electron
 // SeaShell is also titled "SeaShell".
@@ -304,6 +309,7 @@ void App::onGridCmd(const nlohmann::json& cmd) {
     log("grid create %s %dx%d", id.c_str(), g->store().cols(), g->store().rows());
     float scale = Window::instance().dpi().scale();
     views_[id] = std::make_unique<GridView>(*g, (float)(cmd.value("fontPx", 13.0) * scale));
+    views_[id]->setPalette(g_palette);
     sbCap_[id] = (size_t)std::max(0, num("scrollback", 20000));
     input_.dropPane(id);   // a selection on the grid being replaced
     grids_[id] = std::move(g);
@@ -662,6 +668,12 @@ int App::main(HINSTANCE hinst) {
     QueryPerformanceCounter(&l1);
     const UiModel& m = model();
     if (m.window.tabStripH > 0 && m.window.tabStripH != oldStrip) Window::instance().onStripHeightChanged();
+    // The Settings palette reaches every grid, the drawer's too; setPalette repaints only on a change.
+    TermPalette pal = m.window.palette ? termPaletteFrom(*m.window.palette) : kHomebrew;
+    if (memcmp(&pal, &g_palette, sizeof pal) != 0) {
+      g_palette = pal;
+      for (auto& [vid, v] : views_) v->setPalette(g_palette);
+    }
     bool strip = Ui::instance().stripChanged();
     if (strip) Window::instance().invalidateStrip();   // a divider move leaves the strip alone
     Window::instance().invalidateBody();

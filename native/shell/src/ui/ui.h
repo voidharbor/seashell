@@ -50,7 +50,7 @@ public:
   void setCoreDead(bool dead, DWORD code);           // every pane shows "core exited" and the toast names the code
   void setCaretPhase(bool on);                       // App's 530 ms blink, for the edit caret
   bool wantsBlink() const;                           // an edit widget has focus
-  bool modal() const;                                // the restore card is up
+  bool modal() const;                                // the restore card or a sheet is up
   // A target's rect in client pixels of the top-level window (the driver's
   // drag and point clicks); false when nothing on screen has that id.
   bool targetRect(const std::string& target, D2D1_RECT_F* clientPx) const;
@@ -100,6 +100,13 @@ private:
   void viewSidebar(Painter& p);                  // sidebar.cpp: the explorer column, its scrollbar, the strip and the grip
   void viewMenu(Painter& p);                     // sidebar.cpp: the context menu popup over the body
   void viewDrawer(Painter& p);                   // drawer.cpp: the shell drawer's panel, grip and header; App draws its grid
+  void viewSheet(Painter& p);                    // sheet.cpp: the dim and the sheet's card (from viewOverlays)
+  bool sheetKey(UINT msg, WPARAM, LPARAM, Mods); // sheet.cpp: the sheet takes the keyboard
+  bool sheetMouse(UINT msg, POINT clientPx, int button, Mods, const std::string& target, int wheelDelta);   // sheet.cpp
+  void sheetFocusMove(int dir);                  // Tab and Shift+Tab
+  bool sheetOptionDisabled(const std::string& target) const;
+  std::wstring sheetTooltip(const std::string& target) const;
+  void syncSheet(const UiModel& old);            // opens or closes the sheet's text field
 
   // The explorer column's geometry for the current model (sidebar.cpp):
   // rects in body pixels; rowDip and padDip in the model's DIP (uiScale in).
@@ -155,5 +162,10 @@ private:
   struct NameLayout { Microsoft::WRL::ComPtr<IDWriteTextLayout> tl; bool used = false; };
   std::map<std::string, NameLayout> sbNames_;    // the shown rows' name layouts by name, box and font size (viewSidebar)
   Popup menu_;                                   // the explorer's context menu
+  EditWidget sheetEdit_;                         // the sheet's text field
+  ScrollBar sheetBar_;
+  ScrollState sheetScroll_;                      // the sheet's body scroll, DIP (shell view state)
+  std::vector<std::string> sheetStops_;          // the focusable targets in Tab order, as the last layout placed them
+  std::string sheetFocus_;                       // the target with the keyboard focus ring; "" none
   int pressedButton_ = 0;                        // the button of the press in pressed_
 };

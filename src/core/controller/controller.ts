@@ -58,7 +58,9 @@ import { ExplorerState, FLASH_MS, type Listing } from './explorer.js'
 import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-state.js'
 import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
 import { mem, statusModel } from './status.js'
-import { colorizationToTokens, isColorization } from './colorization.js'
+import { colorizationToTokens, isColorization, withAccent } from './colorization.js'
+import { accentOptionId, cleanNewPaneCommand, paletteOverride, SETTINGS_CHECKS, settingsSheet } from './sheets.js'
+import { ACCENTS, PALETTE_ORDER, type PaletteKey } from '../../renderer/theme/tokens.js'
 import type {
   ChordModel,
   DrawerModel,
@@ -112,7 +114,6 @@ const PHASE2_COMMANDS: Readonly<Record<string, string>> = {
   'app.projects': 'Projects',
   'app.saveProject': 'Save project',
   'app.saveTab': 'Save tab as project',
-  'app.settings': 'Settings',
 }
 
 /** Pane title-bar controls owned by Phase 2, keyed by the target's last part. */
@@ -227,6 +228,8 @@ export class Controller {
   private drawerShown: string | null = null
   /** The grip drag: the grid area's bottom edge, measured at the press (`app.tsx:267-292`). */
   private drawerDrag: { bottom: number } | null = null
+  /** The open sheet (one at a time); null while none is up. */
+  private sheetKind: 'settings' | null = null
   private last: UiModel
 
   constructor(deps: ControllerDeps, opts: { home: string; version: string; chords: ChordModel[] }) {
@@ -289,6 +292,11 @@ export class Controller {
     return this.s
   }
 
+  /** @internal for tests: the preferences as `ui-state.json` holds them. */
+  uiState(): UiState {
+    return this.ui
+  }
+
   // ---------------------------------------------------------------------------
   // Commands (the app.tsx command switch, app.tsx:861-1090)
   // ---------------------------------------------------------------------------
@@ -296,6 +304,10 @@ export class Controller {
   command(name: string): void {
     if (name.startsWith('tab.select.')) {
       this.dispatch({ type: 'tab.selectIndex', index: Number(name.split('.')[2]) })
+      return
+    }
+    if (name === 'app.settings') {
+      this.openSheet('settings')
       return
     }
     const phase2 = PHASE2_COMMANDS[name]
@@ -426,6 +438,10 @@ export class Controller {
     }
     if (t.startsWith('sidebar:')) {
       this.sidebarEvent(t.slice('sidebar:'.length), e)
+      return
+    }
+    if (t === 'sheet:close' || t.startsWith('sheet:')) {
+      this.sheetEvent(t, e)
       return
     }
     // A right or middle press reaches the core only to close the explorer's
@@ -1943,6 +1959,74 @@ export class Controller {
   }
 
   // ---------------------------------------------------------------------------
+  // Sheets (sheets.ts; SettingsPanel.tsx for Settings)
+  // ---------------------------------------------------------------------------
+
+  private openSheet(kind: 'settings'): void {
+    // The restore card is modal and answers first (app.tsx shows no sheet over it).
+    if (this.restoreCandidate) return
+    if (this.sbMenu) this.sbMenu = null
+    this.sheetKind = kind
+    this.emit()
+  }
+
+  private closeSheet(): void {
+    if (this.sheetKind === null) return
+    this.sheetKind = null
+    this.emit()
+  }
+
+  /** One preference changed from the sheet: saved and drawn at once (SettingsPanel.tsx `set`). */
+  private setSetting<K extends keyof UiState['settings']>(key: K, value: UiState['settings'][K]): void {
+    if (this.ui.settings[key] === value) return
+    this.ui = { ...this.ui, settings: { ...this.ui.settings, [key]: value } }
+    this.saveUi()
+    this.emit()
+  }
+
+  private sheetEvent(t: string, e: UiEvent): void {
+    if (this.sheetKind === null) return
+    const base = `sheet:${this.sheetKind}`
+    if (e.type === 'key') {
+      if (e.key === 'Escape' && (t === base || t.startsWith(`${base}:`))) this.closeSheet()
+      return
+    }
+    if (e.type === 'text') {
+      if (t === `${base}:newPaneCommand`) this.setSetting('newPaneCommand', cleanNewPaneCommand(e.text))
+      return
+    }
+    if (e.type !== 'click') return
+    if (t === 'sheet:close' || t === `${base}:btn:done`) {
+      this.closeSheet()
+      return
+    }
+    if (!t.startsWith(`${base}:`)) return
+    const [field, option] = t.slice(base.length + 1).split(':')
+    if (field === undefined) return
+    if (option === undefined) {
+      if (SETTINGS_CHECKS.includes(field)) {
+        const key = field as 'attentionGlow' | 'attentionSound' | 'autoColorPanes' | 'autoTitlePanes'
+        this.setSetting(key, !this.ui.settings[key])
+      } else if (field === 'tutorial') {
+        // SettingsPanel's onShowTutorial: the sheet closes, the tutorial opens.
+        this.closeSheet()
+        this.command('help.tutorial')
+      }
+      return
+    }
+    if (field === 'accent') {
+      if (option === 'default') this.setSetting('accent', null)
+      else {
+        const a = ACCENTS.find((x) => accentOptionId(x.key) === option)
+        if (a) this.setSetting('accent', a.key)
+      }
+    } else if (field === 'palette') {
+      if ((PALETTE_ORDER as readonly string[]).includes(option)) this.setSetting('palette', option as PaletteKey)
+    }
+    // Theme (Aero only), pane frame and CRT glass are greyed: nothing to apply.
+  }
+
+  // ---------------------------------------------------------------------------
   // The model
   // ---------------------------------------------------------------------------
 
@@ -1986,7 +2070,14 @@ export class Controller {
     const restore = this.restoreCandidate
     return {
       seq: ++this.seq,
-      window: { title: 'SeaShell', uiScale: ui, fontPx: level.font, tabStripH: TAB_STRIP_PX * ui, statusH: STATUS_PX * ui },
+      window: {
+        title: 'SeaShell',
+        uiScale: ui,
+        fontPx: level.font,
+        tabStripH: TAB_STRIP_PX * ui,
+        statusH: STATUS_PX * ui,
+        palette: paletteOverride(this.ui.settings.palette),
+      },
       tabs: this.s.tabs.map((t) => ({ id: t.id, name: t.name, active: t.id === this.s.activeTabId, renaming: t.id === this.renamingTabId })),
       tabFull: tab ? Object.keys(tab.panes).length >= MAX_PANES_PER_TAB : false,
       sleep: !this.ui.settings.attentionGlow,
@@ -2010,9 +2101,10 @@ export class Controller {
       toast: this.s.toast,
       status: statusModel(tab, this.s.system, this.deps.platform),
       chords: this.opts.chords,
-      tokens: { ...this.tokens },
+      tokens: withAccent({ ...this.tokens }, this.ui.settings.accent),
       sidebar: this.sidebarModel(),
       drawer: this.drawerModel(),
+      sheet: this.sheetKind === 'settings' ? settingsSheet(this.ui.settings, this.deps.platform, ui) : null,
     }
   }
 

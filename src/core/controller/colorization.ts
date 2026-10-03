@@ -146,3 +146,30 @@ export function colorizationToTokens(argb: string | null | undefined, opaque?: b
     return { ...SPEC_TABLE }
   }
 }
+
+/**
+ * The text colour on an accent: copied from `src/renderer/theme/apply.ts:54-61`
+ * (`readableOn`), which cannot be imported here because apply.ts touches
+ * `document`. The renderer's dark text `#141414` is the token table's own
+ * dark text, `#1D0F22`, so the onAccent colour matches the rest of the table.
+ */
+export function readableOn(hex: string): string {
+  const h = hex.replace('#', '')
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  const n = Number.parseInt(full, 16)
+  if (!Number.isFinite(n)) return '#FFFFFF'
+  const l = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255
+  return l > 0.6 ? SPEC_TABLE.frameText : '#FFFFFF'
+}
+
+/**
+ * The Settings accent over a token table (`apply.ts:84-94`: `--accent`,
+ * `--select`, `--primaryBg`, `--primaryBorder` and the tab mark take the
+ * chosen hex, `--onAccent` the readable text). Here that is `accent` (which
+ * the shell's tab mark, pane border and default button read), `selection` and
+ * `accentText`. A null accent leaves the table's own.
+ */
+export function withAccent<T extends Record<string, string>>(table: T, accent: string | null): T {
+  if (accent === null || !/^#[0-9a-fA-F]{6}$/.test(accent)) return table
+  return { ...table, accent, selection: accent, accentText: readableOn(accent) }
+}

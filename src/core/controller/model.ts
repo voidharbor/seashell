@@ -26,6 +26,11 @@
  * y is the drawer's top edge), `drawer:cd`, `drawer:close`, `drawer:grid` (a
  * `down` there gives the drawer the keyboard). Its grid is an ordinary grid
  * under the pty id `drawer:<paneId>`.
+ *
+ * Sheets (Phase 2): `sheet:<kind>:<fieldId>` for a check, text or button
+ * field, `sheet:<kind>:<fieldId>:<optionId>` for a buttons option,
+ * `sheet:<kind>:btn:<id>` for a bottom button, `sheet:close`, and
+ * `sheet:<kind>` itself for `key Escape`.
  */
 
 export interface Rect {
@@ -180,9 +185,56 @@ export interface DrawerModel {
   focused: boolean
 }
 
+export interface SheetOption {
+  id: string
+  label: string
+  selected: boolean
+  disabled: boolean
+  tooltip: string | null
+  /** '#rrggbb' for an accent swatch, else null. */
+  swatch: string | null
+}
+
+export interface SheetField {
+  id: string
+  kind: 'buttons' | 'check' | 'text' | 'button' | 'note'
+  label: string
+  /** A check's state, a text field's value, a button's caption. */
+  value?: string | boolean
+  options?: SheetOption[]
+  placeholder?: string
+  maxLen?: number
+  /** The detail line under the field. */
+  note?: string
+}
+
+export interface SheetSection {
+  title: string
+  fields: SheetField[]
+}
+
+/** One sheet at a time: it dims the window like the restore card and takes the keyboard. */
+export interface SheetModel {
+  kind: 'settings' | 'projects' | 'tutorial'
+  title: string
+  /** The card's width, DIP (uiScale in); the shell caps it at 88 percent of the body. */
+  width: number
+  sections: SheetSection[]
+  buttons: Array<{ id: string; label: string; isDefault: boolean; disabled: boolean }>
+  focusField: string | null
+}
+
 export interface UiModel {
   seq: number
-  window: { title: string; uiScale: number; fontPx: number; tabStripH: number; statusH: number }
+  window: {
+    title: string
+    uiScale: number
+    fontPx: number
+    tabStripH: number
+    statusH: number
+    /** The terminal palette override as xterm `ITheme` keys (`PALETTES[key]`), null for `native`. */
+    palette: Record<string, string> | null
+  }
   tabs: TabModel[]
   tabFull: boolean
   sleep: boolean
@@ -210,6 +262,7 @@ export interface UiModel {
   tokens: Record<string, string>
   sidebar: SidebarModel
   drawer: DrawerModel
+  sheet: SheetModel | null
 }
 
 export interface Mods {

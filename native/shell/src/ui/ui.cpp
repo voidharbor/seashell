@@ -88,6 +88,7 @@ void Ui::setModel(UiModel&& m) {
   // The rename field draws in the strip; syncEdits can open, close or blur it.
   bool renameOpen = rename_.isOpen(), renameFocused = rename_.focused();
   syncEdits(old);
+  syncSheet(old);
   syncSidebar(old);
   stripChanged_ = !hadModel || !sameStrip(old, m_) || rename_.isOpen() != renameOpen || rename_.focused() != renameFocused;
   layout();
@@ -128,11 +129,12 @@ void Ui::syncEdits(const UiModel& old) {
 EditWidget* Ui::focusedEdit() {
   if (find_.focused()) return &find_;
   if (rename_.focused()) return &rename_;
+  if (sheetEdit_.focused()) return &sheetEdit_;
   return nullptr;
 }
 
-bool Ui::wantsBlink() const { return find_.focused() || rename_.focused(); }
-bool Ui::modal() const { return haveModel_ && m_.restore.has_value() && !coreDead_; }
+bool Ui::wantsBlink() const { return find_.focused() || rename_.focused() || sheetEdit_.focused(); }
+bool Ui::modal() const { return haveModel_ && (m_.restore.has_value() || m_.sheet.has_value()) && !coreDead_; }
 void Ui::setCaretPhase(bool on) { caretOn_ = on; }
 
 void Ui::setCoreDead(bool dead, DWORD code) {
@@ -195,7 +197,7 @@ LPCWSTR Ui::cursorFor(POINT bodyPx) const {
     for (const DividerModel& d : m_.dividers)
       if ("divider:" + d.id == t) return d.orientation == "horizontal" ? IDC_SIZENS : IDC_SIZEWE;
   }
-  if (isGrid(t) || t == "find:query") return IDC_IBEAM;
+  if (isGrid(t) || t == "find:query" || (!sheetEdit_.target().empty() && t == sheetEdit_.target())) return IDC_IBEAM;
   return IDC_ARROW;
 }
 
@@ -212,6 +214,7 @@ void Ui::send(const char* type, const std::string& target, float xDip, float yDi
 
 std::wstring Ui::tooltipFor(const std::string& target) const {
   if (target == "web:new" && m_.tabFull) return L"Tab is full (6 panes)";
+  if (startsWith(target, "sheet:")) return sheetTooltip(target);
   // FindBar.tsx's titles.
   if (target == "find:case") return L"Match case";
   if (target == "find:regex") return L"Regular expression";
@@ -321,6 +324,12 @@ void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
   if (target == "web:new" && m_.tabFull) return;   // dimmed: the tab already holds six panes
   if (startsWith(target, "sidebar:scroll:")) return;   // the scrollbar is the shell's own
   if (menu_.owns(target) && target != menu_.base() && !menu_.enabled(target)) return;   // a greyed menu item
+  if (startsWith(target, "sheet:")) {
+    // The dim, the card and the scrollbar are the shell's; a greyed option does nothing.
+    if (!m_.sheet || startsWith(target, "sheet:scroll:") || endsWith(target, ":card") || target == "sheet:" + m_.sheet->kind ||
+        sheetOptionDisabled(target))
+      return;
+  }
   if (coreDead_) {
     // Nothing is listening; Restart starts a new core (spec 4.5: the user's call).
     if (startsWith(target, "pane:") && endsWith(target, ":restart")) App::instance().restartCore();
@@ -360,9 +369,11 @@ void Ui::targetClick(const std::string& clicked, bool dbl, int button, Mods m) {
     }
     return;
   }
-  EditWidget* e = target == find_.target() ? &find_ : target == rename_.target() ? &rename_ : nullptr;
+  EditWidget* e = target == find_.target() ? &find_ : target == rename_.target() ? &rename_
+                 : (!sheetEdit_.target().empty() && target == sheetEdit_.target()) ? &sheetEdit_ : nullptr;
   EditWidget* fe = focusedEdit();
   if (fe && fe != e) fe->blur();
+  if (e == &sheetEdit_) sheetFocus_ = target;
   if (e) {
     e->focus();
     if (dbl) e->selectAll();
@@ -379,12 +390,23 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
   Window& win = Window::instance();
   if (msg == WM_MOUSEWHEEL) {
     ScreenToClient(win.hwnd(), &pt);
+    if (modal() && !m_.restore) return sheetMouse(msg, pt, button, mods, "", wheelDelta);
     if (modal()) return true;
     return sidebarWheel(pt, wheelDelta);   // the explorer's rows; elsewhere a grid's
   }
   bool inStrip = pt.y < win.stripHeightPx();
   std::string target = rightOnRow(inStrip ? stripTargetAt(pt) : bodyTargetAt(POINT{ pt.x, pt.y - (LONG)bodyTop() }), button);
   float xd = pt.x / dpi(), yd = pt.y / dpi();
+
+  // A sheet takes the pointer: hover still tracks, its own thumb drag owns the moves.
+  if (modal() && !m_.restore) {
+    if (msg == WM_MOUSEMOVE && !sheetScroll_.dragging) {
+      setHover(target, inStrip, pt);
+      win.invalidateBody();
+      return true;
+    }
+    return sheetMouse(msg, POINT{ pt.x, pt.y }, button, mods, inStrip ? std::string() : target, 0);
+  }
 
   // A scrollbar thumb drag owns the pointer until the button comes up.
   if (sbScroll_.dragging) {
@@ -544,6 +566,7 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
 
 bool Ui::key(UINT msg, WPARAM w, LPARAM l, Mods m) {
   Window& win = Window::instance();
+  if (modal() && !m_.restore) return sheetKey(msg, w, l, m);
   if (modal()) {
     if (msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_SYSCHAR) return false;   // Alt+F4 still closes
     if (msg == WM_KEYDOWN) {
