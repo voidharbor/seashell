@@ -11,6 +11,10 @@
 // explorer's rows as drawn, `coreSend {ch, p}` writes a send envelope to the
 // core (its test:update stands in for main's updater). `drop {paneId?, target?,
 // paths?, text?}` takes a data object through the body's DropTarget.
+// `wheel {paneId, row?, col?, dy, gapsMs?}` wheels over a grid cell (gapsMs
+// sends one notch after each gap, timed on this side), `dragSelect` presses,
+// moves and releases from one cell to another, `selection {paneId}` reads the
+// selection's text, `appBar {paneId}` the app scrollbar's state.
 #pragma once
 #include <winsock2.h>
 #include <windows.h>
@@ -77,7 +81,10 @@ private:
   nlohmann::json coreKill();
   nlohmann::json wheel(const nlohmann::json& req);           // UI thread: one WM_MOUSEWHEEL through the window procedure
   nlohmann::json rows();                                     // UI thread: the explorer rows as drawn
-  nlohmann::json drop(const nlohmann::json& req);            // UI thread: a drop through the body's DropTarget at a target's centre
+  nlohmann::json drop(const nlohmann::json& req);
+  nlohmann::json dragSelect(const nlohmann::json& req);     // UI thread: a left press, moves and release from one cell to another
+  nlohmann::json appBar(const std::string& paneId);          // UI thread: the app scrollbar's state
+  nlohmann::json wheelBurst(const nlohmann::json& req);     // connection thread: one wheel per gapsMs entry, each after its gap            // UI thread: a drop through the body's DropTarget at a target's centre
 
   SOCKET listen_ = INVALID_SOCKET;
   std::thread acceptor_;

@@ -306,13 +306,13 @@ function releaseShellPids() {
 }
 
 // The DPI the shell scales its saved window size by (run-native-w10.ps1 does
-// the same): 1440x900 DIP at 100,100, not maximized.
-function writeBounds(udLinux) {
+// the same): 1440x900 DIP at 100,100 (or x, y), not maximized.
+function writeBounds(udLinux, { x = 100, y = 100 } = {}) {
   let dpi = Number(powershell("(Get-ItemProperty 'HKCU:\\Control Panel\\Desktop\\WindowMetrics' -Name AppliedDPI -ErrorAction SilentlyContinue).AppliedDPI"))
   if (!dpi) dpi = 96
   const w = Math.round((1440 * dpi) / 96)
   const h = Math.round((900 * dpi) / 96)
-  writeFileSync(`${udLinux}/window-bounds.json`, `{"x":100,"y":100,"width":${w},"height":${h},"maximized":false}`)
+  writeFileSync(`${udLinux}/window-bounds.json`, `{"x":${x},"y":${y},"width":${w},"height":${h},"maximized":false}`)
 }
 
 function coreRssMB(pid) {

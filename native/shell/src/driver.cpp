@@ -316,6 +316,7 @@ json Driver::handle(const json& req) {
     }
   }
   if (cmd == "drag") return drag(req);
+  if (cmd == "wheel" && req.contains("gapsMs")) return wheelBurst(req);
   if (cmd == "pingCore") return pingCore(req);
   if (cmd == "waitText") {
     std::string want = strArg(req, "contains");
@@ -447,6 +448,15 @@ json Driver::execute(const json& req) {
   if (cmd == "wheel") return wheel(req);
   if (cmd == "rows") return rows();
   if (cmd == "drop") return drop(req);
+  if (cmd == "dragSelect") return dragSelect(req);
+  if (cmd == "selection") {
+    App& a = App::instance();
+    std::string id = strArg(req, "paneId");
+    if (id.empty()) id = a.defaultPaneId();
+    if (id.empty() || !a.grid(id)) return fail("ENOGRID");
+    return { { "ok", true }, { "paneId", id }, { "text", a.input().selectionText(id) } };
+  }
+  if (cmd == "appBar") return appBar(strArg(req, "paneId"));
   if (cmd == "scrollTo") {
     // A view's scroll offset in DIP ('sidebar'; the file viewer's 'file:<paneId>' arrives with it).
     if (!req.contains("offset") || !req["offset"].is_number()) return fail("ENOOFFSET");
@@ -811,6 +821,8 @@ json Driver::wheel(const json& req) {
   float scale = win.dpi().scale();
   std::string target = strArg(req, "target");
   float cx, cy;
+  long before = 0;
+  std::string gridId;
   if (!target.empty()) {
     D2D1_RECT_F r{};
     if (!Ui::instance().targetRect(target, &r)) {
@@ -826,6 +838,23 @@ json Driver::wheel(const json& req) {
   } else if (req.contains("x") && req["x"].is_number() && req.contains("y") && req["y"].is_number()) {
     cx = req["x"].get<float>() * scale;
     cy = req["y"].get<float>() * scale;
+  } else if (req.contains("paneId")) {
+    // Over a pane's grid: the cell at row, col of the viewport, or the grid's
+    // centre, so the body's WM_MOUSEWHEEL takes the grid path (ramp included).
+    App& a = App::instance();
+    std::string id = strArg(req, "paneId");
+    if (id.empty()) id = a.defaultPaneId();
+    Grid* g = id.empty() ? nullptr : a.grid(id);
+    GridView* v = id.empty() ? nullptr : a.view(id);
+    if (!g || !v) return fail("ENOGRID");
+    D2D1_RECT_F c = v->rect();
+    if (req.contains("row") && req["row"].is_number() && req.contains("col") && req["col"].is_number())
+      c = v->cellRect(g->viewTop() + req["row"].get<long>(), req["col"].get<int>());
+    float top = (float)win.bodyRect().top;   // body to client pixels
+    cx = (c.left + c.right) / 2;
+    cy = (c.top + c.bottom) / 2 + top;
+    before = g->viewTop();
+    gridId = id;
   } else {
     return fail("ENOTARGET");
   }
@@ -834,7 +863,90 @@ json Driver::wheel(const json& req) {
   int delta = (int)std::lround(req["dy"].get<double>() * WHEEL_DELTA);
   delta = std::max(-32768, std::min(32767, delta));
   SendMessageW(body, WM_MOUSEWHEEL, MAKEWPARAM(0, (WORD)(short)delta), MAKELPARAM((WORD)(short)sp.x, (WORD)(short)sp.y));
-  return { { "ok", true }, { "x", cx / scale }, { "y", cy / scale }, { "delta", delta } };
+  json out = { { "ok", true }, { "x", cx / scale }, { "y", cy / scale }, { "delta", delta } };
+  if (!gridId.empty()) {
+    // The viewport's first row before and after: the rows this wheel scrolled.
+    Grid* g = App::instance().grid(gridId);
+    long after = g ? g->viewTop() : before;
+    out["paneId"] = gridId;
+    out["viewTopBefore"] = before;
+    out["viewTop"] = after;
+    out["rows"] = after - before;
+  }
+  return out;
+}
+
+// wheel {paneId, dy, gapsMs:[...]}: one notch per entry, each sent after
+// sleeping its gap on this thread, so the ramp sees the spacing a real wheel
+// would give it (GetTickCount64 in the handler; a gap of 0 lands in the same
+// tick). Each notch goes through the window procedure as a single wheel does.
+json Driver::wheelBurst(const json& req) {
+  json one = req;
+  one.erase("gapsMs");
+  json notches = json::array();
+  if (!req["gapsMs"].is_array()) return fail("ENOGAPS");
+  for (const json& gap : req["gapsMs"]) {
+    int ms = gap.is_number() ? std::max(0, std::min(5000, gap.get<int>())) : 0;
+    if (ms) Sleep((DWORD)ms);
+    json r = onUi(one);
+    if (!r.value("ok", false)) return r;
+    r["gapMs"] = ms;
+    notches.push_back(r);
+  }
+  return { { "ok", true }, { "notches", notches } };
+}
+
+// dragSelect {paneId, fromRow, fromCol, toRow, toCol}: a left press in one
+// viewport cell, two moves with the button held, and the release in the other
+// (both cells included), as button messages to the body: the grid's own
+// selection path.
+json Driver::dragSelect(const json& req) {
+  Window& win = Window::instance();
+  HWND body = win.body();
+  if (!body) return fail("ENOWINDOW");
+  App& a = App::instance();
+  std::string id = strArg(req, "paneId");
+  if (id.empty()) id = a.defaultPaneId();
+  Grid* g = id.empty() ? nullptr : a.grid(id);
+  GridView* v = id.empty() ? nullptr : a.view(id);
+  if (!g || !v) return fail("ENOGRID");
+  for (const char* k : { "fromRow", "fromCol", "toRow", "toCol" })
+    if (!req.contains(k) || !req[k].is_number_integer()) return fail("ENOCELL");
+  // The press sits in the first cell's left quarter and the release in the
+  // last cell's right quarter, so both cells are inside the selection (a
+  // press at a cell's centre may round to either of its edges).
+  auto at = [&](long row, int col, float frac) {
+    D2D1_RECT_F c = v->cellRect(g->viewTop() + row, col);
+    return POINT{ (LONG)std::lround(c.left + (c.right - c.left) * frac), (LONG)std::lround((c.top + c.bottom) / 2) };
+  };
+  POINT f = at(req["fromRow"].get<long>(), req["fromCol"].get<int>(), 0.25f);
+  POINT t = at(req["toRow"].get<long>(), req["toCol"].get<int>(), 0.75f);
+  LPARAM from = MAKELPARAM(f.x, f.y), to = MAKELPARAM(t.x, t.y), mid = MAKELPARAM((f.x + t.x) / 2, (f.y + t.y) / 2);
+  heldMods_ = 0;
+  SendMessageW(body, WM_MOUSEMOVE, 0, from);
+  SendMessageW(body, WM_LBUTTONDOWN, MK_LBUTTON, from);
+  SendMessageW(body, WM_MOUSEMOVE, MK_LBUTTON, mid);
+  SendMessageW(body, WM_MOUSEMOVE, MK_LBUTTON, to);
+  SendMessageW(body, WM_LBUTTONUP, 0, to);
+  heldMods_ = -1;
+  return { { "ok", true }, { "paneId", id }, { "text", a.input().selectionText(id) } };
+}
+
+// appBar {paneId}: the overlay app scrollbar (altScreen with mouse tracking):
+// on, the notch offset and range, and the grid's rect in client DIP, whose
+// right 14 DIP are the track.
+json Driver::appBar(const std::string& paneIdArg) {
+  App& a = App::instance();
+  std::string id = paneIdArg.empty() ? a.defaultPaneId() : paneIdArg;
+  Grid* g = id.empty() ? nullptr : a.grid(id);
+  GridView* v = id.empty() ? nullptr : a.view(id);
+  if (!g || !v) return fail("ENOGRID");
+  Window& win = Window::instance();
+  float s = win.dpi().scale(), top = (float)win.bodyRect().top;
+  D2D1_RECT_F r = v->rect();
+  return { { "ok", true }, { "paneId", id }, { "on", v->appBarOn() }, { "offset", v->appOffset() }, { "range", v->appRange() },
+           { "altScreen", g->altScreen() }, { "mouseMode", g->mouseMode() },
+           { "rect", { { "x", r.left / s }, { "y", (r.top + top) / s }, { "w", (r.right - r.left) / s }, { "h", (r.bottom - r.top) / s } } } };
 }
 
 // rows: the explorer's rows as the shell placed them on the last layout,

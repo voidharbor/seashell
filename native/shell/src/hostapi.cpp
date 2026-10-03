@@ -161,6 +161,31 @@ json screenshot(const json& p) {
   SelectObject(dc, old);
   json result = { { "ok", false }, { "error", "PrintWindow failed" } };
   if (printed) {
+    // The capture's stamp (test mode only, this route refuses otherwise): the
+    // local time and the applied model's seq, bottom right, so a PNG names
+    // the moment and the model it shows.
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    const json& m = App::instance().wire().lastModelJson();
+    long long seq = m.is_object() && m.contains("seq") && m["seq"].is_number() ? m["seq"].get<long long>() : -1;
+    wchar_t stamp[96];
+    swprintf(stamp, 96, L" %02u:%02u:%02u.%03u  seq %lld ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, seq);
+    old = SelectObject(dc, bmp);
+    HFONT font = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
+    HGDIOBJ oldFont = font ? SelectObject(dc, font) : nullptr;
+    SetBkMode(dc, OPAQUE);
+    SetBkColor(dc, RGB(255, 255, 224));
+    SetTextColor(dc, RGB(0, 0, 0));
+    RECT tr{ 0, 0, w - 8, h - 8 };
+    DrawTextW(dc, stamp, -1, &tr, DT_RIGHT | DT_BOTTOM | DT_SINGLELINE | DT_NOPREFIX);
+    if (oldFont) SelectObject(dc, oldFont);
+    if (font) DeleteObject(font);
+    GdiFlush();
+    SelectObject(dc, old);
+    std::string stamp8;
+    for (const wchar_t* q = stamp; *q; q++) stamp8 += (char)*q;   // ASCII only
+    result["stamp"] = stamp8;
     // PrintWindow leaves alpha undefined; the PNG is opaque.
     auto* px = static_cast<uint32_t*>(bits);
     for (int i = 0; i < w * h; i++) px[i] |= 0xFF000000u;
@@ -180,7 +205,7 @@ json screenshot(const json& p) {
     if (SUCCEEDED(hr)) hr = frame->WritePixels(h, w * 4, w * h * 4, static_cast<BYTE*>(bits));
     if (SUCCEEDED(hr)) hr = frame->Commit();
     if (SUCCEEDED(hr)) hr = enc->Commit();
-    if (SUCCEEDED(hr)) result = { { "ok", true }, { "path", path }, { "width", w }, { "height", h } };
+    if (SUCCEEDED(hr)) result = { { "ok", true }, { "path", path }, { "width", w }, { "height", h }, { "stamp", result["stamp"] } };
     else {
       char msg[64];
       snprintf(msg, sizeof msg, "WIC 0x%08lx", (unsigned long)hr);
