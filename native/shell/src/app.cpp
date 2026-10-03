@@ -239,6 +239,14 @@ bool App::onInput(HWND from, UINT msg, WPARAM w, LPARAM l) {
   Mods mods{ Driver::keyDown(VK_CONTROL), Driver::keyDown(VK_MENU), Driver::keyDown(VK_SHIFT) };
   if (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) {
     if (Ui::instance().key(msg, w, l, mods)) return true;
+    if (Ui::instance().modal()) {
+      // A sheet or the restore card owns the keyboard: no key reaches the pane
+      // behind it. Only Alt+F4 (close) and Alt+Space (the system menu) go on
+      // to DefWindowProc.
+      bool sys = msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP;
+      bool pass = (sys && (w == VK_F4 || w == VK_SPACE)) || (msg == WM_SYSCHAR && w == L' ');
+      return !pass;
+    }
     return input_.key(focusedGrid(), msg, w, l);
   }
   if (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) {

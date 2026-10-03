@@ -49,6 +49,7 @@ private:
   // (AppMenu::key). True when the key message was taken here.
   bool menuKeys(UINT msg, WPARAM w, LPARAM l);
   void noteMouse(UINT msg);     // a press or the wheel: the Alt down is not a tap any more
+  static bool mouseHeld();      // a mouse button is down or a window has the capture
 
   HWND hwnd_ = nullptr, body_ = nullptr;
   UINT dpi_ = 96;

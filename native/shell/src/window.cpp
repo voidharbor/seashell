@@ -212,7 +212,7 @@ bool Window::menuKeys(UINT msg, WPARAM w, LPARAM l) {
   bool chord = Driver::keyDown(VK_CONTROL) || Driver::keyDown(VK_SHIFT);
   if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
     if (!alt) altTap_ = false;
-    else if (!(l & (1 << 30))) altTap_ = !chord;   // the first Alt down arms the tap; its auto-repeats leave it be
+    else if (!(l & (1 << 30))) altTap_ = !chord && !mouseHeld();   // the first Alt down arms the tap; its auto-repeats leave it be
   } else if ((msg == WM_KEYUP || msg == WM_SYSKEYUP) && alt) {
     bool tap = altTap_ && !chord;
     altTap_ = false;
@@ -224,6 +224,12 @@ bool Window::menuKeys(UINT msg, WPARAM w, LPARAM l) {
     }
   }
   return AppMenu::instance().key(msg, w);
+}
+
+// A button already down (a selection drag, a strip drag) or a window holding
+// the capture: an Alt pressed now is not a tap.
+bool Window::mouseHeld() {
+  return GetKeyState(VK_LBUTTON) < 0 || GetKeyState(VK_RBUTTON) < 0 || GetKeyState(VK_MBUTTON) < 0 || GetCapture() != nullptr;
 }
 
 void Window::noteMouse(UINT msg) {
