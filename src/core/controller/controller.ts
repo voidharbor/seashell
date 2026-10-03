@@ -113,8 +113,6 @@ const PHASE2_COMMANDS: Readonly<Record<string, string>> = {
   'app.saveProject': 'Save project',
   'app.saveTab': 'Save tab as project',
   'app.settings': 'Settings',
-  'preview.web': 'Web preview',
-  'pane.closeAll': 'Close all panes',
 }
 
 /** Pane title-bar controls owned by Phase 2, keyed by the target's last part. */
@@ -350,10 +348,17 @@ export class Controller {
       case 'explorer.toggle':
         this.toggleSidebar()
         break
-      // app.tsx:935-937: the hint, and the explorer opened (left as it is when already open).
+      // Previews are out of this build (plan amendment 10/03): the explorer
+      // still opens (left as it is when already open), as app.tsx:935-937.
       case 'preview.file':
-        this.toast('Double-click a path in a pane, or a file in the explorer, to preview it')
+        this.toast('File previews are not in this build')
         if (!this.sidebarOpen()) this.showSidebar(true)
+        break
+      case 'preview.web':
+        this.toast('Web previews are not in this build')
+        break
+      case 'pane.closeAll':
+        this.closeAllPreviews()
         break
       case 'explorer.refresh':
         this.refreshExplorer()
@@ -523,9 +528,9 @@ export class Controller {
    * candidate under the clicked character, resolved against the pane's cwd (a
    * drawer's click against the drawer's own cwd). A hit is always revealed in
    * the explorer, whatever the modifiers; a directory stops there (the reveal
-   * expands it). On a file, Ctrl opens it the way the explorer does (a file
-   * pane for what main routes to the viewer) and Ctrl+Alt hands it to its
-   * default app. A miss toasts its message; no candidate under the click
+   * expands it). On a file, Ctrl opens it the way the explorer does (the
+   * default app for what main routes to the viewer, since this build has no
+   * previews) and Ctrl+Alt hands it to its default app. A miss toasts its message; no candidate under the click
    * stays silent, as it does in the renderer.
    */
   private async pathClick(paneId: string, line: string, index: number, mods?: Mods): Promise<void> {
@@ -760,6 +765,21 @@ export class Controller {
     this.s = next
     this.sync()
     this.emit()
+  }
+
+  /**
+   * `app.tsx:832-840`: every non-term pane in the active tab goes. Only a
+   * restored file or web placeholder can be one in this build.
+   */
+  private closeAllPreviews(): void {
+    const tab = this.activeTab()
+    if (!tab) return
+    const previews = Object.values(tab.panes).filter((p) => !isTerm(p))
+    if (previews.length === 0) {
+      this.toast('No preview panes open')
+      return
+    }
+    for (const p of previews) this.dispatch({ type: 'pane.close', paneId: p.id })
   }
 
   /** `app.tsx:434-457`. */
@@ -1311,7 +1331,8 @@ export class Controller {
       probe: (req) => this.deps.invoke<FsProbeResponse>('fs:probe', req),
       withDefaultApp: (req) => this.deps.invoke<OpenPathResponse>('open:withDefaultApp', req),
       revealInFinder: (req) => this.deps.invoke<OpenPathResponse>('open:revealInFinder', req),
-      onOpenInViewer: (p) => this.openInViewer(p),
+      // No viewer in this build (plan amendment 10/03): the 'os' route.
+      onOpenInViewer: (p) => void this.openPath(p, 'os'),
       onToast: (m) => this.toast(m),
     }
   }
@@ -1323,24 +1344,6 @@ export class Controller {
     } catch (err) {
       this.deps.log?.(`open failed: ${err instanceof Error ? err.message : String(err)}`)
     }
-  }
-
-  /**
-   * `pane.newFile` in the active tab, focused: one file pane per tab,
-   * retargeted when another file opens (`store.ts:434-473`). The full-tab
-   * refusal is checked here so its toast uses this platform's chord.
-   */
-  private openInViewer(p: string): void {
-    const tab = this.activeTab()
-    if (!tab) return
-    const existing = Object.values(tab.panes).some((q) => q.kind === 'file')
-    if (!existing && Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
-      this.toast(`Tab is full (${MAX_PANES_PER_TAB} panes) - open a new tab (${chordLabel('Cmd+T', this.deps.platform)})`)
-      return
-    }
-    this.dispatch({ type: 'pane.newFile', path: p, autoColor: this.ui.settings.autoColorPanes })
-    const file = Object.values(this.activeTab()?.panes ?? {}).find((q) => q.kind === 'file')
-    if (file) this.dispatch({ type: 'pane.focus', paneId: file.id })
   }
 
   // ---------------------------------------------------------------------------

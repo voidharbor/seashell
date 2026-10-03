@@ -100,13 +100,13 @@ void Ui::viewPanes(Painter& p) {
     p.text(D2D1::RectF(x, title.top, std::max(x, rx - 4 * s), title.bottom), fromUtf8(pm.label), UiFont{ 12, pm.focused }, t_.titleText,
            Align::Left, true);
 
-    // The body: the grid is App's; a file or web pane is Phase 2.
+    // The body: the grid is App's; a restored file or web pane is a placeholder.
     if (pm.kind == "term") {
       hit(false, g, id + ":grid");
     } else {
       hit(false, g, id + ":view");
       p.fillRect(g, t_.panel);
-      p.text(g, pm.kind == "web" ? L"Web preview arrives in phase 2" : L"File preview arrives in phase 2", UiFont{ 12 }, t_.badgeText,
+      p.text(g, L"Previews are not in this build", UiFont{ 12 }, t_.badgeText,
              Align::Center, true);
     }
 

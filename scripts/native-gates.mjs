@@ -14,7 +14,7 @@
 // and nesting launches a second shell from inside a pane; both are quit through
 // their own driver and only ever stopped by pid, never by image name.
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,9 +34,18 @@ const MAKE_SESSION = join(ROOT, 'scripts', 'bakeoff', 'make-session.mjs')
 // allows the budget plus 40 MB at the peak of the flood.
 const SHELL_BUDGET_MB = 70
 
-const argv = process.argv.slice(2)
+// Run as a CLI, or imported for its helpers (scripts/native-matrix.mjs), in
+// which case nothing below reads the arguments and no gate runs.
+const isMain = (() => {
+  try {
+    return !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+})()
+const argv = isMain ? process.argv.slice(2) : []
 const udWin = argv[0]
-if (!udWin || udWin.startsWith('--')) {
+if (isMain && (!udWin || udWin.startsWith('--'))) {
   console.error('usage: node scripts/native-gates.mjs <userDataWin> --shell-pid <pid> [--gates a,b,c] [--out <json>]')
   process.exit(2)
 }
@@ -147,14 +156,15 @@ async function focusedPane(ud) {
 }
 
 // Types a command line and presses Enter through the shell's own key path.
-// In the main scratch it refuses while a claude process is on the focused
-// pane's tty, since the line would land in claude's input box and the Enter
-// would submit it as a prompt.
-async function run(ud, cmdline) {
-  if (ud === udWin) {
+// In the main scratch (or any shell whose pid is given) it refuses while a
+// claude process is on the focused pane's tty, since the line would land in
+// claude's input box and the Enter would submit it as a prompt.
+async function run(ud, cmdline, pid) {
+  const checkPid = pid || (ud === udWin ? shellPid : 0)
+  if (checkPid) {
     const paneId = await focusedPane(ud)
     let tty = ''
-    try { tty = paneTty(paneId) } catch {}
+    try { tty = paneTty(paneId, checkPid) } catch {}
     if (tty && claudeOn(tty)) throw new Error(`refusing to type into ${paneId}: claude is running on ${tty}`)
   }
   await must(ud, { cmd: 'text', s: cmdline }, 'text')
@@ -487,8 +497,8 @@ async function gateRestore() {
 }
 
 // The tty of a pane, from the pid file the core writes (spec 9).
-function paneTty(paneId) {
-  const m = /^(\d+) (pts\/\d+)$/.exec(readFileSync(`${PIDS}/${shellPid}/pane-${paneId}.pid`, 'utf8').trim())
+function paneTty(paneId, pid = shellPid) {
+  const m = /^(\d+) (pts\/\d+)$/.exec(readFileSync(`${PIDS}/${pid}/pane-${paneId}.pid`, 'utf8').trim())
   if (!m) throw new Error(`no pid file line for ${paneId}`)
   return m[2]
 }
@@ -671,31 +681,35 @@ async function gateNesting(ud) {
 
 // ---------------------------------------------------------------------- main
 
-const runners = { env: gateEnv, throughput: gateThroughput, latency: gateLatency, relay: gateRelay, restore: gateRestore, control: gateControl, nesting: gateNesting }
-const results = {}
-let failed = 0
-for (const g of gates) {
-  const fn = runners[g]
-  if (!fn) {
-    console.log(`${g}: unknown gate`)
-    failed++
-    continue
+export { BUILD_WIN, RELEASE_WIN, SCRATCH_WIN, PIDS, toLocal, sleep, drive, model, must, focusedPane, run, gridRows, waitText, launchShell, waitFile, quitShell, writeBounds, paneTty, claudeOn, pidAlive }
+
+if (isMain) {
+  const runners = { env: gateEnv, throughput: gateThroughput, latency: gateLatency, relay: gateRelay, restore: gateRestore, control: gateControl, nesting: gateNesting }
+  const results = {}
+  let failed = 0
+  for (const g of gates) {
+    const fn = runners[g]
+    if (!fn) {
+      console.log(`${g}: unknown gate`)
+      failed++
+      continue
+    }
+    const t0 = now()
+    try {
+      const r = await fn(udWin)
+      results[g] = { ...r, seconds: r1((now() - t0) / 1000) }
+      if (!r.ok) failed++
+      console.log(r.line)
+    } catch (e) {
+      results[g] = { line: `${g}: fail ${e.message}`, ok: false, seconds: r1((now() - t0) / 1000) }
+      failed++
+      console.log(results[g].line)
+    }
   }
-  const t0 = now()
-  try {
-    const r = await fn(udWin)
-    results[g] = { ...r, seconds: r1((now() - t0) / 1000) }
-    if (!r.ok) failed++
-    console.log(r.line)
-  } catch (e) {
-    results[g] = { line: `${g}: fail ${e.message}`, ok: false, seconds: r1((now() - t0) / 1000) }
-    failed++
-    console.log(results[g].line)
+  if (outPath) {
+    const local = toLocal(outPath)
+    mkdirSync(dirname(local), { recursive: true })
+    writeFileSync(local, JSON.stringify({ at: new Date().toISOString(), userData: udWin, shellPid, results }, null, 2) + '\n')
   }
+  process.exit(failed ? 1 : 0)
 }
-if (outPath) {
-  const local = toLocal(outPath)
-  mkdirSync(dirname(local), { recursive: true })
-  writeFileSync(local, JSON.stringify({ at: new Date().toISOString(), userData: udWin, shellPid, results }, null, 2) + '\n')
-}
-process.exit(failed ? 1 : 0)

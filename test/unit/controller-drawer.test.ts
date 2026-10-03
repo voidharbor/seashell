@@ -99,12 +99,13 @@ describe('drawer', () => {
     expect(c.model().drawer).toMatchObject({ open: true, paneId: pane.id, status: 'live' })
     expect(c.model().panes[0]!.status).not.toBe('exited')
   })
-  it('a file pane taking focus leaves the drawer on the terminal it showed', async () => {
+  it('a Ctrl path click in the drawer hands the file to the default app and leaves the drawer as it was', async () => {
     const f = fakeDeps('/w')
     f.handlers['fs:statBatch'] = (p) => ({ results: (p as { candidates: string[] }).candidates.map((c, i) => ({ i, resolved: c, kind: 'file', size: 10, exec: false })) })
     f.handlers['fs:findBySuffix'] = () => ({ paths: [], truncated: false })
     f.handlers['fs:probe'] = (p) => ({ exists: true, isDir: false, size: 10, ext: 'md', route: 'viewer', path: (p as { path: string }).path })
     f.handlers['fs:readDir'] = () => ({ ok: true, entries: [{ name: 'README.md', isDir: false, isSymlink: false, size: 0, mtimeMs: 0, ignored: false }], truncated: false })
+    f.handlers['open:withDefaultApp'] = () => ({ ok: true })
     const c = new Controller(f.deps, { home: '/w', version: '0', chords: [] })
     await c.boot(GEO)
     c.command('pane.new')
@@ -117,7 +118,8 @@ describe('drawer', () => {
     const line = 'see /w/README.md here'
     c.term({ type: 'pathclick', paneId: `drawer:${second!.id}`, line, index: line.indexOf('README'), mods: { ctrl: true, alt: false, shift: false } })
     await new Promise((r) => setTimeout(r, 0))
-    expect(c.model().panes.find((p) => p.kind === 'file')?.focused).toBe(true)
+    expect(f.sent.some(([ch, p]) => ch === 'open:withDefaultApp' && (p as { path: string }).path === '/w/README.md')).toBe(true)
+    expect(c.model().panes.every((p) => p.kind === 'term')).toBe(true)
     expect(c.model().drawer).toMatchObject({ open: true, paneId: second!.id, ptyId: `drawer:${second!.id}` })
     expect(f.sent.some(([ch, p]) => ch === 'pty:spawn' && (p as { paneId: string }).paneId === `drawer:${first!.id}`)).toBe(false)
   })
