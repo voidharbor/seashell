@@ -9,7 +9,8 @@
 // signals once Ui::setModel has applied it (noteModel). `wheel` sends a
 // WM_MOUSEWHEEL, `scrollTo` sets a view's scroll offset, `rows` lists the
 // explorer's rows as drawn, `coreSend {ch, p}` writes a send envelope to the
-// core (its test:update stands in for main's updater).
+// core (its test:update stands in for main's updater). `drop {paneId?, target?,
+// paths?, text?}` takes a data object through the body's DropTarget.
 #pragma once
 #include <winsock2.h>
 #include <windows.h>
@@ -76,6 +77,7 @@ private:
   nlohmann::json coreKill();
   nlohmann::json wheel(const nlohmann::json& req);           // UI thread: one WM_MOUSEWHEEL through the window procedure
   nlohmann::json rows();                                     // UI thread: the explorer rows as drawn
+  nlohmann::json drop(const nlohmann::json& req);            // UI thread: a drop through the body's DropTarget at a target's centre
 
   SOCKET listen_ = INVALID_SOCKET;
   std::thread acceptor_;

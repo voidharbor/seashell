@@ -504,6 +504,10 @@ export class Controller {
   // ---------------------------------------------------------------------------
 
   event(e: UiEvent): void {
+    if (e.type === 'drop') {
+      this.drop(e.target, e.paths, e.text)
+      return
+    }
     const t = e.target
     // The pane popovers close on a press anywhere outside them, and on Escape
     // from anywhere (ColorPicker.tsx, LinkPicker.tsx: capture-phase listeners).
@@ -565,7 +569,7 @@ export class Controller {
       if (this.renamingTabId && t === `tab:${this.renamingTabId}:rename`) this.commitRename()
       return
     }
-    if (e.type === 'focus' || e.type === 'wheel' || e.type === 'drop' || e.type === 'up' || e.type === 'move' || sidePress) return
+    if (e.type === 'focus' || e.type === 'wheel' || e.type === 'up' || e.type === 'move' || sidePress) return
 
     const parts = t.split(':')
     const head = parts[0]
@@ -777,6 +781,48 @@ export class Controller {
       default:
         break
     }
+  }
+
+  /**
+   * A file or text drop (`PaneView.tsx:525-545`, inventory row J). Only a
+   * terminal grid takes one: a pane's grid in the active tab or the open
+   * drawer's; the explorer, the strip, a restored preview's placeholder and
+   * anything under a sheet or the restore card refuse it. The shell sends the
+   * Windows paths of a `CF_HDROP` and the text or URL; `dropText` quotes and
+   * maps them. Text that is not a path is pasted as it is. Nothing is run:
+   * the paste is the grid's bracketed paste. The grid then has the keyboard.
+   */
+  private drop(target: string, paths: string[], text: string | null): void {
+    if (this.restoreCandidate || this.sheetKind !== null) return
+    let gridId: string | null = null
+    let paneId: string | null = null
+    if (target === 'drawer:grid') {
+      gridId = this.drawerOpen ? this.drawerKeysTarget() : null
+    } else {
+      const m = /^pane:(.+):grid$/.exec(target)
+      const pane = m ? this.activeTab()?.panes[m[1]!] : undefined
+      if (pane && isTerm(pane)) gridId = paneId = pane.id
+    }
+    if (!gridId || !this.hasGrid(gridId)) return
+    const list = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string' && p !== '') : []
+    const raw = typeof text === 'string' ? text : ''
+    const out = dropText({ paths: list, ...(raw ? { text: raw } : {}) }, this.deps.platform) || (list.length ? '' : raw)
+    if (!out) return
+    this.grid({ paneId: gridId, op: 'paste', text: out })
+    if (paneId) {
+      this.blurDrawer()
+      if (this.activeTab()?.focusedPaneId !== paneId) this.dispatch({ type: 'pane.focus', paneId })
+      this.grid({ paneId, op: 'focus' })
+    } else if (!this.drawerFocused) {
+      this.drawerFocused = true
+      this.emit()
+    }
+  }
+
+  /** The open drawer's pty id, whether or not it holds the keyboard. */
+  private drawerKeysTarget(): string | null {
+    const id = this.drawerShown
+    return id && this.drawers.has(id) ? drawerPtyId(id) : null
   }
 
   /**

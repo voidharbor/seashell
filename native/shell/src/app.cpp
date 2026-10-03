@@ -1,6 +1,7 @@
 #include "app.h"
 #include "audio.h"
 #include "driver.h"
+#include "droptarget.h"
 #include "gfx.h"
 #include "log.h"
 #include "paths.h"
@@ -614,6 +615,7 @@ void App::onPeerEnvelope(const std::string& json) {
 }
 
 void App::onWindowDestroyed() {
+  DropTarget::revoke();   // the body child still exists while its parent handles WM_DESTROY
   if (handoff_) { CloseHandle(handoff_); handoff_ = nullptr; }
   PostQuitMessage(exitCode_);
 }
@@ -672,10 +674,12 @@ int App::main(HINSTANCE hinst) {
   if (GetLastError() == ERROR_ALREADY_EXISTS) return signalFirstInstance(inst) ? 0 : 1;
 
   SetCurrentProcessExplicitAppUserModelID(L"dev.seashell.app");
-  HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-  if (FAILED(hr)) { log("error: CoInitializeEx 0x%08lx", (unsigned long)hr); return 1; }
+  // OleInitialize (an apartment-threaded CoInitializeEx plus OLE) so the body can take drops.
+  HRESULT hr = OleInitialize(nullptr);
+  if (FAILED(hr)) { log("error: OleInitialize 0x%08lx", (unsigned long)hr); return 1; }
   if (!Gfx::instance().init()) return 1;
   if (!Window::instance().create(hinst, testMode_)) return 1;
+  DropTarget::registerOn(Window::instance().body());   // a failure is logged; the shell runs without drops
   publishWindow(inst);
   if (testMode_) Driver::instance().start();   // a failed listener is logged; the shell still runs
 
@@ -731,7 +735,7 @@ int App::main(HINSTANCE hinst) {
   core_.stop(2000);   // a no-op once the drain above let it exit
   Audio::shutdown();
   log("shell exit %d", exitCode_);
-  CoUninitialize();
+  OleUninitialize();
   CloseHandle(mutex_);
   return exitCode_;
 }

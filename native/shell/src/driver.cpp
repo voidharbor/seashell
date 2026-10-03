@@ -1,5 +1,6 @@
 #include "driver.h"
 #include "app.h"
+#include "droptarget.h"
 #include "hostapi.h"
 #include "paths.h"
 #include "ui/menu.h"
@@ -445,6 +446,7 @@ json Driver::execute(const json& req) {
   if (cmd == "grid") return grid(strArg(req, "paneId"));
   if (cmd == "wheel") return wheel(req);
   if (cmd == "rows") return rows();
+  if (cmd == "drop") return drop(req);
   if (cmd == "scrollTo") {
     // A view's scroll offset in DIP ('sidebar'; the file viewer's 'file:<paneId>' arrives with it).
     if (!req.contains("offset") || !req["offset"].is_number()) return fail("ENOOFFSET");
@@ -771,6 +773,36 @@ json Driver::dragStep(const json& req) {
 // at x, y client DIP, sent to the body (the window with the keyboard focus,
 // where Windows delivers the wheel) through the window procedure, with the
 // point in screen coordinates as the real message carries it.
+// A drop at the centre of a target's rect (`target`, else `pane:<paneId>:grid`
+// with paneId defaulting to the focused pane's, or `drawer:grid` for a drawer
+// pty id), through the body's registered DropTarget with a data object made
+// here: CF_HDROP from `paths` (Windows paths), CF_UNICODETEXT from `text`.
+// No pointer moves and no DoDragDrop loop runs.
+json Driver::drop(const json& req) {
+  std::string target = strArg(req, "target");
+  if (target.empty()) {
+    std::string id = strArg(req, "paneId");
+    if (id.empty()) id = App::instance().defaultPaneId();
+    if (id.empty()) return fail("ENOGRID");
+    target = id.rfind("drawer:", 0) == 0 ? "drawer:grid" : "pane:" + id + ":grid";
+  }
+  std::vector<std::string> paths;
+  if (req.contains("paths") && req["paths"].is_array())
+    for (const json& p : req["paths"])
+      if (p.is_string() && !p.get<std::string>().empty()) paths.push_back(p.get<std::string>());
+  std::string text;
+  bool hasText = req.contains("text") && req["text"].is_string();
+  if (hasText) text = req["text"].get<std::string>();
+  if (paths.empty() && !hasText) return fail("ENODATA");
+  D2D1_RECT_F r{};
+  if (!Ui::instance().targetRect(target, &r)) return fail("ENOTARGET");
+  POINT pt{ (LONG)std::lround((r.left + r.right) / 2), (LONG)std::lround((r.top + r.bottom) / 2) };
+  ClientToScreen(Window::instance().hwnd(), &pt);
+  json out = DropTarget::driverDrop(POINTL{ pt.x, pt.y }, paths, hasText ? &text : nullptr);
+  out["aimed"] = target;
+  return out;
+}
+
 json Driver::wheel(const json& req) {
   Window& win = Window::instance();
   HWND body = win.body();
