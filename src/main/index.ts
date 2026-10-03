@@ -372,7 +372,9 @@ app.whenReady().then(warmUpPlatform).then(() => importLinuxState(app.getPath('us
   )
 
   createWindow()
-  buildMenu(() => mainWindow)
+  // The native Windows shell runs this under WSL node: its menu takes the
+  // win32 labels (Exit, not Quit); the accelerators are the same off the Mac.
+  buildMenu(() => mainWindow, process.env.SEASHELL_HOST === 'native-win' ? 'win32' : process.platform)
   registerWindowControls()
   metrics.start()
 
