@@ -65,6 +65,14 @@ const TAIL_MAX_CHARS = 8192
 const SHELL_RESOLVE_INTERVAL_MS = 250
 const SHELL_RESOLVE_ATTEMPTS = 120
 
+/** Date.now() of the last chunk any pane produced; 0 until one does. */
+let lastDataMs = 0
+
+/** When any pty last produced output (the core's idle collector reads it). */
+export function lastDataAt(): number {
+  return lastDataMs
+}
+
 export class PtyManager {
   private panes = new Map<string, PaneProc>()
   private batcher = new PtyBatcher()
@@ -235,6 +243,7 @@ export class PtyManager {
     this.batcher.setPaneActive(req.paneId, true)
 
     proc.onData((chunk: string | Buffer) => {
+      lastDataMs = Date.now()
       const text =
         typeof chunk === 'string' ? chunk : rec.decoder.write(chunk)
       if (text) {

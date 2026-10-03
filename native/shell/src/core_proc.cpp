@@ -290,6 +290,8 @@ bool CoreProc::start() {
   std::wstring cdp = envW(L"SEASHELL_CDP_PORT");
   if (!cdp.empty()) args.push_back(L"SEASHELL_CDP_PORT=" + cdp);
   args.push_back(L"/usr/bin/node");
+  // global.gc for the core's idle collector (src/core/idle-gc.ts).
+  args.push_back(L"--expose-gc");
   args.push_back(coreDir + L"/index.cjs");
   std::wstring cmd = joinArgs(args);
 

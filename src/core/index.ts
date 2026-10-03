@@ -10,6 +10,7 @@ import { chordTableFromMenu } from './controller/chords.js'
 import { encodeEnvelope } from './protocol.js'
 import { answerEarly } from './index-routes.js'
 import { gatedWriter } from '../main/pty/flow.js'
+import { startIdleCollector } from './idle-gc.js'
 
 const hostPid = Number(process.env.SEASHELL_HOST_PID) || process.ppid
 const userData = process.env.SEASHELL_USER_DATA
@@ -122,6 +123,21 @@ async function start(): Promise<void> {
       process.stderr.write(`[core] queued ${ch} failed: ${String(err)}\n`)
     }
   }
+  // Dynamic like main's own import: manager.js pulls in `electron`, which must
+  // not evaluate before the shim is on globalThis. main has loaded it by now.
+  const { lastDataAt } = await import('../main/pty/manager.js')
+  const gc = globalThis.gc   // only under `node --expose-gc` (core_proc.cpp)
+  startIdleCollector({
+    rss: () => process.memoryUsage().rss,
+    lastPtyActivity: lastDataAt,
+    now: () => Date.now(),
+    // 'last-resort' is V8's memory-reducing collection: a plain gc() frees the
+    // flood's garbage but leaves the young generation at the size the flood
+    // grew it to (about 20 MB of RSS), and only this flavor shrinks it.
+    gc: gc ? () => gc({ type: 'major', execution: 'sync', flavor: 'last-resort' }) : undefined,
+    setInterval: (fn, ms) => setInterval(fn, ms).unref(),
+    log: (line) => process.stderr.write(`[core] ${line}\n`),
+  })
 }
 
 start().catch((err: unknown) => {
