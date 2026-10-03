@@ -40,6 +40,12 @@ bool dragRect(const std::string& target, std::array<double, 4>* out) {
     *out = { r.x, r.y, r.w, r.h };
     return true;
   }
+  if (target == "drawer:grip") {
+    if (!m.drawer.open) return false;
+    const Rect& r = m.drawer.gripRect;
+    *out = { r.x, r.y, r.w, r.h };
+    return true;
+  }
   if (target.rfind("divider:", 0) != 0) return false;
   std::string id = target.substr(8);
   for (const DividerModel& d : m.dividers)
@@ -541,7 +547,7 @@ json Driver::click(const json& req, const char* type) {
 // time of the whole drag, press to release (Task 18 divides it by steps).
 // moveMs is per move, from just before the move is posted to the UI thread to
 // the moment Ui::setModel has applied the first model after it that moved the
-// dragged divider, or the grip for sidebar:grip (noteModel's stamp; a metrics
+// dragged divider, or the grip for sidebar:grip and drawer:grip (noteModel's stamp; a metrics
 // or status bar model in between stamps nothing): the event-to-model round trip of spec 10. The wait is a
 // condition variable the UI thread signals, never a poll, so no scheduler tick
 // is in it. A step that timed out can still have its late model stamp the next
@@ -825,7 +831,8 @@ json Driver::stats() {
   PROCESS_MEMORY_COUNTERS pmc{ sizeof pmc };
   double wsMB = GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc) ? pmc.WorkingSetSize / (1024.0 * 1024.0) : 0;
   // The focused pane's grid: its mouse tracking mode (VTERM_PROP_MOUSE_*, 0 is
-  // none) and its selection's text ("" when nothing is selected).
+  // none) and its selection's text ("" when nothing is selected); focusedGrid
+  // is the grid keys go to (the drawer's while it has focus).
   App& a = App::instance();
   std::string id = a.defaultPaneId();
   Grid* g = id.empty() ? nullptr : a.grid(id);
@@ -850,6 +857,7 @@ json Driver::stats() {
   return { { "frameMs", { { "p50", percentile(ms, 0.5) }, { "p95", percentile(ms, 0.95) } } }, { "modelMs", modelMs },
            { "framesLast5s", ms.size() }, { "ptyBytesLast5s", (long long)bytes }, { "shellWsMB", std::round(wsMB * 10) / 10 },
            { "paneId", id }, { "mouseMode", g ? g->mouseMode() : 0 }, { "selection", a.input().selectionText(id) },
+           { "focusedGrid", a.focusedGridId() },
            { "coreDead", a.coreDead() }, { "coreAlive", a.coreAlive() } };
 }
 

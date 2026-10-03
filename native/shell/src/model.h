@@ -231,6 +231,42 @@ struct SidebarModel {
   }
 };
 
+// The shell drawer (Phase 2 Task 6): one shell per pane over the bottom of the
+// grid area. Its grid is an ordinary grid under ptyId ('drawer:<paneId>').
+struct DrawerHeader {
+  std::string label;                // 'Shell · <pane label>'
+  std::string title;                // the shell's OSC title, else its cwd
+  bool showCd = false;              // the drawer:cd button shows
+};
+
+struct DrawerModel {
+  bool open = false;
+  Rect rect, gripRect, gridRect;    // DIP; all zero while closed
+  double height = 300;              // the stored base height (uiScale 1)
+  std::optional<std::string> paneId, ptyId;
+  int cols = 0, rows = 0;
+  double fontPx = 0;
+  DrawerHeader header;
+  std::string status = "starting";  // 'starting' | 'live' | 'exited'
+  bool focused = false;             // keys go to the drawer's grid
+  static DrawerModel parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    DrawerModel d;
+    d.open = flag(j, "open");
+    if (const json* r = field(j, "rect")) d.rect = Rect::parse(*r);
+    if (const json* r = field(j, "gripRect")) d.gripRect = Rect::parse(*r);
+    if (const json* r = field(j, "gridRect")) d.gridRect = Rect::parse(*r);
+    d.height = num(j, "height", 300);
+    d.paneId = optStr(j, "paneId"); d.ptyId = optStr(j, "ptyId");
+    d.cols = integer(j, "cols"); d.rows = integer(j, "rows"); d.fontPx = num(j, "fontPx");
+    if (const json* h = field(j, "header"); h && h->is_object())
+      d.header = DrawerHeader{ str(*h, "label"), str(*h, "title"), flag(*h, "showCd") };
+    d.status = str(j, "status", "starting");
+    d.focused = flag(j, "focused");
+    return d;
+  }
+};
+
 struct WindowModel {
   std::string title;
   double uiScale = 1, fontPx = 0, tabStripH = 0, statusH = 0;
@@ -261,6 +297,7 @@ struct UiModel {
   std::vector<ChordModel> chords;
   std::map<std::string, std::string> tokens;   // the Aero token table (Task 16)
   SidebarModel sidebar;
+  DrawerModel drawer;
 
   static UiModel parse(const nlohmann::json& j) {
     using namespace model_detail;
@@ -292,6 +329,7 @@ struct UiModel {
       for (auto it = t->begin(); it != t->end(); ++it)
         if (it.value().is_string()) m.tokens[it.key()] = it.value().get<std::string>();
     if (const json* s = field(j, "sidebar")) m.sidebar = SidebarModel::parse(*s);
+    if (const json* d = field(j, "drawer")) m.drawer = DrawerModel::parse(*d);
     return m;
   }
 };

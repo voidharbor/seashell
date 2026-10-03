@@ -91,3 +91,34 @@ export function splitBody(body: Rect, columnW: number | null): BodySplit {
   const gridX = grip.x + grip.w
   return { grid: { x: gridX, y: body.y, w: Math.max(0, body.x + body.w - gridX), h: body.h }, column, grip }
 }
+
+/** The drawer's grip, DIP (`styles.css` `.drawer__grip`): 6 tall across the top edge, not scaled by uiScale. */
+export const DRAWER_GRIP_DIP = 6
+
+/** The drawer's header row at uiScale 1 (`.drawer__head`: 4 DIP padding around 11 DIP text, plus its border). */
+export const DRAWER_HEADER_DIP = 24
+
+export interface DrawerRects {
+  rect: Rect
+  gripRect: Rect
+  gridRect: Rect
+}
+
+/**
+ * The shell drawer as `styles.css` `.drawer` places it: anchored to the bottom
+ * of the grid area and laid over it (never over the explorer column), so the
+ * panes under it keep their rects. `height` is the rendered height (the stored
+ * base height times uiScale) and `headerH` the rendered header; the panel is
+ * capped at the area. Below its 1 DIP top border come the header, the header's
+ * 1 DIP bottom border, then the terminal. The grip straddles the top edge.
+ */
+export function drawerRects(area: Rect, height: number, headerH: number): DrawerRects {
+  const h = Math.max(0, Math.min(area.h, height))
+  const bottom = area.y + area.h
+  const rect = { x: area.x, y: bottom - h, w: area.w, h }
+  const gripY = Math.max(area.y, rect.y - DRAWER_GRIP_DIP / 2)
+  const gripRect = { x: rect.x, y: gripY, w: rect.w, h: DRAWER_GRIP_DIP }
+  const top = Math.min(bottom, rect.y + 1 + headerH + 1)
+  const gridRect = { x: rect.x, y: top, w: rect.w, h: bottom - top }
+  return { rect, gripRect, gridRect }
+}

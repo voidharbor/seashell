@@ -265,9 +265,18 @@ GridView* App::view(const std::string& paneId) {
 }
 
 Grid* App::focusedGrid() {
+  std::string id = focusedGridId();
+  return id.empty() ? nullptr : grid(id);
+}
+
+// The drawer has the keys while the model says so, and then never the pane
+// behind it, even before its grid exists.
+std::string App::focusedGridId() const {
+  const DrawerModel& d = model_.drawer;
+  if (d.open && d.focused) return d.ptyId ? *d.ptyId : std::string();
   for (const PaneModel& p : model_.panes)
-    if (p.focused && p.kind == "term") return grid(p.id);
-  return nullptr;
+    if (p.focused && p.kind == "term") return grids_.count(p.id) ? p.id : std::string();
+  return std::string();
 }
 
 std::string App::defaultPaneId() const {
@@ -461,7 +470,8 @@ void CALLBACK App::findRefresh(HWND, UINT, UINT_PTR id, DWORD) {
 }
 
 // BeginDraw, the chrome background, every visible pane's grid at its model
-// rect, then the chrome over them (Ui::drawBody), EndDraw.
+// rect, the chrome over them (Ui::drawBody, which ends with the drawer's
+// panel), the drawer's grid, then the overlays (Ui::drawOverlays), EndDraw.
 void App::paintBody() {
   ID2D1HwndRenderTarget* rt = Gfx::instance().bodyTarget();
   if (!rt) return;
@@ -478,6 +488,8 @@ void App::paintBody() {
   // keyboard (and no edit widget does). A test run never activates its window
   // (SW_SHOWNOACTIVATE), so it counts as active.
   bool keys = (windowActive_ || testMode_) && !ui.wantsBlink();
+  const DrawerModel& dm = model_.drawer;
+  bool drawerKeys = dm.open && dm.focused;   // the pane behind keeps its hollow cursor
   auto dev = [&](const Rect& r) {
     return D2D1::RectF((float)(r.x * scale), (float)(r.y * scale) - top, (float)((r.x + r.w) * scale), (float)((r.y + r.h) * scale) - top);
   };
@@ -496,10 +508,29 @@ void App::paintBody() {
     if (Grid* g = grid(p.id)) v.setAppScrollbar(g->altScreen() && g->mouseMode() != VTERM_PROP_MOUSE_NONE);
     auto f = finders_.find(p.id);
     rt->PushAxisAlignedClip(gr, D2D1_ANTIALIAS_MODE_ALIASED);
-    v.draw(rt, p.focused && keys, input_.selection(p.id), f == finders_.end() ? nullptr : &f->second.decor(), 0);
+    v.draw(rt, p.focused && keys && !drawerKeys, input_.selection(p.id), f == finders_.end() ? nullptr : &f->second.decor(), 0);
     rt->PopAxisAlignedClip();
   }
   ui.drawBody(rt);
+  // The drawer's grid floats over the panes, under the find bar, the menu and the overlays.
+  if (dm.open && dm.ptyId) {
+    auto it = views_.find(*dm.ptyId);
+    if (it != views_.end()) {
+      GridView& v = *it->second;
+      D2D1_RECT_F gr = dev(dm.gridRect);
+      if (dm.fontPx > 0) v.setFontPx((float)(dm.fontPx * scale));
+      v.setDpiScale(scale);
+      v.setRect(gr);
+      v.setExited(dm.status == "exited");
+      v.setBlinkPhase(blinkOn_);
+      if (Grid* g = grid(*dm.ptyId)) v.setAppScrollbar(g->altScreen() && g->mouseMode() != VTERM_PROP_MOUSE_NONE);
+      auto f = finders_.find(*dm.ptyId);
+      rt->PushAxisAlignedClip(gr, D2D1_ANTIALIAS_MODE_ALIASED);
+      v.draw(rt, drawerKeys && keys, input_.selection(*dm.ptyId), f == finders_.end() ? nullptr : &f->second.decor(), 0);
+      rt->PopAxisAlignedClip();
+    }
+  }
+  ui.drawOverlays(rt);
   HRESULT hr = rt->EndDraw();
   QueryPerformanceCounter(&t1);
   QueryPerformanceFrequency(&freq);
@@ -525,6 +556,13 @@ void CALLBACK App::blinkTick(HWND, UINT, UINT_PTR, DWORD) {
     Window::instance().invalidateStrip();
     Window::instance().invalidateBody();
     return;
+  }
+  const DrawerModel& d = a.model_.drawer;
+  bool drawerKeys = d.open && d.focused;
+  if (drawerKeys && d.ptyId) {
+    auto it = a.views_.find(*d.ptyId);
+    if (it != a.views_.end() && it->second->wantsBlink(true)) Window::instance().invalidateBody();
+    return;   // the pane behind does not blink
   }
   for (const PaneModel& p : a.model_.panes) {
     auto it = a.views_.find(p.id);

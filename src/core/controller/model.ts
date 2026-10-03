@@ -21,6 +21,11 @@
  * `sidebar:refresh`, `sidebar:strip` (click copies), `sidebar:menu:<id>` (a
  * context menu item), `sidebar:menu` (the menu itself, for `key Escape`),
  * `sidebar:empty`. The path is everything after the prefix, colons included.
+ *
+ * The shell drawer (Phase 2): `drawer:grip` (down/move/up resize; the event's
+ * y is the drawer's top edge), `drawer:cd`, `drawer:close`, `drawer:grid` (a
+ * `down` there gives the drawer the keyboard). Its grid is an ordinary grid
+ * under the pty id `drawer:<paneId>`.
  */
 
 export interface Rect {
@@ -133,6 +138,38 @@ export interface SidebarModel {
   menu: { rowId: string; x: number; y: number; items: SidebarMenuItem[] } | null
 }
 
+/**
+ * The shell drawer (`DrawerShell.tsx`): one shell per pane, shown over the
+ * bottom of the grid area for the focused terminal pane. Rects are all zero
+ * and the ids null while it is closed.
+ */
+export interface DrawerModel {
+  open: boolean
+  /** The panel over the bottom of the grid area, DIP; the panes under it keep their rects. */
+  rect: Rect
+  /** The 6 DIP grip straddling the panel's top edge. */
+  gripRect: Rect
+  /** The drawer's terminal, below the header. */
+  gridRect: Rect
+  /** The stored base height, DIP at uiScale 1 (120 to 800); the panel is this times uiScale. */
+  height: number
+  /** The pane whose shell is shown (the focused terminal pane). */
+  paneId: string | null
+  /** 'drawer:<paneId>', the id of its pty and its grid. */
+  ptyId: string | null
+  cols: number
+  rows: number
+  fontPx: number
+  /**
+   * 'Shell · <pane label>'; the shell's OSC title, else its cwd, else the
+   * pane's; `showCd` while the drawer's cwd is known and differs from the pane's.
+   */
+  header: { label: string; title: string; showCd: boolean }
+  status: 'starting' | 'live' | 'exited'
+  /** Keyboard focus is in the drawer's grid. */
+  focused: boolean
+}
+
 export interface UiModel {
   seq: number
   window: { title: string; uiScale: number; fontPx: number; tabStripH: number; statusH: number }
@@ -162,6 +199,7 @@ export interface UiModel {
   /** The Aero token table (colorization.ts) plus `composition`: '1' glass, '0' the opaque strip. */
   tokens: Record<string, string>
   sidebar: SidebarModel
+  drawer: DrawerModel
 }
 
 export interface Mods {

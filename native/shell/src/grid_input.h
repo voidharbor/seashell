@@ -40,6 +40,7 @@ public:
 private:
   struct Hit { std::string paneId; Grid* g = nullptr; GridView* v = nullptr; long absRow = 0; int col = 0; int boundary = 0; };
   bool hitTest(float x, float y, bool clamp, const std::string& onlyPane, Hit* out) const;
+  bool cellHit(const std::string& id, float x, float y, bool clamp, Hit* out) const;   // one grid's cell under the point
   void write(Grid& g, const std::string& bytes);
   void afterTyped(Grid& g, bool submit);                // scroll to the bottom, clear the selection
   void selectInputLine(Grid& g);

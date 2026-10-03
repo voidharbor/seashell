@@ -286,40 +286,55 @@ bool GridInput::key(Grid* g, UINT msg, WPARAM w, LPARAM l) {
   return false;   // TranslateMessage's WM_CHAR carries the character
 }
 
-// The cell under (x, y) in the visible pane there (or in onlyPane, with the
-// point clamped into its grid when clamp is set).
+// The cell under (x, y) in the visible grid there (or in onlyPane, with the
+// point clamped into its grid when clamp is set). The open drawer floats over
+// the panes, so its grid is asked first, and a point on the rest of its panel
+// is no pane's.
 bool GridInput::hitTest(float x, float y, bool clamp, const std::string& onlyPane, Hit* out) const {
   App& a = App::instance();
   const UiModel& m = a.model();
+  const DrawerModel& dm = m.drawer;
+  if (dm.open && dm.ptyId && (onlyPane.empty() || onlyPane == *dm.ptyId)) {
+    if (cellHit(*dm.ptyId, x, y, clamp, out)) return true;
+    if (!onlyPane.empty()) return false;
+    float s = Window::instance().dpi().scale(), top = (float)Window::instance().bodyRect().top;
+    const Rect& r = dm.rect;
+    if (x >= r.x * s && x < (r.x + r.w) * s && y >= r.y * s - top && y < (r.y + r.h) * s - top) return false;
+  }
   for (const PaneModel& p : m.panes) {
     if (!paneVisible(m, p) || (!onlyPane.empty() && p.id != onlyPane)) continue;
-    Grid* g = a.grid(p.id);
-    GridView* v = a.view(p.id);
-    if (!g || !v) continue;
-    D2D1_RECT_F r = v->rect();
-    float px = x, py = y;
-    if (clamp) {
-      px = std::min(std::max(px, r.left), r.right - 0.5f);
-      py = std::min(std::max(py, r.top), r.bottom - 0.5f);
-    }
-    if (px < r.left || px >= r.right || py < r.top || py >= r.bottom) continue;
-    D2D1_RECT_F c00 = v->cellRect(0, 0), c11 = v->cellRect(1, 1);
-    float cw = c11.left - c00.left, ch = c11.top - c00.top;
-    if (cw <= 0 || ch <= 0) continue;
-    const GridStore& st = g->store();
-    float ox = c00.left, oy = std::round(r.top);
-    int col = std::min(std::max(0, (int)std::floor((px - ox) / cw)), st.cols() - 1);
-    int vr = std::min(std::max(0, (int)std::floor((py - oy) / ch)), st.rows() - 1);
-    out->paneId = p.id;
-    out->g = g;
-    out->v = v;
-    out->absRow = g->viewTop() + vr;
-    out->col = col;
-    float cx = ox + col * cw;
-    out->boundary = std::min(st.cols(), col + ((px - cx) >= cw / 2 ? 1 : 0));
-    return true;
+    if (cellHit(p.id, x, y, clamp, out)) return true;
   }
   return false;
+}
+
+bool GridInput::cellHit(const std::string& id, float x, float y, bool clamp, Hit* out) const {
+  App& a = App::instance();
+  Grid* g = a.grid(id);
+  GridView* v = a.view(id);
+  if (!g || !v) return false;
+  D2D1_RECT_F r = v->rect();
+  float px = x, py = y;
+  if (clamp) {
+    px = std::min(std::max(px, r.left), r.right - 0.5f);
+    py = std::min(std::max(py, r.top), r.bottom - 0.5f);
+  }
+  if (px < r.left || px >= r.right || py < r.top || py >= r.bottom) return false;
+  D2D1_RECT_F c00 = v->cellRect(0, 0), c11 = v->cellRect(1, 1);
+  float cw = c11.left - c00.left, ch = c11.top - c00.top;
+  if (cw <= 0 || ch <= 0) return false;
+  const GridStore& st = g->store();
+  float ox = c00.left, oy = std::round(r.top);
+  int col = std::min(std::max(0, (int)std::floor((px - ox) / cw)), st.cols() - 1);
+  int vr = std::min(std::max(0, (int)std::floor((py - oy) / ch)), st.rows() - 1);
+  out->paneId = id;
+  out->g = g;
+  out->v = v;
+  out->absRow = g->viewTop() + vr;
+  out->col = col;
+  float cx = ox + col * cw;
+  out->boundary = std::min(st.cols(), col + ((px - cx) >= cw / 2 ? 1 : 0));
+  return true;
 }
 
 void GridInput::sendPathClick(const Hit& h) {
@@ -426,10 +441,13 @@ bool GridInput::mouse(UINT msg, WPARAM w, LPARAM l) {
       if (!hitTest(x, y, false, "", &h)) return false;
       int part = GridView::kBarNone;
       if (h.v->appScrollbarHit(x, y, &part)) { appBarDown(h, part, y); return true; }
-      // The core focuses the pane first; the selection logic runs on it here.
+      // The core focuses the pane first (a press in the drawer's grid gives
+      // the drawer the keys); the selection logic runs on it here.
       float scale = Window::instance().dpi().scale();
       float top = (float)Window::instance().bodyRect().top;
-      App::instance().wire().sendEvent({ { "type", "click" }, { "target", "pane:" + h.paneId + ":grid" },
+      const DrawerModel& dm = App::instance().model().drawer;
+      bool inDrawer = dm.ptyId && h.paneId == *dm.ptyId;
+      App::instance().wire().sendEvent({ { "type", inDrawer ? "down" : "click" }, { "target", inDrawer ? std::string("drawer:grid") : "pane:" + h.paneId + ":grid" },
                                          { "x", x / scale }, { "y", (y + top) / scale }, { "button", 0 }, { "mods", modsJson() } });
       bool reporting = h.g->mouseMode() != VTERM_PROP_MOUSE_NONE && !alt;
       ULONGLONG now = GetTickCount64();

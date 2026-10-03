@@ -27,7 +27,8 @@ public:
   void relayout();                               // the window or the DPI changed: hit rects again
   void drawBackground(ID2D1RenderTarget* rt);    // the body's chrome color, under the grids
   void drawStrip(ID2D1RenderTarget* rt);         // tabs, +, web, sleep, settings, zoom badge; transparent where glass shows
-  void drawBody(ID2D1RenderTarget* rt);          // pane frames, dividers, status bar, overlays; grids are drawn by App between frames and overlays
+  void drawBody(ID2D1RenderTarget* rt);          // the explorer, pane frames, dividers, status bar and the drawer's panel; App draws the pane grids before it
+  void drawOverlays(ID2D1RenderTarget* rt);      // the find bar, the menu and the overlays; App draws the drawer's grid before them
   std::string stripTargetAt(POINT clientPx) const;   // "strip:empty" | "tab:<id>" | ... (WM_NCHITTEST uses it)
   std::string bodyTargetAt(POINT bodyPx) const;      // "pane:<id>:grid" | "pane:<id>:close" | "divider:<id>" | "find:query" | "restore:yes" | ...
   // Mouse messages at client pixels of the top-level window (a body message
@@ -35,7 +36,7 @@ public:
   // true when consumed (not a grid). wheelDelta is WM_MOUSEWHEEL's.
   bool mouse(UINT msg, POINT clientPx, int button, Mods, int wheelDelta = 0);
   bool key(UINT msg, WPARAM, LPARAM, Mods);          // for the focused edit widget or an open card; false lets the grid have it
-  LPCWSTR cursorFor(POINT bodyPx) const;             // IDC_SIZEWE over a vertical divider or the sidebar grip, IDC_SIZENS over a horizontal divider, IDC_IBEAM over an edit, IDC_ARROW
+  LPCWSTR cursorFor(POINT bodyPx) const;             // IDC_SIZEWE over a vertical divider or the sidebar grip, IDC_SIZENS over a horizontal divider or the drawer grip, IDC_IBEAM over an edit or a grid, IDC_ARROW
   void mouseLeave(bool strip);                       // WM_MOUSELEAVE, or the pointer went onto the caption
   void captionPress();                               // a press on strip:empty (the window drag): blur the edit
   void captionDblClick();                            // dblclick strip:empty, which the core turns into a new tab
@@ -97,6 +98,7 @@ private:
   void viewOverlays(Painter& p);                 // overlays.cpp: toast, empty state, splash, restore card, tooltip
   void viewSidebar(Painter& p);                  // sidebar.cpp: the explorer column, its scrollbar, the strip and the grip
   void viewMenu(Painter& p);                     // sidebar.cpp: the context menu popup over the body
+  void viewDrawer(Painter& p);                   // drawer.cpp: the shell drawer's panel, grip and header; App draws its grid
 
   // The explorer column's geometry for the current model (sidebar.cpp):
   // rects in body pixels; rowDip and padDip in the model's DIP (uiScale in).

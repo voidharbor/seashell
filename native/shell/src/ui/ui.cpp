@@ -15,7 +15,9 @@ bool endsWith(const std::string& s, const char* p) {
   size_t n = strlen(p);
   return s.size() >= n && s.compare(s.size() - n, n, p) == 0;
 }
-bool isGrid(const std::string& t) { return startsWith(t, "pane:") && endsWith(t, ":grid"); }
+bool isGrid(const std::string& t) { return (startsWith(t, "pane:") && endsWith(t, ":grid")) || t == "drawer:grid"; }
+// The handles a press drags: the core takes their down, move and up.
+bool isHandle(const std::string& t) { return startsWith(t, "divider:") || t == "sidebar:grip" || t == "drawer:grip"; }
 
 // Everything drawStrip and viewTabs read from the model. A model that changes
 // none of it (a divider move, the status bar, a pane's title) leaves the
@@ -149,6 +151,7 @@ void Ui::layout() {
   viewPanes(none);
   viewDividers(none);
   viewStatus(none);
+  viewDrawer(none);
   viewFindBar(none);
   viewMenu(none);
   viewOverlays(none);
@@ -181,10 +184,11 @@ LPCWSTR Ui::cursorFor(POINT bodyPx) const {
     const DividerModel* d = nullptr;
     for (const DividerModel& dv : m_.dividers)
       if ("divider:" + dv.id == dragDivider_) d = &dv;
-    return d && d->orientation == "horizontal" ? IDC_SIZENS : IDC_SIZEWE;
+    return (d && d->orientation == "horizontal") || dragDivider_ == "drawer:grip" ? IDC_SIZENS : IDC_SIZEWE;
   }
   std::string t = bodyTargetAt(bodyPx);
   if (t == "sidebar:grip") return IDC_SIZEWE;
+  if (t == "drawer:grip") return IDC_SIZENS;
   if (startsWith(t, "divider:")) {
     for (const DividerModel& d : m_.dividers)
       if ("divider:" + d.id == t) return d.orientation == "horizontal" ? IDC_SIZENS : IDC_SIZEWE;
@@ -216,6 +220,13 @@ std::wstring Ui::tooltipFor(const std::string& target) const {
   if (startsWith(target, "sidebar:row:")) return fromUtf8(target.substr(12));
   if (startsWith(target, "sidebar:twisty:")) return fromUtf8(target.substr(15));
   if (target == "sidebar:strip") return L"Click to copy";
+  // The drawer's (DrawerShell.tsx titles).
+  if (target == "drawer:grip") return L"Drag to resize";
+  if (target == "drawer:close") {
+    for (const ChordModel& c : m_.chords)
+      if (c.command == "drawer.toggle") return L"Hide shell (" + fromUtf8(c.chord) + L")";
+    return L"Hide shell";
+  }
   if (target == "sidebar:refresh") {
     for (const ChordModel& c : m_.chords)
       if (c.command == "explorer.refresh") return L"Refresh (" + fromUtf8(c.chord) + L")";
@@ -269,7 +280,7 @@ void Ui::captionPress() {
 // outside it (Explorer.tsx's capture-phase listener).
 bool Ui::menuSendsOwnDown(const std::string& t, int button) const {
   if (button != 0) return false;
-  if (startsWith(t, "divider:") || t == "sidebar:grip") return true;
+  if (isHandle(t)) return true;
   if (!startsWith(t, "tab:") && !startsWith(t, "pane:")) return false;
   return !isGrid(t) && !endsWith(t, ":close") && !endsWith(t, ":restart") && !endsWith(t, ":rename");
 }
@@ -313,7 +324,7 @@ void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
     return;
   }
   if (target == "find:bar" || target == "restore:card" || target == "toast" || target == "status" || target == "splash" ||
-      startsWith(target, "tip"))
+      target == "drawer:head" || startsWith(target, "tip"))
     return;
   send("click", target, xDip, yDip, 0, m);
 }
@@ -327,7 +338,7 @@ void Ui::targetClick(const std::string& target, bool dbl, int button, Mods m) {
     yd = (r.top + r.bottom) / 2 / dpi();
   }
   // A drag handle's `down` would start a drag in the core; its click leaves the menu be.
-  if (!startsWith(target, "divider:") && target != "sidebar:grip") closeMenuOnPress(target, xd, yd, m);
+  if (!isHandle(target)) closeMenuOnPress(target, xd, yd, m);
   if (startsWith(target, "sidebar:scroll:")) {
     POINT c{ (LONG)std::lround(xd * dpi()), (LONG)std::lround(yd * dpi()) };
     sidebarBarPress(WM_LBUTTONDOWN, c, target);
@@ -380,7 +391,7 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
     const DividerModel* d = nullptr;
     for (const DividerModel& dv : m_.dividers)
       if ("divider:" + dv.id == dragDivider_) d = &dv;
-    bool vertical = !d || d->orientation != "horizontal";   // the grip is vertical
+    bool vertical = d ? d->orientation != "horizontal" : dragDivider_ != "drawer:grip";   // the sidebar grip is vertical, the drawer's horizontal
     float ex = vertical ? xd - dragGrabDip_ : xd, ey = vertical ? yd : yd - dragGrabDip_;
     if (msg == WM_MOUSEMOVE) {
       dragLastX_ = ex;
@@ -447,6 +458,18 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
       dragDivider_ = target;
       dragLastX_ = edge;
       dragLastY_ = yd;
+      SetCapture(win.body());
+      send("down", target, dragLastX_, dragLastY_, 0, mods);
+      win.invalidateBody();
+      return true;
+    }
+    if (target == "drawer:grip") {
+      // The core takes the drawer's top edge; the grab offset inside the grip is kept.
+      float edge = (float)m_.drawer.rect.y;
+      dragGrabDip_ = yd - edge;
+      dragDivider_ = target;
+      dragLastX_ = xd;
+      dragLastY_ = edge;
       SetCapture(win.body());
       send("down", target, dragLastX_, dragLastY_, 0, mods);
       win.invalidateBody();
@@ -626,6 +649,12 @@ void Ui::drawBody(ID2D1RenderTarget* rt) {
   viewPanes(p);
   viewDividers(p);
   viewStatus(p);
+  viewDrawer(p);
+}
+
+void Ui::drawOverlays(ID2D1RenderTarget* rt) {
+  Painter p(rt, dpi(), (float)m_.window.uiScale);
+  if (!p.live()) return;
   viewFindBar(p);
   viewMenu(p);
   viewOverlays(p);

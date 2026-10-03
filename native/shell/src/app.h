@@ -32,7 +32,8 @@ public:
   DWORD corePid() const { return core_.pid(); }      // wsl.exe, the shell's own child (the driver's coreKill)
   Grid* grid(const std::string& paneId);             // nullptr when the core never created it
   GridView* view(const std::string& paneId);         // the view drawing that grid, or nullptr
-  Grid* focusedGrid();                               // the model's focused pane's grid; keys go here
+  Grid* focusedGrid();                               // the grid keys go to: the open drawer's while it has focus, else the focused pane's
+  std::string focusedGridId() const;                 // its id, "" for none (the driver's stats)
   GridInput& input() { return input_; }
   std::string defaultPaneId() const;                 // the focused pane, else the first grid (the driver's default)
 

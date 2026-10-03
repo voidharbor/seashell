@@ -12,6 +12,7 @@
  * source. Behaviour that is not ported yet toasts "<name> arrives in phase 2".
  * The session snapshot and restore live in `session.ts`, the status bar's
  * strings in `status.ts`, the file explorer's tree in `explorer.ts`.
+ * The shell drawer (`DrawerShell.tsx`) is one more grid per pane, here.
  */
 import path from 'node:path'
 import {
@@ -39,6 +40,9 @@ import { tokenizeLine } from '../../renderer/links/tokenizer.js'
 import { resolvePathClick } from '../../renderer/links/resolve.js'
 import { clampSidebar, SIDEBAR_DEFAULT, widthFromDrag } from '../../renderer/layout/sidebar.js'
 import { openPath as routeOpen, type OpenDeps } from '../../renderer/explorer/open.js'
+import { clampDrawer, drawerHeightFromDrag } from '../../renderer/layout/drawer.js'
+import { cdCommandFor } from '../../renderer/drawer/cd.js'
+import { DRAWER_PTY_PREFIX, drawerPtyId } from '../../renderer/drawer/id.js'
 import { chordLabel } from '../../shared/keys.js'
 import type {
   AppPaths,
@@ -49,7 +53,7 @@ import type {
   PtyKillResponse,
   PtySpawnResponse,
 } from '../../shared/ipc.js'
-import { layOut, layOutZoomed, splitBody, type BodySplit, type LaidOut } from './layout.js'
+import { DRAWER_HEADER_DIP, drawerRects, layOut, layOutZoomed, splitBody, type BodySplit, type LaidOut } from './layout.js'
 import { ExplorerState, FLASH_MS, type Listing } from './explorer.js'
 import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-state.js'
 import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
@@ -57,6 +61,7 @@ import { mem, statusModel } from './status.js'
 import { colorizationToTokens, isColorization } from './colorization.js'
 import type {
   ChordModel,
+  DrawerModel,
   FindModel,
   Geometry,
   GridCmd,
@@ -102,7 +107,6 @@ const STATUS_PX = 28
 
 /** Commands owned by Phase 2. Each toasts `<name> arrives in phase 2`. */
 const PHASE2_COMMANDS: Readonly<Record<string, string>> = {
-  'drawer.toggle': 'The shell drawer',
   'help.tutorial': 'The tutorial',
   'app.projects': 'Projects',
   'app.saveProject': 'Save project',
@@ -123,6 +127,19 @@ interface GridInfo {
   cols: number
   rows: number
   fontPx: number
+}
+
+/**
+ * One pane's drawer shell (`DrawerShell.tsx`): its pty and its grid in the
+ * shell, both under `drawer:<paneId>`. Never in a tab's state, never saved.
+ */
+interface DrawerShell {
+  status: 'starting' | 'live' | 'exited'
+  /** Its own OSC title and OSC 7 cwd, for the header and `showCd`. */
+  title: string
+  cwd: string
+  /** The size the shell's grid has. */
+  grid: GridInfo
 }
 
 interface DragState {
@@ -191,6 +208,16 @@ export class Controller {
   /** Bumped by every reveal and by hiding, so an older reveal still reading stops. */
   private revealToken = 0
   private flashCancel: (() => void) | null = null
+  /** The shell drawer is open (runtime only, as `app.tsx:100-102`). */
+  private drawerOpen = false
+  /** The keyboard is in the drawer's grid rather than the pane's. */
+  private drawerFocused = false
+  /** Every pane that has a drawer shell, by pane id (`app.tsx:105-112`). */
+  private readonly drawers = new Map<string, DrawerShell>()
+  /** The pane whose drawer shows; a fresh show of an exited shell respawns it. */
+  private drawerShown: string | null = null
+  /** The grip drag: the grid area's bottom edge, measured at the press (`app.tsx:267-292`). */
+  private drawerDrag: { bottom: number } | null = null
   private last: UiModel
 
   constructor(deps: ControllerDeps, opts: { home: string; version: string; chords: ChordModel[] }) {
@@ -302,7 +329,7 @@ export class Controller {
         this.dispatch({ type: 'pane.zoom' })
         break
       case 'pane.clear': {
-        const id = this.focusedTermId()
+        const id = this.editTargetId()
         if (id) this.grid({ paneId: id, op: 'clear' })
         break
       }
@@ -314,6 +341,9 @@ export class Controller {
         break
       case 'explorer.refresh':
         this.refreshExplorer()
+        break
+      case 'drawer.toggle':
+        this.toggleDrawer()
         break
       // The global zoom also clears per-pane overrides (app.tsx:977-990).
       case 'ui.zoomIn':
@@ -343,7 +373,7 @@ export class Controller {
         break
       case 'edit.copy': {
         // The shell writes the clipboard from the grid's own selection.
-        const id = this.focusedTermId()
+        const id = this.editTargetId()
         if (id) this.grid({ paneId: id, op: 'copy' })
         break
       }
@@ -351,7 +381,7 @@ export class Controller {
         // The text arrives with the command from the shell (see push).
         break
       case 'edit.selectAll': {
-        const id = this.focusedTermId()
+        const id = this.editTargetId()
         if (id) this.grid({ paneId: id, op: 'selectAll' })
         break
       }
@@ -379,6 +409,10 @@ export class Controller {
     }
     if (t.startsWith('divider:')) {
       if (e.type === 'down' || e.type === 'move' || e.type === 'up') this.dividerEvent(t.slice('divider:'.length), e)
+      return
+    }
+    if (t.startsWith('drawer:')) {
+      this.drawerEvent(t.slice('drawer:'.length), e)
       return
     }
     if (e.type === 'key') {
@@ -424,6 +458,15 @@ export class Controller {
         }
         break
       case 'title':
+        if (e.paneId.startsWith(DRAWER_PTY_PREFIX)) {
+          // The drawer's header shows its shell's title whatever the setting (DrawerShell.tsx onTitle).
+          const d = this.drawerOf(e.paneId)
+          if (d && typeof e.title === 'string') {
+            d.title = e.title
+            this.emit()
+          }
+          break
+        }
         // app.tsx:1670-1673: the setting gates it; the reducer keeps a custom label.
         if (this.ui.settings.autoTitlePanes && typeof e.title === 'string') {
           this.dispatch({ type: 'pane.autoTitle', paneId: e.paneId, title: e.title })
@@ -431,11 +474,21 @@ export class Controller {
         break
       case 'cwd': {
         const cwd = this.trustedCwd(e.cwd)
+        if (e.paneId.startsWith(DRAWER_PTY_PREFIX)) {
+          // The drawer tracks its own cwd, for `showCd` and its path clicks.
+          const d = this.drawerOf(e.paneId)
+          if (d && cwd) {
+            d.cwd = cwd
+            this.emit()
+          }
+          break
+        }
         if (cwd && paneById(this.s, e.paneId)) this.dispatch({ type: 'pane.cwd', paneId: e.paneId, cwd, home: this.home })
         break
       }
       case 'bell':
-        this.dispatch({ type: 'pane.bell', paneId: e.paneId, at: this.deps.now() })
+        // A drawer's bell is not a pane asking for attention.
+        if (!e.paneId.startsWith(DRAWER_PTY_PREFIX)) this.dispatch({ type: 'pane.bell', paneId: e.paneId, at: this.deps.now() })
         break
       case 'pathclick':
         void this.pathClick(e.paneId, e.line, e.index)
@@ -451,11 +504,12 @@ export class Controller {
    * under the clicked character, resolved against the pane's cwd. Revealing
    * and previewing need the explorer and the preview panes (Phase 2), so a hit
    * toasts the resolved path for now; a miss toasts its message as before. No
-   * candidate under the click stays silent, as it does in the renderer.
+   * candidate under the click stays silent, as it does in the renderer. A
+   * click in a drawer resolves against the drawer's own cwd.
    */
   private async pathClick(paneId: string, line: string, index: number): Promise<void> {
-    const pane = paneById(this.s, paneId)
-    if (!pane || typeof line !== 'string' || !Number.isInteger(index)) return
+    const cwd = this.clickCwd(paneId)
+    if (cwd === null || typeof line !== 'string' || !Number.isInteger(index)) return
     const cand = tokenizeLine(line).find((c) => index >= c.start && index < c.end)
     if (!cand) return
     const searchRoot = this.home
@@ -464,7 +518,7 @@ export class Controller {
         {
           hit: { path: cand.path, start: cand.start, end: cand.end, absY: 0 },
           rows: { prevRow: null, nextRow: null, startCol: cand.start, endCol: cand.end, cols: line.length },
-          cwd: pane.cwd,
+          cwd,
           searchRoot,
         },
         {
@@ -518,6 +572,11 @@ export class Controller {
       case 'pty:exit': {
         const x = p as { paneId?: unknown; exitCode?: unknown; signal?: unknown } | null
         if (typeof x?.paneId !== 'string') break
+        if (x.paneId.startsWith(DRAWER_PTY_PREFIX)) {
+          // No pane has this id (the store would ignore it), and no overlay: the next show respawns.
+          this.drawerExited(x.paneId)
+          break
+        }
         const code = typeof x.exitCode === 'number' ? x.exitCode : 0
         const signal = typeof x.signal === 'number' ? x.signal : null
         this.dispatch({ type: 'pane.exited', paneId: x.paneId, code, signal })
@@ -572,10 +631,11 @@ export class Controller {
    * sends its text. Quoted `C:\` paths (Explorer's "Copy as path") paste as
    * quoted WSL paths; no text at all asks main for copied files, then for a
    * screenshot saved as a PNG. Ordinary text is untouched. The target is
-   * resolved before anything awaits, so a focus change cannot redirect it.
+   * resolved before anything awaits, so a focus change cannot redirect it;
+   * it is the drawer while the drawer holds the keyboard.
    */
   private async paste(text: string): Promise<void> {
-    const id = this.focusedTermId()
+    const id = this.editTargetId()
     if (!id) return
     const platform = this.deps.platform
     let winPaths: string[] = []
@@ -591,7 +651,7 @@ export class Controller {
     }
     if (winPaths.length) {
       const out = dropText({ paths: winPaths }, platform)
-      if (out && this.grids.has(id)) this.grid({ paneId: id, op: 'paste', text: out })
+      if (out && this.hasGrid(id)) this.grid({ paneId: id, op: 'paste', text: out })
       return
     }
     if (!text) {
@@ -601,12 +661,12 @@ export class Controller {
       } catch {
         image = ''
       }
-      if (typeof image === 'string' && image && this.grids.has(id)) {
+      if (typeof image === 'string' && image && this.hasGrid(id)) {
         this.grid({ paneId: id, op: 'paste', text: dropText({ paths: [image] }, platform) })
       }
       return
     }
-    if (this.grids.has(id)) this.grid({ paneId: id, op: 'paste', text })
+    if (this.hasGrid(id)) this.grid({ paneId: id, op: 'paste', text })
   }
 
   // ---------------------------------------------------------------------------
@@ -857,6 +917,7 @@ export class Controller {
       return
     }
     if (type === 'down' || type === 'click') {
+      if (sub === 'grid' || sub === 'title') this.blurDrawer()
       if (this.activeTab()?.focusedPaneId !== id) this.dispatch({ type: 'pane.focus', paneId: id })
       if (sub === 'grid' && type === 'down') this.grid({ paneId: id, op: 'focus' })
     } else if (type === 'dblclick' && sub === 'title') {
@@ -1387,7 +1448,9 @@ export class Controller {
     return pane && isTerm(pane) && this.grids.has(pane.id) ? pane.id : null
   }
 
+  /** The keyboard goes to the focused pane's grid (and so out of the drawer). */
   private focusGrid(): void {
+    this.blurDrawer()
     const id = this.focusedTermId()
     if (id) this.grid({ paneId: id, op: 'focus' })
   }
@@ -1510,6 +1573,7 @@ export class Controller {
       if (this.find.paneId === id) this.find = { ...this.find, paneId: null, count: null }
       this.grid({ paneId: id, op: 'dispose' })
     }
+    this.syncDrawer(area)
   }
 
   /**
@@ -1520,9 +1584,7 @@ export class Controller {
     const key = `${pane.id}:${pane.generation ?? 0}`
     if (this.spawned.has(key)) return
     this.spawned.add(key)
-    const file = this.paths?.defaultShell || '/bin/zsh'
-    void this.deps
-      .invoke<PtySpawnResponse>('pty:spawn', { paneId: pane.id, file, args: ['-l'], cwd: pane.cwd, cols, rows })
+    void this.ptySpawn(pane.id, pane.cwd, cols, rows)
       .then((res) => {
         if (res && res.ok) {
           if (paneById(this.s, pane.id)) this.dispatch({ type: 'pane.spawned', paneId: pane.id, pid: res.pid })
@@ -1542,6 +1604,293 @@ export class Controller {
         this.spawned.delete(key)
         this.toast(`Failed to start shell: ${err instanceof Error ? err.message : String(err)}`)
       })
+  }
+
+  /** `zsh -l` under `paneId` at the grid's size: every pane's shell and every drawer's. */
+  private ptySpawn(paneId: string, cwd: string, cols: number, rows: number): Promise<PtySpawnResponse> {
+    const file = this.paths?.defaultShell || '/bin/zsh'
+    return this.deps.invoke<PtySpawnResponse>('pty:spawn', { paneId, file, args: ['-l'], cwd, cols, rows })
+  }
+
+  // ---------------------------------------------------------------------------
+  // The shell drawer (DrawerShell.tsx; app.tsx:1261-1329)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The pane the drawer belongs to: the focused pane, or when that is not a
+   * terminal (or none is focused, `app.tsx:1286-1300`) the tab's first one.
+   */
+  private drawerPaneId(): string | null {
+    const tab = this.activeTab()
+    if (!tab) return null
+    const focused = tab.focusedPaneId ? tab.panes[tab.focusedPaneId] : undefined
+    if (focused && isTerm(focused)) return focused.id
+    for (const id of dfsPaneOrder(tab.tree)) {
+      const p = tab.panes[id]
+      if (p && isTerm(p)) return id
+    }
+    return null
+  }
+
+  /** `drawer.toggle`: opening puts the keyboard in the drawer; closing hands it back to the pane. */
+  private toggleDrawer(): void {
+    if (this.drawerOpen) {
+      this.closeDrawer()
+      return
+    }
+    if (!this.drawerPaneId()) {
+      this.toast('No terminal pane to open a shell for')
+      return
+    }
+    this.drawerOpen = true
+    this.drawerFocused = true
+    this.sync()
+    this.emit()
+  }
+
+  /** `app.tsx:1261-1276`: the pane that had the keyboard gets it back. */
+  private closeDrawer(): void {
+    if (!this.drawerOpen) return
+    this.drawerOpen = false
+    this.drawerDrag = null
+    this.sync()
+    this.focusGrid()
+    this.emit()
+  }
+
+  private blurDrawer(): void {
+    if (!this.drawerFocused) return
+    this.drawerFocused = false
+    this.emit()
+  }
+
+  /** The live cwd a pane's drawer starts in and `cd to pane` goes to (`app.tsx:1727`). */
+  private paneCwd(p: PaneState): string {
+    return p.metrics?.cwd || p.cwd || this.home
+  }
+
+  /**
+   * After every state change: reap the drawer shells whose pane is gone
+   * (`app.tsx:1306-1329`, so every way a pane dies is covered), then give the
+   * shown pane its shell. A pane's first show spawns one lazily; a show after
+   * its shell exited starts a fresh grid and shell (`DrawerShell.tsx:154-178`);
+   * only the shown shell is resized, as hidden ones are never refit.
+   */
+  private syncDrawer(area: Rect): void {
+    const live = new Set(this.s.tabs.flatMap((t) => Object.keys(t.panes)))
+    for (const id of [...this.drawers.keys()]) {
+      if (live.has(id)) continue
+      this.drawers.delete(id)
+      const ptyId = drawerPtyId(id)
+      void this.deps.invoke<PtyKillResponse>('pty:kill', { paneId: ptyId }).catch(() => undefined)
+      this.grid({ paneId: ptyId, op: 'dispose' })
+    }
+    const id = this.drawerOpen ? this.drawerPaneId() : null
+    if (this.drawerOpen && !id) {
+      // Nothing left to open a shell for: the drawer closes rather than sit open on nothing.
+      this.drawerOpen = false
+      this.drawerFocused = false
+      this.drawerDrag = null
+    }
+    const fresh = id !== this.drawerShown
+    this.drawerShown = id
+    const pane = id ? paneById(this.s, id) : undefined
+    if (!id || !pane) return
+    const size = this.drawerGrid(area)
+    const have = this.drawers.get(id)
+    if (!have || (fresh && have.status === 'exited')) {
+      this.startDrawerShell(pane, size, have)
+      return
+    }
+    const g = have.grid
+    if (g.cols === size.cols && g.rows === size.rows && g.fontPx === size.fontPx) return
+    have.grid = size
+    const ptyId = drawerPtyId(id)
+    this.grid({ paneId: ptyId, op: 'resize', cols: size.cols, rows: size.rows, fontPx: size.fontPx })
+    if (g.cols !== size.cols || g.rows !== size.rows) this.deps.send('pty:resize', { paneId: ptyId, cols: size.cols, rows: size.rows })
+  }
+
+  /** The drawer's grid size: its rect below the header, in the window's cell. */
+  private drawerGrid(area: Rect): GridInfo {
+    const ui = this.uiScale()
+    const { gridRect } = drawerRects(area, this.ui.drawerHeight * ui, DRAWER_HEADER_DIP * ui)
+    const fontPx = levelAt(this.ui.zoomIndex).font
+    const cell = this.cellAt(fontPx)
+    return { cols: Math.max(1, Math.floor(gridRect.w / cell.cellW)), rows: Math.max(1, Math.floor(gridRect.h / cell.cellH)), fontPx }
+  }
+
+  /** A grid, then `zsh -l` at its size in the pane's live cwd (`DrawerShell.tsx:165-204`). */
+  private startDrawerShell(pane: PaneState, size: GridInfo, old: DrawerShell | undefined): void {
+    const ptyId = drawerPtyId(pane.id)
+    if (old) this.grid({ paneId: ptyId, op: 'dispose' })
+    // A fresh record each start: a late spawn reply for the shell it replaced finds a different one and changes nothing.
+    const d: DrawerShell = { status: 'starting', title: '', cwd: '', grid: size }
+    this.drawers.set(pane.id, d)
+    this.grid({ paneId: ptyId, op: 'create', cols: size.cols, rows: size.rows, fontPx: size.fontPx, scrollback: SCROLLBACK })
+    const failed = (why: string): void => {
+      if (this.drawers.get(pane.id) !== d) return
+      d.status = 'exited'
+      this.toast(`Failed to start shell: ${why}`)
+    }
+    void this.ptySpawn(ptyId, this.paneCwd(pane), size.cols, size.rows)
+      .then((res) => {
+        if (res && res.ok) {
+          if (this.drawers.get(pane.id) !== d || d.status !== 'starting') return
+          d.status = 'live'
+          this.emit()
+        } else {
+          failed(res && !res.ok ? `${res.code} - ${res.message}` : 'no reply')
+        }
+      })
+      .catch((err: unknown) => failed(err instanceof Error ? err.message : String(err)))
+    // One line per drawer shell started, so a reopen that spawned again shows in the core log.
+    this.deps.log?.(`pty:spawn ${ptyId} ${size.cols}x${size.rows}`)
+  }
+
+  private drawerExited(ptyId: string): void {
+    const d = this.drawerOf(ptyId)
+    if (!d || d.status === 'exited') return
+    d.status = 'exited'
+    this.emit()
+  }
+
+  /** The drawer shell behind a `drawer:<paneId>` id. */
+  private drawerOf(ptyId: string): DrawerShell | undefined {
+    return this.drawers.get(ptyId.slice(DRAWER_PTY_PREFIX.length))
+  }
+
+  private drawerEvent(what: string, e: UiEvent): void {
+    if (!this.drawerOpen || !this.drawerShown) return
+    if (what === 'grip') {
+      this.drawerGripEvent(e)
+      return
+    }
+    if (what === 'grid') {
+      // A press in the drawer's terminal gives it the keyboard.
+      if ((e.type === 'down' || e.type === 'click') && !this.drawerFocused) {
+        this.drawerFocused = true
+        this.emit()
+      }
+      return
+    }
+    if (e.type !== 'click' || e.button !== 0) return
+    if (what === 'cd') this.cdToPane(this.drawerShown)
+    else if (what === 'close') this.closeDrawer()
+  }
+
+  /**
+   * The bottom-anchored drag (`app.tsx:267-292`): the event's y is the drawer's
+   * top edge, so the rendered height is the grid area's bottom less it; stored
+   * as a base height and saved once on release.
+   */
+  private drawerGripEvent(e: UiEvent): void {
+    if (e.type === 'down') {
+      const area = this.area()
+      this.drawerDrag = e.button === 0 && area ? { bottom: area.y + area.h } : null
+    } else if ((e.type === 'move' || e.type === 'up') && this.drawerDrag) {
+      this.setDrawerHeight(drawerHeightFromDrag(e.y, this.drawerDrag.bottom, this.uiScale()), e.type === 'up')
+      if (e.type === 'up') this.drawerDrag = null
+    }
+  }
+
+  private setDrawerHeight(height: number, save: boolean): void {
+    const h = clampDrawer(height)
+    if (h !== this.ui.drawerHeight) {
+      this.ui = { ...this.ui, drawerHeight: h }
+      this.sync()
+      this.emit()
+    }
+    if (save) this.saveUi()
+  }
+
+  /**
+   * `DrawerShell.tsx:214-223`: Ctrl+U first, so whatever sat on the prompt
+   * line cannot turn the command into something else, then the quoted `cd`
+   * and Enter, typed visibly into the drawer and never into the pane. A path
+   * `cdCommandFor` refuses (a control character in it) types nothing.
+   */
+  private cdToPane(paneId: string): void {
+    const pane = paneById(this.s, paneId)
+    const cmd = pane ? cdCommandFor(this.paneCwd(pane)) : null
+    if (!cmd) return
+    this.deps.send('pty:write', { paneId: drawerPtyId(paneId), data: `\x15${cmd}\r` })
+    if (!this.drawerFocused) {
+      this.drawerFocused = true
+      this.emit()
+    }
+  }
+
+  /** The drawer's id while it holds the keyboard. */
+  private drawerKeys(): string | null {
+    const id = this.drawerOpen && this.drawerFocused ? this.drawerShown : null
+    return id && this.drawers.has(id) ? drawerPtyId(id) : null
+  }
+
+  /**
+   * The terminal an edit command acts on: the drawer while it holds the
+   * keyboard, else the focused pane (`app.tsx:866-878`), so a paste or a clear
+   * aimed at the drawer never lands in the agent's pane behind it.
+   */
+  private editTargetId(): string | null {
+    return this.drawerKeys() ?? this.focusedTermId()
+  }
+
+  private hasGrid(id: string): boolean {
+    return id.startsWith(DRAWER_PTY_PREFIX) ? this.drawerOf(id) !== undefined : this.grids.has(id)
+  }
+
+  /** The cwd a double-clicked path resolves against: the pane's, or for a drawer its own shell's, else its pane's. */
+  private clickCwd(id: string): string | null {
+    if (id.startsWith(DRAWER_PTY_PREFIX)) {
+      const d = this.drawerOf(id)
+      const pane = paneById(this.s, id.slice(DRAWER_PTY_PREFIX.length))
+      return d && pane ? d.cwd || this.paneCwd(pane) : null
+    }
+    return paneById(this.s, id)?.cwd ?? null
+  }
+
+  private drawerModel(): DrawerModel {
+    const zero = { x: 0, y: 0, w: 0, h: 0 }
+    const id = this.drawerOpen ? this.drawerShown : null
+    const pane = id ? paneById(this.s, id) : undefined
+    const d = id ? this.drawers.get(id) : undefined
+    const area = this.area()
+    if (!id || !pane || !d || !area) {
+      return {
+        open: false,
+        rect: zero,
+        gripRect: zero,
+        gridRect: zero,
+        height: this.ui.drawerHeight,
+        paneId: null,
+        ptyId: null,
+        cols: 0,
+        rows: 0,
+        fontPx: levelAt(this.ui.zoomIndex).font,
+        header: { label: '', title: '', showCd: false },
+        status: 'starting',
+        focused: false,
+      }
+    }
+    const ui = this.uiScale()
+    const r = drawerRects(area, this.ui.drawerHeight * ui, DRAWER_HEADER_DIP * ui)
+    const paneCwd = this.paneCwd(pane)
+    return {
+      open: true,
+      rect: r.rect,
+      gripRect: r.gripRect,
+      gridRect: r.gridRect,
+      height: this.ui.drawerHeight,
+      paneId: id,
+      ptyId: drawerPtyId(id),
+      cols: d.grid.cols,
+      rows: d.grid.rows,
+      fontPx: d.grid.fontPx,
+      // DrawerShell.tsx:238-255.
+      header: { label: `Shell · ${pane.label}`, title: d.title || d.cwd || paneCwd, showCd: d.cwd !== '' && d.cwd !== paneCwd },
+      status: d.status,
+      focused: this.drawerFocused,
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1610,6 +1959,7 @@ export class Controller {
       chords: this.opts.chords,
       tokens: { ...this.tokens },
       sidebar: this.sidebarModel(),
+      drawer: this.drawerModel(),
     }
   }
 
