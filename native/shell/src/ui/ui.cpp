@@ -16,6 +16,21 @@ bool endsWith(const std::string& s, const char* p) {
   return s.size() >= n && s.compare(s.size() - n, n, p) == 0;
 }
 bool isGrid(const std::string& t) { return startsWith(t, "pane:") && endsWith(t, ":grid"); }
+
+// Everything drawStrip and viewTabs read from the model. A model that changes
+// none of it (a divider move, the status bar, a pane's title) leaves the
+// strip's pixels as they were, so App does not repaint the strip for it: the
+// strip's glass glyph glows are the costliest paint the shell has.
+bool sameStrip(const UiModel& a, const UiModel& b) {
+  if (a.tabs.size() != b.tabs.size()) return false;
+  for (size_t i = 0; i < a.tabs.size(); i++) {
+    const TabModel& x = a.tabs[i];
+    const TabModel& y = b.tabs[i];
+    if (x.id != y.id || x.name != y.name || x.active != y.active || x.renaming != y.renaming) return false;
+  }
+  return a.tabFull == b.tabFull && a.sleep == b.sleep && a.zoomBadge == b.zoomBadge && a.window.uiScale == b.window.uiScale &&
+         a.window.tabStripH == b.window.tabStripH && a.tokens == b.tokens;
+}
 }  // namespace
 
 Ui& Ui::instance() { static Ui u; return u; }
@@ -45,6 +60,7 @@ void Ui::hit(bool strip, D2D1_RECT_F r, const std::string& target) {
 void Ui::setModel(const UiModel& m) {
   UiModel old = std::move(m_);
   m_ = m;
+  bool hadModel = haveModel_;
   haveModel_ = true;
   t_ = Tokens::fromModel(m_.tokens);
   chords_.set(m_.chords);
@@ -58,7 +74,10 @@ void Ui::setModel(const UiModel& m) {
   }
   doneSince_ = std::move(done);
   waitingSince_ = std::move(waiting);
+  // The rename field draws in the strip; syncEdits can open, close or blur it.
+  bool renameOpen = rename_.isOpen(), renameFocused = rename_.focused();
   syncEdits(old);
+  stripChanged_ = !hadModel || !sameStrip(old, m_) || rename_.isOpen() != renameOpen || rename_.focused() != renameFocused;
   layout();
   updateAnimTimer();
 }

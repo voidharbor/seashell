@@ -617,11 +617,12 @@ int App::main(HINSTANCE hinst) {
     Ui::instance().setModel(m);
     QueryPerformanceCounter(&l1);
     if (m.window.tabStripH > 0 && m.window.tabStripH != oldStrip) Window::instance().onStripHeightChanged();
-    Window::instance().invalidateStrip();
+    bool strip = Ui::instance().stripChanged();
+    if (strip) Window::instance().invalidateStrip();   // a divider move leaves the strip alone
     Window::instance().invalidateBody();
     QueryPerformanceCounter(&a1);
     Driver& d = Driver::instance();
-    d.noteModelInvalidated(true);
+    d.noteModelInvalidated(strip);
     d.noteModelPath(Driver::ticksMs(lineQueueTicks_), Driver::ticksMs(wire_.parseTicks), Driver::ticksMs(wire_.buildTicks),
                     Driver::ticksMs(l1.QuadPart - l0.QuadPart), Driver::ticksMs(a1.QuadPart - a0.QuadPart));
     d.noteModel(m.seq);   // applied: a driver drag step waiting for it stops its clock here

@@ -21,6 +21,7 @@ class Ui {
 public:
   static Ui& instance();
   void setModel(const UiModel&);                 // relayout of chrome rects from the model's DIP rects
+  bool stripChanged() const { return stripChanged_; }   // the last setModel changed what the strip draws (App repaints it only then)
   void relayout();                               // the window or the DPI changed: hit rects again
   void drawBackground(ID2D1RenderTarget* rt);    // the body's chrome color, under the grids
   void drawStrip(ID2D1RenderTarget* rt);         // tabs, +, web, sleep, settings, zoom badge; transparent where glass shows
@@ -85,6 +86,7 @@ private:
 
   UiModel m_;
   bool haveModel_ = false;
+  bool stripChanged_ = true;
   Tokens t_;
   ChordTable chords_;
   bool registering_ = false;
