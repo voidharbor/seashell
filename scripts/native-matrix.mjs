@@ -164,7 +164,7 @@ async function main() {
   for (const p of [README, SPACED, JSONL]) if (!existsSync(p)) throw new Error(`missing ${p}`)
   rmSync(UD_LINUX, { recursive: true, force: true })
   mkdirSync(UD_LINUX, { recursive: true })
-  writeBounds(UD_LINUX)
+  writeBounds(UD_LINUX, { x: 1028, y: -979 })   // the second display, as the inventory
   const pid = launchShell(NAME)
   console.log(`launched scratch ${NAME} (pid ${pid})`)
   let failed = 0

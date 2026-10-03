@@ -1,20 +1,27 @@
 #!/usr/bin/env node
 // The Phase 1 gates (plan Task 18 steps 1 to 6), plus the Phase 2 relay line
-// (Task 1), against a running scratch native shell, driven through its
-// loopback test driver. Prints one line per gate and writes the numbers as
+// (Task 1) and the Phase 2 gate's matrix, inventory and W10 lines (Task 20),
+// against a running scratch native shell, driven through its loopback test
+// driver. Prints one line per gate and writes the numbers as
 // JSON. Runs under WSL's node so it can read the core's /proc entry and the
 // pid files directly.
 //
 // Usage (from WSL, or from scripts/win/run-native-gates.ps1 through wsl.exe):
 //   node scripts/native-gates.mjs <userDataWin> --shell-pid <pid>
-//        [--gates env,throughput,latency,relay,nesting,control,restore] [--out <C:\...json>]
+//        [--gates env,throughput,latency,relay,nesting,control,restore,matrix,inventory] [--out <C:\...json>]
 //
 // env, throughput, latency, relay, control and nesting run against the shell whose
 // userData is given. restore seeds and launches its own scratch (two launches)
 // and nesting launches a second shell from inside a pane; both are quit through
-// their own driver and only ever stopped by pid, never by image name.
-import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+// their own driver and only ever stopped by pid, never by image name. matrix
+// and inventory (Phase 2 Task 20) run scripts/native-matrix.mjs and
+// scripts/native-inventory.mjs from the worktree, each with its own scratch,
+// and print one summary line. w10a and w10b (not in the default list, run on
+// purpose with Edge closed and no other release shell up) run
+// scripts/win/run-native-w10.ps1 -Variant a or b; with Edge open they print
+// "not measured, Edge was open" and launch nothing.
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,6 +37,17 @@ const PIDS = `${HOME}/.cache/seashell-win/pids`
 const REGISTRY = `${HOME}/.claude/session-registry`
 const SEND_TO_PANE = `${HOME}/.claude/bin/send-to-pane.py`
 const MAKE_SESSION = join(ROOT, 'scripts', 'bakeoff', 'make-session.mjs')
+// The worktree the C:\ copy is synced from (scripts/win/sync-tree.sh). The
+// matrix and the inventory run from there: the matrix's printed paths are the
+// worktree's, and the inventory writes its status doc next to the spec.
+const WORKTREE = (() => {
+  const w = process.env.SEASHELL_WORKTREE || `${HOME}/seashell-wt/redesign`
+  return existsSync(join(w, 'scripts', 'native-matrix.mjs')) ? w : ROOT
+})()
+const STATUS_DOC = join(WORKTREE, 'docs', 'superpowers', 'specs', '2026-10-02-seashell-inventory-status.md')
+// The W10 bar (redesign spec section 2) and Phase 1's figure (Task 18).
+const W10_BAR_MB = 200
+const W10_PHASE1_MB = 110.8
 // Spec 4.7: the shell's own budget is 70 MB working set; the throughput gate
 // allows the budget plus 40 MB at the peak of the flood.
 const SHELL_BUDGET_MB = 70
@@ -54,7 +72,7 @@ const opt = (name, d) => {
   return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : d
 }
 const shellPid = Number(opt('--shell-pid', '0'))
-const gates = opt('--gates', 'env,throughput,latency,relay,nesting,control,restore').split(',').map((s) => s.trim()).filter(Boolean)
+const gates = opt('--gates', 'env,throughput,latency,relay,nesting,control,restore,matrix,inventory').split(',').map((s) => s.trim()).filter(Boolean)
 const outPath = opt('--out', '')
 
 const toLocal = (p) => {
@@ -445,19 +463,66 @@ async function gateRelay(ud) {
 }
 
 // Step 4: the W10 session restored, quit, and restored again from the quit
-// snapshot, on this gate's own scratch.
+// snapshot, on this gate's own scratch (on the second display). The seeded
+// session also holds a file and a web pane in tab 1 (make-session.mjs
+// --previews; plan Task 20 step 1.3): both launches must bring them back as
+// the placeholder pane (kind file and web in the model, no pty, the shell's
+// placeholder view, whose copy is "Previews are not in this build"), and on
+// the relaunch pane.closeAll (the menu's Close All Panes) must remove them.
+const PLACEHOLDER_COPY = 'Previews are not in this build'
+
+// The placeholder's copy as the release shell carries it (a UTF-16 literal in
+// panes.cpp); a screenshot cannot be read back, so the binary is.
+function placeholderCopyInShell() {
+  return readFileSync(`${RELEASE_LINUX}/SeaShell.exe`).includes(Buffer.from(PLACEHOLDER_COPY, 'utf16le'))
+}
+
+// The menu path of the item labelled `label` in the driver's `menu` reply.
+function menuPath(items, label) {
+  for (const it of items || []) {
+    if (it.label === label) return it.path
+    const sub = menuPath(it.submenu, label)
+    if (sub) return sub
+  }
+  return null
+}
+
 async function gateRestore() {
   const name = 'gates-restore'
   const ud = `${SCRATCH_WIN}\\${name}`
   const udLinux = toLocal(ud)
   rmSync(udLinux, { recursive: true, force: true })
   mkdirSync(udLinux, { recursive: true })
-  execFileSync('/usr/bin/node', [MAKE_SESSION, udLinux, HOME], { encoding: 'utf8' })
-  writeBounds(udLinux)
+  execFileSync('/usr/bin/node', [MAKE_SESSION, udLinux, HOME, '--previews'], { encoding: 'utf8' })
+  writeBounds(udLinux, { x: 1028, y: -979 })
+  const seeded = JSON.parse(readFileSync(`${udLinux}/last-session.json`, 'utf8'))
+  const seededPreviews = Object.values(seeded.tabs[0].panes).filter((p) => p.kind !== 'term')
+  const wantPreview = { file: seededPreviews.find((p) => p.kind === 'file'), web: seededPreviews.find((p) => p.kind === 'web') }
+  if (!wantPreview.file || !wantPreview.web) throw new Error('make-session --previews seeded no file and web pane in tab 1')
+  if (!placeholderCopyInShell()) throw new Error(`${RELEASE_WIN}\\SeaShell.exe does not carry "${PLACEHOLDER_COPY}"`)
   const savedAt = () => JSON.parse(readFileSync(`${udLinux}/last-session.json`, 'utf8')).savedAt
   const seededAt = savedAt()
   const prompts = []
-  const restoreOnce = async (which) => {
+  // A preview pane in the model: kind file or web, live, its saved path or
+  // URL as the tooltip, no pty (no pid file, while the terminals have one),
+  // and the shell's placeholder view (pane:<id>:view) in place of a grid.
+  const checkPreview = async (which, pid, p) => {
+    const want = wantPreview[p.kind]
+    const where = p.kind === 'file' ? want.filePath : want.url
+    if (p.tooltip !== where) throw new Error(`${which}: the ${p.kind} pane's tooltip is ${JSON.stringify(p.tooltip)}, not ${where}`)
+    if (p.status !== 'live') throw new Error(`${which}: the ${p.kind} pane is ${p.status}`)
+    if (existsSync(`${PIDS}/${pid}/pane-${p.id}.pid`)) throw new Error(`${which}: the ${p.kind} pane ${p.id} has a pty pid file`)
+    let view = null
+    const end = now() + 10000
+    while (!view && now() < end) {
+      const r = await drive(ud, { cmd: 'rect', target: `pane:${p.id}:view` })
+      if (r.ok && r.w > 0 && r.h > 0) view = r
+      else await sleep(200)
+    }
+    if (!view) throw new Error(`${which}: the ${p.kind} pane ${p.id} has no placeholder view (pane:${p.id}:view)`)
+    if ((await drive(ud, { cmd: 'rect', target: `pane:${p.id}:grid` })).ok) throw new Error(`${which}: the ${p.kind} pane ${p.id} has a grid`)
+  }
+  const restoreOnce = async (which, closeAll) => {
     const pid = launchShell(name)
     let err = null
     let out = null
@@ -465,49 +530,76 @@ async function gateRestore() {
       if (!(await waitFile(`${udLinux}/test.json`, 30000))) throw new Error(`${which}: no test.json in 30 s`)
       const card = await must(ud, { cmd: 'wait', path: '/restore/tabs', timeoutMs: 90000 }, `${which}: the restore card`)
       const m0 = await model(ud)
-      if (!(m0.restore && m0.restore.tabs === 9 && m0.restore.panes === 10)) {
-        throw new Error(`${which}: the restore card reads ${JSON.stringify(m0.restore)}, not 9 tabs, 10 panes`)
+      if (!(m0.restore && m0.restore.tabs === 9 && m0.restore.panes === 12)) {
+        throw new Error(`${which}: the restore card reads ${JSON.stringify(m0.restore)}, not 9 tabs, 12 panes (10 terminals, a file and a web pane)`)
       }
       await must(ud, { cmd: 'click', target: 'restore:yes' }, 'restore:yes')
       await must(ud, { cmd: 'wait', path: '/tabs/8/id', timeoutMs: 60000 }, `${which}: nine tabs`)
       const tabs = (await model(ud)).tabs
       if (tabs.length !== 9) throw new Error(`${which}: ${tabs.length} tabs, not 9`)
       let count = 0
+      const previews = []
       for (let i = 0; i < tabs.length; i++) {
         await must(ud, { cmd: 'click', target: `tab:${tabs[i].id}` }, 'tab click')
         await must(ud, { cmd: 'wait', path: `/tabs/${i}/active`, equals: true, timeoutMs: 10000 }, `${which}: tab ${i + 1} active`)
-        const want = i === 0 ? 2 : 1
+        const want = i === 0 ? 4 : 1
         let panes = []
         const end = now() + 30000
         do {
           panes = (await model(ud)).panes
           if (panes.length < want) await sleep(200)
         } while (panes.length < want && now() < end)
+        if (panes.length !== want) throw new Error(`${which}: tab ${i + 1} holds ${panes.length} panes, not ${want}`)
         for (const p of panes) {
+          if (p.kind !== 'term') {
+            if (i !== 0) throw new Error(`${which}: a ${p.kind} pane in tab ${i + 1}`)
+            await checkPreview(which, pid, p)
+            previews.push(p.kind)
+            continue
+          }
           await waitText(ud, p.id, '%', 90000)
+          if (!existsSync(`${PIDS}/${pid}/pane-${p.id}.pid`)) throw new Error(`${which}: the terminal ${p.id} has no pid file, so the no-pty check proves nothing`)
           count++
         }
       }
+      if (previews.sort().join(',') !== 'file,web') throw new Error(`${which}: tab 1 restored previews [${previews.join(',')}], not a file and a web pane`)
       await must(ud, { cmd: 'click', target: `tab:${tabs[0].id}` }, 'tab click')
+      await must(ud, { cmd: 'wait', path: '/tabs/0/active', equals: true, timeoutMs: 10000 }, `${which}: tab 1 active`)
       if (count !== 10) throw new Error(`${which}: ${count} prompts, not 10`)
       prompts.push(count)
-      out = { card: card.value, tabs: m0.restore.tabs, panes: m0.restore.panes, prompts: count }
+      let closed = null
+      if (closeAll) {
+        const path = menuPath((await must(ud, { cmd: 'menu' }, 'menu')).items, 'Close All Panes')
+        if (!path) throw new Error(`${which}: no Close All Panes in the menu`)
+        await must(ud, { cmd: 'menuPick', path }, 'menuPick Close All Panes')
+        let m = null
+        const end = now() + 10000
+        do {
+          m = await model(ud)
+          if (m.panes.some((p) => p.kind !== 'term')) await sleep(200)
+        } while (m.panes.some((p) => p.kind !== 'term') && now() < end)
+        const kinds = m.panes.map((p) => p.kind)
+        if (kinds.length !== 2 || kinds.some((k) => k !== 'term')) throw new Error(`${which}: after pane.closeAll tab 1 holds [${kinds.join(',')}], not two terminals`)
+        closed = path
+      }
+      out = { card: card.value, tabs: m0.restore.tabs, panes: m0.restore.panes, prompts: count, previews, closeAllPath: closed }
     } catch (e) {
       err = e
     }
     const how = await quitShell(ud, pid, name)
+    if (how === 'quit' && !pidAlive(pid)) rmSync(`${PIDS}/${pid}`, { recursive: true, force: true })
     if (err) throw new Error(`${err.message} (shell ${how})`)
     if (how !== 'quit') throw new Error(`${which}: ${how}`)
     return out
   }
-  const first = await restoreOnce('first launch')
+  const first = await restoreOnce('first launch', false)
   // The quit drain must have written its own snapshot; otherwise the relaunch
   // would restore the seeded file and prove nothing.
   const quitAt = savedAt()
   if (!(quitAt > seededAt)) throw new Error(`last-session.json was not rewritten by the quit (savedAt ${quitAt}, seeded ${seededAt})`)
-  const second = await restoreOnce('relaunch')
+  const second = await restoreOnce('relaunch', true)
   return {
-    line: `restore: ok (card 9 tabs, 10 panes on both launches; ${first.prompts} and ${second.prompts} prompts; the quit snapshot was rewritten at ${quitAt}; quit through the driver both times)`,
+    line: `restore: ok (card 9 tabs, 12 panes on both launches; ${first.prompts} and ${second.prompts} prompts; the file and web panes came back both times as placeholders (kind file and web, live, no pty, the shell's placeholder view, "${PLACEHOLDER_COPY}" in SeaShell.exe); pane.closeAll (menu ${JSON.stringify(second.closeAllPath)}) removed both and kept the 2 terminals; the quit snapshot was rewritten at ${quitAt}; quit through the driver both times)`,
     ok: true,
     values: { first, second, seededAt, quitAt },
   }
@@ -697,12 +789,114 @@ async function gateNesting(ud) {
   }
 }
 
+// ------------------------------------------------------- Phase 2 (Task 20)
+
+// Runs `node scripts/<script>` from the worktree, its stderr (progress) passed
+// through and its stdout returned as lines. A run past `timeoutMs` is ended and
+// its scratch is asked to quit through its own driver.
+function runScript(script, scratch, timeoutMs) {
+  const t0 = now()
+  const r = spawnSync(process.execPath, [join('scripts', script)], {
+    cwd: WORKTREE, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'],
+  })
+  const lines = (r.stdout || '').split('\n').map((l) => l.trimEnd()).filter(Boolean)
+  return { code: r.status, signal: r.signal, timedOut: r.error?.code === 'ETIMEDOUT', lines, t0, scratch }
+}
+
+async function afterTimeout(r) {
+  if (!r.timedOut) return ''
+  try {
+    await drive(`${SCRATCH_WIN}\\${r.scratch}`, { cmd: 'quit' })
+    return `; timed out, scratch ${r.scratch} asked to quit`
+  } catch (e) {
+    return `; timed out, scratch ${r.scratch} quit failed (${e.message})`
+  }
+}
+
+// Task 20 step 1.4: the path matrix (Task 7b), four rows ok.
+async function gateMatrix() {
+  const r = runScript('native-matrix.mjs', 'g7b', 15 * 60000)
+  const rowLines = r.lines.filter((l) => /^matrix: \d+ /.test(l))
+  const okRows = rowLines.filter((l) => /^matrix: \d+ ok\b/.test(l)).length
+  const scratchLine = r.lines.find((l) => l.startsWith('scratch g7b:')) || 'scratch g7b: no quit line'
+  const values = { exit: r.code, signal: r.signal, lines: r.lines }
+  if (r.code === 0 && okRows === 4 && rowLines.length === 4) return { line: `matrix: ok (${okRows} rows ok)`, ok: true, values }
+  const first = r.lines.find((l) => /^matrix: (\d+ )?fail\b/.test(l)) ||
+    (scratchLine !== 'scratch g7b: quit' ? scratchLine : `exit ${r.code ?? r.signal}, ${okRows} of 4 rows ok`)
+  return { line: `matrix: fail ${first.replace(/^matrix: /, '')}${await afterTimeout(r)}`, ok: false, values }
+}
+
+// Task 20 step 1.5: the inventory walk (Task 18), no fail, the status doc written.
+async function gateInventory() {
+  const r = runScript('native-inventory.mjs', 'j18', 60 * 60000)
+  const t = r.lines.map((l) => /^totals: (\d+) ok live, (\d+) ok unit-only, (\d+) not driven, (\d+) skipped, (\d+) deferred, (\d+) fail \((\d+) rows\)$/.exec(l)).find(Boolean)
+  const failRows = r.lines.filter((l) => /^[A-Z]\d+ fail\b/.test(l))
+  const scratchLine = r.lines.find((l) => l.startsWith('scratch j18:')) || 'scratch j18: no quit line'
+  const docWritten = existsSync(STATUS_DOC) && statSync(STATUS_DOC).mtimeMs >= r.t0
+  const values = { exit: r.code, signal: r.signal, totals: t ? t.slice(1).map(Number) : null, failRows, statusDoc: STATUS_DOC, docWritten }
+  if (r.code === 0 && t && t[6] === '0' && docWritten) {
+    return {
+      line: `inventory: ok (${t[1]} ok live, ${t[2]} ok unit-only, ${t[3]} not driven, ${t[4]} skipped, ${t[5]} deferred, 0 fail; status doc written)`,
+      ok: true,
+      values,
+    }
+  }
+  const why = failRows.length
+    ? failRows.map((l) => (l.length > 200 ? l.slice(0, 197) + '...' : l)).join(' | ')
+    : !t ? `no totals line (exit ${r.code ?? r.signal})`
+      : !docWritten ? `the status doc ${STATUS_DOC} was not written`
+        : scratchLine
+  return { line: `inventory: fail ${why}${await afterTimeout(r)}`, ok: false, values }
+}
+
+// Task 20 step 1.6: W10 (a) as Phase 1 measured it, or (b) with the sidebar
+// open at home two levels deep and the drawer open on one pane, through
+// run-native-w10.ps1 (five samples after the 60 s idle). measure-ram.ps1
+// refuses while Edge runs; this checks first and then launches nothing, and
+// it never closes Edge.
+async function gateW10(variant) {
+  const g = `w10${variant}`
+  const edge = Number(powershell('@(Get-Process -Name msedge -ErrorAction SilentlyContinue).Count'))
+  if (edge > 0) return { line: `${g}: not measured, Edge was open`, ok: true, measured: false }
+  const others = releaseShellPids()
+  if (others.length) return { line: `${g}: fail a release shell is already running (pid ${others.join(',')}); W10 measures alone`, ok: false }
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+    `Set-Location C:\\; & '${BUILD_WIN}\\scripts\\win\\run-native-w10.ps1' -Variant ${variant}`],
+  { cwd: '/mnt/c', encoding: 'utf8', timeout: 20 * 60000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+  const lines = (r.stdout || '').split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean)
+  for (const l of lines) console.error(`${g}: ${l}`)
+  const errTail = (r.stderr || '').split(/\r?\n/).filter((l) => l.trim()).slice(0, 2).join(' | ')
+  if (lines.includes('measure: not measured, Edge was open')) return { line: `${g}: not measured, Edge was open`, ok: true, measured: false, values: { lines } }
+  let row = null
+  for (const l of lines) {
+    if (!l.startsWith('{')) continue
+    try {
+      const j = JSON.parse(l)
+      if (j.label === `P2-w10-${variant}`) row = j
+    } catch {}
+  }
+  const quitLine = lines.find((l) => l.startsWith('quit:')) || 'quit: no line'
+  if (!row) {
+    const why = lines.find((l) => l.startsWith('measure: failed')) || errTail || `exit ${r.status ?? r.signal}`
+    return { line: `${g}: fail ${why} (${quitLine})`, ok: false, values: { lines, stderr: r.stderr } }
+  }
+  const line = `${g}: ${row.wsMB} MB working set, ${row.processes} processes, ${row.privateMB} MB private, core RSS ${row.coreRssMB} MB (bar ${W10_BAR_MB}; Phase 1 ${W10_PHASE1_MB})`
+  const bad = []
+  if (!(row.wsMB < W10_BAR_MB)) bad.push(`over the ${W10_BAR_MB} MB bar`)
+  if (!quitLine.startsWith('quit: the tree is gone')) bad.push(quitLine)
+  if (r.status !== 0) bad.push(`run-native-w10.ps1 exit ${r.status ?? r.signal}`)
+  return { line: bad.length ? `${line}; ${bad.join('; ')}` : line, ok: bad.length === 0, measured: true, values: { row, lines } }
+}
+
 // ---------------------------------------------------------------------- main
 
 export { BUILD_WIN, RELEASE_WIN, SCRATCH_WIN, PIDS, toLocal, sleep, drive, model, must, focusedPane, run, gridRows, waitText, launchShell, waitFile, quitShell, writeBounds, seedUiState, paneTty, claudeOn, pidAlive }
 
 if (isMain) {
-  const runners = { env: gateEnv, throughput: gateThroughput, latency: gateLatency, relay: gateRelay, restore: gateRestore, control: gateControl, nesting: gateNesting }
+  const runners = {
+    env: gateEnv, throughput: gateThroughput, latency: gateLatency, relay: gateRelay, restore: gateRestore, control: gateControl, nesting: gateNesting,
+    matrix: gateMatrix, inventory: gateInventory, w10a: () => gateW10('a'), w10b: () => gateW10('b'),
+  }
   const results = {}
   let failed = 0
   for (const g of gates) {

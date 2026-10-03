@@ -1,12 +1,29 @@
-# The native shell at W10 (redesign spec section 2). Seeds scratch\w10-native
+# The native shell at W10 (redesign spec section 2). Seeds scratch\<Name>
 # with make-session.mjs (WSL's node), launches release\win-native\SeaShell.exe
 # without SEASHELL_CORE_DIR (so the core is staged), restores through the test
 # driver, waits for 9 tabs, 10 panes and a prompt in every pane's grid, idles
-# 60 s, shoots bakeoff\E-native.png, measures the tree plus the core's RSS,
+# 60 s, shoots bakeoff\<Label>.png, measures the tree plus the core's RSS,
 # then quits through the driver and confirms the tree is gone. Every stop is
 # by pid (stop-tree.ps1), never by image name.
-param([string]$Name = 'w10-native', [string]$Label = 'E-native')
+#
+# The Phase 2 W10 rows (plan Task 20 step 1.6):
+#   -Variant a  W10 as Phase 1 measured it (no sidebar, no drawer): P2-w10-a
+#   -Variant b  the same, plus the sidebar open at home with two directories
+#               under it and one of their children expanded (through the
+#               driver), and the drawer open on tab 1's first pane with its
+#               shell at a prompt; sheets and popovers closed: P2-w10-b
+# Phase 1's own row was -Label E-native. With Edge open nothing is launched
+# (measure-ram.ps1 would refuse anyway); the run prints "measure: not
+# measured, Edge was open" and exits 2. Edge is never closed.
+param([string]$Name = '', [string]$Label = '', [ValidateSet('a', 'b')][string]$Variant = 'a')
 $ErrorActionPreference = 'Stop'
+if (-not $Name) { $Name = if ($Variant -eq 'a') { 'w10-native' } else { 'w10-native-b' } }
+if (-not $Label) { $Label = "P2-w10-$Variant" }
+$homeDir = '/Users/joshwald'
+if (@(Get-Process -Name msedge -ErrorAction SilentlyContinue).Count -gt 0) {
+  Write-Output 'measure: not measured, Edge was open'
+  exit 2
+}
 $root = 'C:\seashell-build\redesign'
 $rel = "$root\release\win-native"
 $exe = "$rel\SeaShell.exe"
@@ -32,13 +49,27 @@ function Drive([hashtable]$Req) {
   return ($reply | ConvertFrom-Json)
 }
 function Model { $m = Drive @{ cmd = 'model' }; if ($m.ok -eq $false) { throw "driver model: $($m.code)" }; return $m }
+# Polls the model until $Test holds for it (10 s by default); the model, or a throw naming $What.
+function Until([string]$What, [scriptblock]$Test, [int]$Seconds = 10) {
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  do {
+    $m = Model
+    if (& $Test $m) { return $m }
+    Start-Sleep -Milliseconds 200
+  } while ((Get-Date) -lt $deadline)
+  throw "variant b: $What in $Seconds s"
+}
+# A directory row of the sidebar that is not hidden, at `depth`, under `parent`.
+function DirRows($m, [int]$Depth, [string]$Parent) {
+  return @($m.sidebar.rows | Where-Object { $_.isDir -and $_.depth -eq $Depth -and -not $_.name.StartsWith('.') -and $_.path.StartsWith("$Parent/") })
+}
 
 $running = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $exe })
 if ($running.Count -gt 0) { throw "$exe is already running (pid $(($running | ForEach-Object ProcessId) -join ',')); stop that scratch first" }
 if (Test-Path $ud) { Remove-Item -Recurse -Force $ud }
 New-Item -ItemType Directory -Force -Path $ud | Out-Null
 $udLinux = '/mnt/c/' + $ud.Substring(3).Replace('\', '/')
-& wsl.exe -d Ubuntu-24.04 -e /usr/bin/node /mnt/c/seashell-build/redesign/scripts/bakeoff/make-session.mjs $udLinux /Users/joshwald
+& wsl.exe -d Ubuntu-24.04 -e /usr/bin/node /mnt/c/seashell-build/redesign/scripts/bakeoff/make-session.mjs $udLinux $homeDir
 if ($LASTEXITCODE -ne 0) { throw "make-session failed ($LASTEXITCODE)" }
 # W10: 1440x900 on the main display, not maximized. The native shell saves
 # physical pixels (PerMonitorV2), so the size is scaled by the system DPI.
@@ -89,9 +120,49 @@ try {
   Write-Output "tabs: $($tabs.Count)"
   Write-Output "panes: $($paneIds.Count)"
   if ($paneIds.Count -ne 10) { throw "$($paneIds.Count) panes, not 10; not measuring a partial workload" }
-  Write-Output 'prompts: 10; idling 60 s (W10)'
+  if ($Variant -eq 'b') {
+    # The sidebar, rooted at home (the panes' cwd).
+    [void](Drive @{ cmd = 'key'; chord = 'Ctrl+Shift+B' })
+    $m = Until 'the sidebar never showed home with its children' { param($x) $x.sidebar.visible -and $x.sidebar.rows.Count -gt 1 -and (DirRows $x 1 $homeDir).Count -ge 2 } 30
+    if ($m.sidebar.rows[0].path -ne $homeDir) { throw "variant b: the sidebar root is $($m.sidebar.rows[0].path), not $homeDir" }
+    $top = @(DirRows $m 1 $homeDir | Select-Object -First 2)
+    # The lower one first, so the upper one's children cannot push its twisty out of view.
+    $expanded = @()
+    foreach ($d in @($top[1], $top[0])) {
+      $c = Drive @{ cmd = 'click'; target = "sidebar:twisty:$($d.path)" }
+      if (-not $c.ok) { throw "variant b: the twisty of $($d.path) ($($c.code))" }
+      $path = $d.path
+      $m = Until "$path never expanded" { param($x) @($x.sidebar.rows | Where-Object { $_.path -eq $path -and $_.expanded }).Count -eq 1 } 30
+      $expanded += $path
+    }
+    # One child directory of theirs, the second level under home.
+    $child = $null
+    foreach ($d in $top) {
+      $kids = @(DirRows $m 2 $d.path)
+      if ($kids.Count -gt 0) { $child = $kids[0]; break }
+    }
+    if (-not $child) { throw "variant b: no directory under $($top[0].path) or $($top[1].path)" }
+    $c = Drive @{ cmd = 'click'; target = "sidebar:twisty:$($child.path)" }
+    if (-not $c.ok) { throw "variant b: the twisty of $($child.path) ($($c.code))" }
+    $path = $child.path
+    $m = Until "$path never expanded" { param($x) @($x.sidebar.rows | Where-Object { $_.path -eq $path -and $_.expanded }).Count -eq 1 } 30
+    $expanded += $path
+    # The drawer on tab 1's focused pane, its shell at a prompt.
+    [void](Drive @{ cmd = 'key'; chord = 'Ctrl+Shift+J' })
+    $m = Until 'the drawer never went live' { param($x) $x.drawer.open -and $x.drawer.status -eq 'live' -and $x.drawer.ptyId } 60
+    $g = Drive @{ cmd = 'waitText'; paneId = $m.drawer.ptyId; contains = '%'; timeoutMs = 60000 }
+    if (-not $g.ok) { throw "variant b: no prompt in the drawer $($m.drawer.ptyId)" }
+    $m = Model
+    if ($m.sheet -or $m.popover) { throw 'variant b: a sheet or popover is open' }
+    Write-Output "variant b: sidebar at $homeDir, $($m.sidebar.rows.Count) rows, expanded $($expanded -join ', '); drawer $($m.drawer.ptyId) at a prompt; no sheet or popover"
+  }
+  Write-Output "prompts: 10; idling 60 s (W10, variant $Variant)"
   Start-Sleep -Seconds 60
   if ($p.HasExited) { throw "the shell exited with code $($p.ExitCode)" }
+  if ($Variant -eq 'b') {
+    $m = Model
+    if (-not $m.sidebar.visible -or -not $m.drawer.open -or $m.sheet -or $m.popover) { throw 'variant b: the sidebar or drawer closed, or a sheet or popover opened, during the idle' }
+  }
 
   $s = Drive @{ cmd = 'shot'; path = $shot }
   Write-Output "shot: $(if ($s.ok) { $shot } else { "failed $($s.code)" })"
