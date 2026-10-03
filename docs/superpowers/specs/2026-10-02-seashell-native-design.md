@@ -54,7 +54,7 @@ Renderer-side state that today lives in localStorage (settings, zoom index, side
 | Process | Code | Owns |
 |---|---|---|
 | `SeaShell.exe`, the shell | C++17, `native/shell/` | the window (class `SeaShellHost`, title `SeaShell`, AppUserModelID `dev.seashell.app`, icon `build/icon.ico`), the DWM glass frame, every terminal grid (VT state, scrollback, selection, find, drawing), all drawing of the view model, keyboard and mouse, the chord table, clipboard, `IFileDialog`, `ShellExecute` for open and reveal, `MessageBox` confirms, the attention ping, saved window bounds, single-instance mutex `Local\SeaShellHost`, the core's lifetime, the loopback test driver |
-| `wsl.exe` plus its two conhost.exe and one wslhost.exe | Windows | the pipe into Ubuntu. Spawned once with piped stdio and `CREATE_NO_WINDOW`. Measured 10/02 at 50.7 MB working set, 8.7 MB private for the five processes |
+| two wsl.exe, two conhost.exe and one wslhost.exe | Windows | the pipe into Ubuntu. `wsl.exe` spawned once with piped stdio and `CREATE_NO_WINDOW`. Measured 10/02 at 50.7 MB working set, 8.7 MB private for the five processes |
 | `node`, the core | Ubuntu, `/usr/bin/node` 24 or newer, bundle `core/index.cjs` | today's `src/main` through the Electron shim on the `wslhost` platform (section 4.4): panes as Linux ptys through node-pty, fs tree and reads with the path guard, watcher pool, metrics sweeps from `ps` and `/proc`, session lookup, state files, the TCP control endpoint, update check, link notes; plus the headless UI controller (section 4.3) |
 
 Nothing else. No renderer process, no Chromium at all (amendment 10/03: web and PDF panes are not built).

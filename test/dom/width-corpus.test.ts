@@ -46,10 +46,10 @@ async function clusterWidths(line: string): Promise<number[]> {
 }
 
 describe('width corpus', () => {
-  it('has 300 distinct lines', () => {
+  it('has 302 distinct lines', () => {
     const lines = corpusLines()
-    expect(lines).toHaveLength(300)
-    expect(new Set(lines).size).toBe(300)
+    expect(lines).toHaveLength(302)
+    expect(new Set(lines).size).toBe(302)
   })
 
   it('width-expected.json matches xterm.js with the graphemes addon', async () => {
@@ -61,7 +61,7 @@ describe('width corpus', () => {
       writeFileSync(EXPECTED, `{\n${body.join(',\n')}\n}\n`)
     }
     const committed = JSON.parse(readFileSync(EXPECTED, 'utf8')) as Record<string, number[]>
-    expect(Object.keys(committed)).toHaveLength(300)
+    expect(Object.keys(committed)).toHaveLength(302)
     expect(committed).toEqual(actual)
   })
 })

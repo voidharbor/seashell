@@ -61,10 +61,13 @@ static bool isSyllableLV(uint32_t cp) { return isSyllable(cp) && (cp - 0xAC00) %
 int seashell_width(uint32_t cp) {
   if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0)) return 0;
   // Box drawing and blocks: EastAsianWidth is A or N, and xterm.js draws both
-  // as one cell (ambiguousCharsAreWide is false).
+  // as one cell (ambiguousCharsAreWide is false). Corpus line 316 holds the
+  // whole range; utf8proc gives every one of them 1 today, so this guards that
+  // line against an ambiguous-wide utf8proc rather than changing a width.
   if (cp >= 0x2500 && cp <= 0x259F) return 1;
   // xterm.js counts U+FE0F as wide (UnicodeGraphemeProvider.charProperties:
-  // "Treat emoji_presentation_selector as WIDE").
+  // "Treat emoji_presentation_selector as WIDE"). Needed by corpus line 179
+  // (U+2764 U+FE0F: two cells, one without this) and by lines 180 to 198.
   if (cp == 0xFE0F) return 2;
   // Rule 5: emoji presentation; xterm.js's Unicode tables mark the
   // pictographs here East Asian Wide, less the narrow list above.
@@ -72,7 +75,8 @@ int seashell_width(uint32_t cp) {
     return inTable(cp, XTERM_NARROW_EMOJI, sizeof(XTERM_NARROW_EMOJI) / sizeof(XTERM_NARROW_EMOJI[0])) ? 1 : 2;
   int w = utf8proc_charwidth((utf8proc_int32_t)cp);
   // xterm.js gives every non-wide codepoint one cell, zero-width ones included,
-  // when they do not join a cluster (charProperties: w < 2 becomes 1).
+  // when they do not join a cluster (charProperties: w < 2 becomes 1). Needed
+  // by corpus line 317 (U+0301 at the start of a line, with nothing to join).
   return w >= 2 ? 2 : 1;
 }
 

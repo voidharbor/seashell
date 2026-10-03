@@ -43,6 +43,8 @@ function write(name, size, text) {
   s += 'a\tb\tc\td\r\n'
   s += '\t\tdeep tab\r\n'
   s += 'tail\b\b\b\b\bfront'
+  // A shape, then DECSCUSR 0: back to the terminal's own (blinking block).
+  s += `${CSI}5 q${CSI}0 q`
   write('02-controls', { cols: 40, rows: 10 }, s)
 }
 
@@ -63,7 +65,9 @@ function write(name, size, text) {
   write('03-cursor-erase', { cols: 40, rows: 10 }, s)
 }
 
-// 04: SGR 16, 256 and truecolor, bold, underline, reverse, reset.
+// 04: SGR 16, 256 and truecolor, bold, underline, reverse, reset; then dim,
+// blink, the underline styles, reverse over colours, bright and default
+// backgrounds, and SGR 22 clearing bold and dim together.
 {
   let s = ''
   for (let i = 30; i < 38; i++) s += `${CSI}${i}mfg${i}${CSI}0m `
@@ -74,7 +78,10 @@ function write(name, size, text) {
   s += `${CSI}0m\r\n`
   s += `${CSI}38;2;255;100;0mtruecolor${CSI}48;2;0;40;80m on blue${CSI}0m\r\n`
   s += `${CSI}1mbold${CSI}22m ${CSI}4munder${CSI}24m ${CSI}7mreverse${CSI}27m ${CSI}3mitalic${CSI}23m ${CSI}9mstrike${CSI}0m\r\n`
-  s += `${CSI}1;4;31mall at once${CSI}mreset`
+  s += `${CSI}1;4;31mall at once${CSI}mreset\r\n`
+  s += `${CSI}2mdim${CSI}22m ${CSI}5mblink${CSI}25m ${CSI}21mdouble${CSI}24m ${CSI}4:3mcurly${CSI}4:0m `
+  s += `${CSI}7;31;42minv${CSI}27m ${CSI}101;30mbright${CSI}39;49m ${CSI}1;2mboth${CSI}22mnone${CSI}0m\r\n`
+  s += `${CSI}38;5;196;48;5;21mcube${CSI}38;5;244;48;5;232mgray${CSI}39mfg${CSI}49mbg`
   write('04-sgr', { cols: 60, rows: 8 }, s)
 }
 
@@ -87,6 +94,7 @@ function write(name, size, text) {
   s += `${CSI}4;1H${CSI}2Linserted A\r\ninserted B`
   s += `${CSI}5;1H${CSI}1M`
   s += `${CSI}r${CSI}10;1Hbottom`
+  s += `${CSI}?1000h${CSI}2 q`
   write('05-scroll-region', { cols: 30, rows: 10 }, s)
 }
 
@@ -105,7 +113,7 @@ function write(name, size, text) {
 // corpus, the shape and visibility to the grid's own state.
 {
   let s = `${CSI}1 qblink block\r\n${CSI}2 qsteady block\r\n${CSI}4 qunderline\r\n${CSI}6 qbar\r\n`
-  s += `${CSI}?25lhidden${CSI}?25h shown${CSI}0 q`
+  s += `${CSI}?25lhidden${CSI}?25h shown${CSI}0 q${CSI}3 q`
   write('07-cursor-shape', { cols: 30, rows: 8 }, s)
 }
 
@@ -136,16 +144,25 @@ function write(name, size, text) {
   s += `before ${OSC}8;;https://example.com/a${ST}link text${OSC}8;;${ST} after\r\n`
   s += `${OSC}8;id=x;https://example.com/b${BEL}second${OSC}8;;${BEL} plain\r\n`
   s += `${OSC}2;second title${ST}done`
+  // OSC 1 names the icon only; the title stays.
+  s += `${OSC}1;icon only${BEL}`
+  s += `${CSI}?1003h${CSI}?25l`
   write('10-osc', { cols: 40, rows: 6 }, s)
 }
 
-// 11: bracketed paste and mouse modes set, a mode query, then text.
+// 11: bracketed paste and mouse modes set, a mode query, then text; it ends
+// in the alt screen with application cursor keys, bracketed paste, drag
+// tracking, autowrap off (the long line overwrites its last column), a scroll
+// region with origin mode, and a steady bar.
 {
   let s = `${CSI}?2004h${CSI}?1000h${CSI}?1006h`
   s += `${CSI}?2004$p`
   s += 'modes on\r\n'
   s += `${CSI}?1000l${CSI}?1006l${CSI}?2004l`
   s += 'modes off'
+  s += `${CSI}?1049h${CSI}?1h${CSI}?2004h${CSI}?1002h${CSI}?7l`
+  s += `${CSI}H${'n'.repeat(35)}END`
+  s += `${CSI}2;5r${CSI}?6h${CSI}2;3Hin region${CSI}6 q`
   write('11-modes', { cols: 30, rows: 6 }, s)
 }
 

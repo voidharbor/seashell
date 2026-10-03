@@ -9,4 +9,4 @@ line 7
 line 8
 line 9[3;7r[7;1H
 scrolled in region[4;1H[2Linserted A
-inserted B[5;1H[1M[r[10;1Hbottom
+inserted B[5;1H[1M[r[10;1Hbottom[?1000h[2 q
