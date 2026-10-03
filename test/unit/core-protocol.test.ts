@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { CORE_PUSH_TO_SHELL, decodeEnvelope, encodeEnvelope, SHELL_CHANNELS } from '../../src/core/protocol.js'
 
@@ -21,5 +22,14 @@ describe('core envelope', () => {
     expect(SHELL_CHANNELS).toContain('clip:write')
     expect(SHELL_CHANNELS).not.toContain('pty:spawn')
     expect(CORE_PUSH_TO_SHELL).toEqual(['pty:data', 'ui:model', 'grid:cmd'])
+  })
+  it('matches the C++ shell: SHELL_CHANNELS in wire.cpp is the same set as the TypeScript list', () => {
+    const src = readFileSync(new URL('../../native/shell/src/wire.cpp', import.meta.url), 'utf8')
+    const start = src.indexOf('SHELL_CHANNELS = {')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const body = src.slice(start + 'SHELL_CHANNELS = {'.length, src.indexOf('}', start))
+    const cpp = [...body.matchAll(/"([^"]*)"/g)].map((m) => m[1])
+    expect(new Set(cpp).size).toBe(cpp.length)
+    expect([...cpp].sort()).toEqual([...SHELL_CHANNELS].sort())
   })
 })
