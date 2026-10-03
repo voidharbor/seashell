@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #pragma comment(lib, "bcrypt.lib")
@@ -289,6 +290,7 @@ json Driver::handle(const json& req) {
     }
   }
   if (cmd == "drag") return drag(req);
+  if (cmd == "pingCore") return pingCore(req);
   if (cmd == "waitText") {
     std::string want = strArg(req, "contains");
     json gridReq = { { "cmd", "grid" }, { "paneId", strArg(req, "paneId") } };
@@ -310,11 +312,12 @@ json Driver::handle(const json& req) {
   return onUi(req);
 }
 
-json Driver::onUi(const json& req) {
+json Driver::onUi(const json& req, std::function<json()> run) {
   HWND h = Window::instance().hwnd();
   if (!h || !IsWindow(h)) return fail("ENOWINDOW");
   auto* c = new DriverCall();
   c->req = req;
+  c->run = std::move(run);
   c->done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   c->refs = 2;   // this thread and the UI thread
   if (!c->done || !PostMessageW(h, Window::WM_APP_DRIVER, 0, (LPARAM)c)) {
@@ -331,7 +334,7 @@ json Driver::onUi(const json& req) {
 
 void Driver::onCall(DriverCall* c) {
   try {
-    c->reply = execute(c->req);
+    c->reply = c->run ? c->run() : execute(c->req);
   } catch (const std::exception& ex) {
     App::log("error: driver %s failed: %s", strArg(c->req, "cmd").c_str(), ex.what());
     c->reply = { { "ok", false }, { "code", "EFAILED" }, { "error", ex.what() } };
@@ -546,6 +549,59 @@ json Driver::drag(const json& req) {
   double ms = (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart;
   return { { "ok", up.value("ok", false) }, { "ms", std::round(ms * 10) / 10 }, { "steps", steps }, { "models", models },
            { "timeouts", timeouts }, { "target", strArg(req, "target") }, { "x", down["x"] }, { "y", down["y"] } };
+}
+
+// pingCore {n, timeoutMs}: n core:ping invokes, one after another (the next
+// leaves once the previous reply arrived). The core answers core:ping on its
+// stdin line handler without touching the controller, so each round trip is
+// the wire alone: this thread posts a UI step that issues Wire::invoke, the
+// writer thread, wsl.exe's stdio relay both ways, the reader thread and the
+// WM_APP_CORE_LINE that runs the reply's callback on the UI thread. Each is
+// timed with QueryPerformanceCounter from just before the post to the
+// callback. Replies {ok, n, medianMs, p95Ms, maxMs}.
+json Driver::pingCore(const json& req) {
+  auto num = [&](const char* k, double d) { return req.contains(k) && req[k].is_number() ? req[k].get<double>() : d; };
+  int n = std::max(1, std::min(1000, (int)num("n", 200)));
+  DWORD timeoutMs = (DWORD)std::max(1, (int)num("timeoutMs", 2000));
+  if (!App::instance().coreAlive()) return fail("ENOCORE");
+  // Shared with the reply's callback, which may still run after this thread
+  // gave up on a ping (a late reply, or Wire::reset on a core exit).
+  struct Ping {
+    HANDLE done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    LONGLONG at = 0;   // QPC ticks when the callback ran; written before done is set
+    json reply;
+    ~Ping() { if (done) CloseHandle(done); }
+  };
+  LARGE_INTEGER freq;
+  QueryPerformanceFrequency(&freq);
+  std::vector<double> ms;
+  ms.reserve((size_t)n);
+  for (int i = 0; i < n; i++) {
+    auto ping = std::make_shared<Ping>();
+    if (!ping->done) return fail("EEVENT");
+    LARGE_INTEGER t0;
+    QueryPerformanceCounter(&t0);
+    double t = t0.QuadPart * 1000.0 / freq.QuadPart;
+    json issued = onUi({ { "cmd", "pingCore" } }, [ping, t] {
+      App::instance().wire().invoke("core:ping", { { "t", t } }, [ping](const json& p) {
+        LARGE_INTEGER t1;
+        QueryPerformanceCounter(&t1);
+        ping->at = t1.QuadPart;
+        ping->reply = p;
+        SetEvent(ping->done);
+      });
+      return json{ { "ok", true } };
+    });
+    if (!issued.value("ok", false)) return { { "ok", false }, { "code", issued.value("code", "EPOST") }, { "at", i } };
+    if (WaitForSingleObject(ping->done, timeoutMs) != WAIT_OBJECT_0) return { { "ok", false }, { "code", "ETIMEOUT" }, { "at", i } };
+    // An older core without the early route answers through the shim (ENOHANDLER).
+    const json& r = ping->reply;
+    if (!r.is_object() || !r.contains("t") || r["t"] != json(t)) return { { "ok", false }, { "code", "EPINGREPLY" }, { "at", i }, { "reply", r } };
+    ms.push_back((ping->at - t0.QuadPart) * 1000.0 / freq.QuadPart);
+  }
+  auto r3 = [](double v) { return std::round(v * 1000) / 1000; };
+  return { { "ok", true }, { "n", n }, { "medianMs", r3(percentile(ms, 0.5)) }, { "p95Ms", r3(percentile(ms, 0.95)) },
+           { "maxMs", r3(*std::max_element(ms.begin(), ms.end())) } };
 }
 
 // One part of a drag, on the UI thread: the press at the target's centre, a

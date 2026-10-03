@@ -7,7 +7,7 @@
 # their drivers. Every stop is by pid (stop-tree.ps1), never by image name.
 # Exit code: the mjs's (0 when every gate passed or was recorded as not
 # verified, 1 when one failed).
-param([string]$Name = 'gates', [string]$Gates = 'env,throughput,latency,nesting,control,restore')
+param([string]$Name = 'gates', [string]$Gates = 'env,throughput,latency,relay,nesting,control,restore')
 $ErrorActionPreference = 'Stop'
 $root = 'C:\seashell-build\redesign'
 Set-Location $root

@@ -3,13 +3,15 @@
 // {port, token}. Each request is one JSON line {token, cmd, ...}, each reply one
 // JSON line. Commands run on the UI thread: the connection thread posts
 // WM_APP_DRIVER with a DriverCall* and waits on its event. `wait` polls the
-// model from the connection thread; `quit` replies, then posts WM_CLOSE.
+// model from the connection thread; `quit` replies, then posts WM_CLOSE;
+// `pingCore` times core:ping round trips from the connection thread.
 #pragma once
 #include <winsock2.h>
 #include <windows.h>
 #include <nlohmann/json.hpp>
 #include <atomic>
 #include <deque>
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -18,6 +20,7 @@
 struct DriverCall {
   nlohmann::json req;
   nlohmann::json reply;
+  std::function<nlohmann::json()> run;   // when set, the UI thread runs this instead of execute(req) (pingCore's invoke)
   HANDLE done = nullptr;   // set by the UI thread once reply is filled
   std::atomic<int> refs{ 1 };
   void release() { if (--refs == 0) { if (done) CloseHandle(done); delete this; } }
@@ -42,13 +45,14 @@ private:
   void acceptLoop();
   void serve(SOCKET s);
   nlohmann::json handle(const nlohmann::json& req);          // connection thread
-  nlohmann::json onUi(const nlohmann::json& req);            // posts to the UI thread and waits
+  nlohmann::json onUi(const nlohmann::json& req, std::function<nlohmann::json()> run = nullptr);   // posts to the UI thread and waits
   nlohmann::json execute(const nlohmann::json& req);         // UI thread
   nlohmann::json key(const std::string& chord);
   nlohmann::json text(const std::string& s);
   nlohmann::json click(const nlohmann::json& req, const char* type);
   nlohmann::json drag(const nlohmann::json& req);            // connection thread: press, waited moves, release
   nlohmann::json dragStep(const nlohmann::json& req);        // UI thread: one part of a drag
+  nlohmann::json pingCore(const nlohmann::json& req);        // connection thread: n sequential core:ping invokes, timed
   nlohmann::json stats();
   nlohmann::json grid(const std::string& paneId);
   nlohmann::json coreKill();

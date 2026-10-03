@@ -8,6 +8,7 @@ import { startStdio } from './stdio-bridge.js'
 import { Controller } from './controller/controller.js'
 import { chordTableFromMenu } from './controller/chords.js'
 import { encodeEnvelope } from './protocol.js'
+import { answerEarly } from './index-routes.js'
 import { gatedWriter } from '../main/pty/flow.js'
 
 const hostPid = Number(process.env.SEASHELL_HOST_PID) || process.ppid
@@ -46,7 +47,9 @@ const shim = createShim({
 })
 // Must be set before any src/main module evaluates: electron-shim-default.ts reads it then.
 ;(globalThis as Record<string, unknown>).__seashellCore = shim
-startStdio(shim)
+// The early routes (core:ping) are answered on the stdin line handler itself,
+// before the controller routes and before the shim's dispatch.
+startStdio({ dispatch: (env) => (answerEarly(env, write) ? Promise.resolve() : shim.dispatch(env)) })
 
 /**
  * The shell owns the core: once its pipe closes (the shell exited or crashed)

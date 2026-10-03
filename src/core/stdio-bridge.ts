@@ -1,8 +1,8 @@
-/** Reads envelope lines from the shell (stdin) and hands each one to the shim. */
+/** Reads envelope lines from the shell (stdin) and hands each one to the shim (or index.ts's early routes in front of it). */
 import type { Shim } from './electron-shim.js'
 import { decodeEnvelope, type Envelope } from './protocol.js'
 
-export function startStdio(shim: Shim, input: NodeJS.ReadableStream = process.stdin): void {
+export function startStdio(shim: Pick<Shim, 'dispatch'>, input: NodeJS.ReadableStream = process.stdin): void {
   let buf = ''
   input.setEncoding?.('utf8')
   input.on('data', (chunk: string | Buffer) => {

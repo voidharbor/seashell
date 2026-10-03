@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// The Phase 1 gates (plan Task 18 steps 1 to 6) against a running scratch
-// native shell, driven through its loopback test driver. Prints one line per
-// gate and writes the numbers as JSON. Runs under WSL's node so it can read
-// the core's /proc entry and the pid files directly.
+// The Phase 1 gates (plan Task 18 steps 1 to 6), plus the Phase 2 relay line
+// (Task 1), against a running scratch native shell, driven through its
+// loopback test driver. Prints one line per gate and writes the numbers as
+// JSON. Runs under WSL's node so it can read the core's /proc entry and the
+// pid files directly.
 //
 // Usage (from WSL, or from scripts/win/run-native-gates.ps1 through wsl.exe):
 //   node scripts/native-gates.mjs <userDataWin> --shell-pid <pid>
-//        [--gates env,throughput,latency,nesting,control,restore] [--out <C:\...json>]
+//        [--gates env,throughput,latency,relay,nesting,control,restore] [--out <C:\...json>]
 //
-// env, throughput, latency, control and nesting run against the shell whose
+// env, throughput, latency, relay, control and nesting run against the shell whose
 // userData is given. restore seeds and launches its own scratch (two launches)
 // and nesting launches a second shell from inside a pane; both are quit through
 // their own driver and only ever stopped by pid, never by image name.
@@ -44,7 +45,7 @@ const opt = (name, d) => {
   return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : d
 }
 const shellPid = Number(opt('--shell-pid', '0'))
-const gates = opt('--gates', 'env,throughput,latency,nesting,control,restore').split(',').map((s) => s.trim()).filter(Boolean)
+const gates = opt('--gates', 'env,throughput,latency,relay,nesting,control,restore').split(',').map((s) => s.trim()).filter(Boolean)
 const outPath = opt('--out', '')
 
 const toLocal = (p) => {
@@ -398,6 +399,15 @@ async function gateLatency(ud) {
   return { line: ok ? line : `${line}; the bar is under 2`, ok, values: { perMove, ...r, orientation: d.orientation } }
 }
 
+// Phase 2 Task 1: a bare core round trip, 200 in a row, timed by the driver
+// (core:ping, answered on the core's stdin line handler without touching the
+// controller). A measurement, not a bar: a median over 1.0 ms puts the
+// divider's cost in the wsl.exe stdio relay rather than the shell.
+async function gateRelay(ud) {
+  const r = await must(ud, { cmd: 'pingCore', n: 200 }, 'pingCore')
+  return { line: `relay: ${r.medianMs} ms per core:ping round trip (n=${r.n})`, ok: true, values: r }
+}
+
 // Step 4: the W10 session restored, quit, and restored again from the quit
 // snapshot, on this gate's own scratch.
 async function gateRestore() {
@@ -652,7 +662,7 @@ async function gateNesting(ud) {
 
 // ---------------------------------------------------------------------- main
 
-const runners = { env: gateEnv, throughput: gateThroughput, latency: gateLatency, restore: gateRestore, control: gateControl, nesting: gateNesting }
+const runners = { env: gateEnv, throughput: gateThroughput, latency: gateLatency, relay: gateRelay, restore: gateRestore, control: gateControl, nesting: gateNesting }
 const results = {}
 let failed = 0
 for (const g of gates) {
