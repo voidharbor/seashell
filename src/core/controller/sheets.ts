@@ -1,6 +1,7 @@
 /**
  * The sheets the core draws through the shell (native design spec section 7):
- * the Settings sheet here, from `src/renderer/settings/SettingsPanel.tsx`.
+ * the Settings sheet from `src/renderer/settings/SettingsPanel.tsx` and the
+ * Projects sheet from `src/renderer/projects/ProjectsPanel.tsx`.
  * Pure: the shell draws a `SheetModel`, the controller applies its clicks.
  *
  * Only Aero is drawn on the native build, so the other themes, the pane frames
@@ -22,6 +23,7 @@ import {
 } from '../../renderer/theme/tokens.js'
 import { xtermThemeFrom } from '../../renderer/term/palette.js'
 import { chordLabel } from '../../shared/keys.js'
+import type { Project } from '../../shared/ipc.js'
 import type { SheetField, SheetModel } from './model.js'
 
 /** The card's width at uiScale 1 (`.sheet__card`: min(620px, 88%)); the shell caps it at 88 percent of the body. */
@@ -193,4 +195,130 @@ export function paletteOverride(key: PaletteKey): Record<string, string> | null 
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(xtermThemeFrom(vars))) if (typeof v === 'string') out[k] = v
   return out
+}
+
+// ---------------------------------------------------------------------------
+// The Projects sheet (ProjectsPanel.tsx; inventory row N)
+// ---------------------------------------------------------------------------
+
+/** What a save covers (ProjectsPanel.tsx `SaveScope`): the whole window, or the active tab alone. */
+export type SaveScope = 'window' | 'tab'
+
+/** The name field's cap (ProjectsPanel.tsx `maxLength={60}`). */
+export const PROJECT_NAME_MAX = 60
+
+/** Everything `projectsSheet` draws from: the panel's own state plus the props app.tsx:1784-1799 passes it. */
+export interface ProjectsSheetState {
+  projects: Project[]
+  scope: SaveScope
+  name: string
+  /** Bumps when the core clears or sets the name itself (`SheetField.rev`). */
+  nameRev: number
+  confirmDelete: string | null
+  currentProject: { id: string; name: string } | null
+  tabCount: number
+  paneCount: number
+  activeTabName: string
+  activeTabPaneCount: number
+}
+
+/** ProjectsPanel.tsx:47-56, copied (the panel imports React). `now` is ms since the epoch. */
+export function whenSaved(iso: string, now: number): string {
+  const then = new Date(iso).getTime()
+  if (!Number.isFinite(then)) return ''
+  const mins = Math.round((now - then) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins} min ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.round(hours / 24)}d ago`
+}
+
+/** ProjectsPanel.tsx:58-62, copied. */
+export function describeProject(project: Project): string {
+  const tabs = project.tabs.length
+  const panes = project.tabs.reduce((n, t) => n + Object.keys(t.panes ?? {}).length, 0)
+  return `${tabs} tab${tabs === 1 ? '' : 's'} · ${panes} pane${panes === 1 ? '' : 's'}`
+}
+
+/** The existing project a save under `name` replaces: a case-insensitive match (ProjectsPanel.tsx:89-91). */
+export function projectNamed(projects: readonly Project[], name: string): Project | undefined {
+  const want = name.trim().toLowerCase()
+  return projects.find((p) => p.name.toLowerCase() === want)
+}
+
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
+
+/**
+ * ProjectsPanel.tsx:104-241 as a sheet: the scope buttons, `Save “<current>”`
+ * at window scope when a project is current, the name field and its save
+ * button, the description; then one row per project. Copy is the panel's,
+ * verbatim, except its one em dash, which becomes a semicolon.
+ */
+export function projectsSheet(st: ProjectsSheetState, now: number, uiScale = 1): SheetModel {
+  const existing = projectNamed(st.projects, st.name)
+  const save: SheetField[] = [
+    {
+      id: 'scope',
+      kind: 'buttons',
+      label: '',
+      options: [
+        { id: 'window', label: 'Whole window', selected: st.scope === 'window', disabled: false, tooltip: null, swatch: null },
+        { id: 'tab', label: 'This tab', selected: st.scope === 'tab', disabled: false, tooltip: null, swatch: null },
+      ],
+      note: st.scope === 'tab' ? 'a project you can add to any window' : 'the whole workspace',
+    },
+  ]
+  if (st.currentProject && st.scope === 'window') {
+    save.push({ id: 'saveCurrent', kind: 'button', label: `Save “${st.currentProject.name}”`, note: 'updates the open project in place' })
+  }
+  const what =
+    st.scope === 'tab'
+      ? `The tab “${st.activeTabName}” · ${plural(st.activeTabPaneCount, 'pane')} will be saved.`
+      : `${plural(st.tabCount, 'tab')} · ${plural(st.paneCount, 'pane')} will be saved.`
+  save.push(
+    { id: 'name', kind: 'text', label: '', value: st.name, placeholder: 'Project name', maxLen: PROJECT_NAME_MAX, rev: st.nameRev },
+    {
+      id: 'save',
+      kind: 'button',
+      label: existing ? 'Overwrite' : st.currentProject ? 'Save as project' : 'Save',
+      disabled: st.name.trim() === '',
+    },
+    {
+      id: 'describe',
+      kind: 'note',
+      label:
+        `${what} Layout, directories, names and colours, plus the claude session in each pane; ` +
+        "reopening resumes it with a visible `claude -r` in that pane's shell. Other running " +
+        'programs come back as a fresh shell.' +
+        (existing ? ' A project with this name already exists and will be replaced.' : ''),
+    },
+  )
+  return {
+    kind: 'projects',
+    title: 'Projects',
+    width: SETTINGS_SHEET_WIDTH * uiScale,
+    sections: [
+      { title: 'Save what is open', fields: save },
+      {
+        title: 'Open a project',
+        fields: [
+          {
+            id: 'projects',
+            kind: 'rows',
+            label: '',
+            rows: st.projects.map((p) => ({
+              id: p.id,
+              name: p.name,
+              meta: `${describeProject(p)} · saved ${whenSaved(p.savedAt, now)}`,
+              confirming: st.confirmDelete === p.id,
+            })),
+            ...(st.projects.length === 0 ? { note: 'Nothing saved yet.' } : {}),
+          },
+        ],
+      },
+    ],
+    buttons: [{ id: 'done', label: 'Done', isDefault: true, disabled: false }],
+    focusField: 'name',
+  }
 }

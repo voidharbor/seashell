@@ -30,7 +30,8 @@
  * Sheets (Phase 2): `sheet:<kind>:<fieldId>` for a check, text or button
  * field, `sheet:<kind>:<fieldId>:<optionId>` for a buttons option,
  * `sheet:<kind>:btn:<id>` for a bottom button, `sheet:close`, and
- * `sheet:<kind>` itself for `key Escape`.
+ * `sheet:<kind>` itself for `key Escape`. The Projects sheet's rows:
+ * `sheet:projects:row:<id>:delete|confirm|cancel|add|open`.
  */
 
 export interface Rect {
@@ -195,17 +196,36 @@ export interface SheetOption {
   swatch: string | null
 }
 
+/** One saved project in the Projects sheet's `rows` field. */
+export interface SheetRow {
+  id: string
+  name: string
+  /** 'N tabs · M panes · saved <ago>'. */
+  meta: string
+  /** Delete was pressed once: the row shows Delete (danger) and Cancel. */
+  confirming: boolean
+}
+
 export interface SheetField {
   id: string
-  kind: 'buttons' | 'check' | 'text' | 'button' | 'note'
+  kind: 'buttons' | 'check' | 'text' | 'button' | 'note' | 'rows'
   label: string
-  /** A check's state, a text field's value, a button's caption. */
+  /**
+   * A check's state, a text field's value, a button's caption. A button with
+   * no value has its label as the caption and no row label.
+   */
   value?: string | boolean
   options?: SheetOption[]
   placeholder?: string
   maxLen?: number
-  /** The detail line under the field. */
+  /** The detail line under the field (beside a captionless button; a `rows` field with no rows shows it instead). */
   note?: string
+  /** A button that does nothing yet (the Projects save button with no name). */
+  disabled?: boolean
+  /** A text field's value revision: bumps when the core sets the value itself, and the shell reloads its widget from `value`. */
+  rev?: number
+  /** A `rows` field's rows. */
+  rows?: SheetRow[]
 }
 
 export interface SheetSection {

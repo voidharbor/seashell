@@ -11,7 +11,8 @@
  * Handlers are ported from `app.tsx` and `PaneView.tsx`; each port names its
  * source. Behaviour that is not ported yet toasts "<name> arrives in phase 2".
  * The session snapshot and restore live in `session.ts`, the status bar's
- * strings in `status.ts`, the file explorer's tree in `explorer.ts`.
+ * strings in `status.ts`, the file explorer's tree in `explorer.ts`, the
+ * Projects sheet's saves and opens in `projects.ts`.
  * The shell drawer (`DrawerShell.tsx`) is one more grid per pane, here.
  */
 import path from 'node:path'
@@ -60,6 +61,7 @@ import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS
 import { mem, statusModel } from './status.js'
 import { colorizationToTokens, isColorization, withAccent } from './colorization.js'
 import { accentOptionId, cleanNewPaneCommand, paletteOverride, SETTINGS_CHECKS, settingsSheet } from './sheets.js'
+import { Projects } from './projects.js'
 import { ACCENTS, PALETTE_ORDER, type PaletteKey } from '../../renderer/theme/tokens.js'
 import { TAB_STRIP_ORDER, type TabStripMode } from '../../renderer/settings/settings.js'
 import type {
@@ -112,9 +114,6 @@ const STATUS_PX = 28
 /** Commands owned by Phase 2. Each toasts `<name> arrives in phase 2`. */
 const PHASE2_COMMANDS: Readonly<Record<string, string>> = {
   'help.tutorial': 'The tutorial',
-  'app.projects': 'Projects',
-  'app.saveProject': 'Save project',
-  'app.saveTab': 'Save tab as project',
 }
 
 /** Pane title-bar controls owned by Phase 2, keyed by the target's last part. */
@@ -232,13 +231,29 @@ export class Controller {
   /** The grip drag: the grid area's bottom edge, measured at the press (`app.tsx:267-292`). */
   private drawerDrag: { bottom: number } | null = null
   /** The open sheet (one at a time); null while none is up. */
-  private sheetKind: 'settings' | null = null
+  private sheetKind: 'settings' | 'projects' | null = null
+  /** The Projects sheet's state and actions (projects.ts). */
+  private readonly projects: Projects
   private last: UiModel
 
   constructor(deps: ControllerDeps, opts: { home: string; version: string; chords: ChordModel[] }) {
     this.deps = deps
     this.opts = opts
     this.home = opts.home
+    this.projects = new Projects({
+      invoke: <T = unknown>(ch: string, p: unknown) => this.deps.invoke<T>(ch, p),
+      state: () => this.s,
+      dispatch: (action) => this.dispatch(action),
+      toast: (message) => this.toast(message),
+      closeSheet: () => {
+        if (this.sheetKind === 'projects') this.closeSheet()
+      },
+      changed: () => {
+        if (this.sheetKind === 'projects') this.emit()
+      },
+      mintId: uid,
+      now: () => this.deps.now(),
+    })
     this.last = this.build()
   }
 
@@ -313,6 +328,14 @@ export class Controller {
     }
     if (name === 'app.settings') {
       this.openSheet('settings')
+      return
+    }
+    // app.tsx:961-973: Save Project lands on window scope, Save Tab as Project
+    // on tab scope, and Projects on whichever was set last.
+    if (name === 'app.projects' || name === 'app.saveProject' || name === 'app.saveTab') {
+      if (this.openSheet('projects')) {
+        this.projects.opened(name === 'app.saveTab' ? 'tab' : name === 'app.saveProject' ? 'window' : undefined)
+      }
       return
     }
     const phase2 = PHASE2_COMMANDS[name]
@@ -1970,12 +1993,13 @@ export class Controller {
   // Sheets (sheets.ts; SettingsPanel.tsx for Settings)
   // ---------------------------------------------------------------------------
 
-  private openSheet(kind: 'settings'): void {
-    // The restore card is modal and answers first (app.tsx shows no sheet over it).
-    if (this.restoreCandidate) return
+  /** False when the restore card is up: it is modal and answers first (app.tsx shows no sheet over it). */
+  private openSheet(kind: 'settings' | 'projects'): boolean {
+    if (this.restoreCandidate) return false
     if (this.sbMenu) this.sbMenu = null
     this.sheetKind = kind
     this.emit()
+    return true
   }
 
   private closeSheet(): void {
@@ -2017,19 +2041,24 @@ export class Controller {
   private sheetEvent(t: string, e: UiEvent): void {
     if (this.sheetKind === null) return
     const base = `sheet:${this.sheetKind}`
-    if (e.type === 'key') {
-      if (e.key === 'Escape' && (t === base || t.startsWith(`${base}:`))) this.closeSheet()
+    if (e.type === 'key' && e.key === 'Escape') {
+      if (t === base || t.startsWith(`${base}:`)) this.closeSheet()
       return
     }
+    if (e.type === 'click' && (t === 'sheet:close' || t === `${base}:btn:done`)) {
+      this.closeSheet()
+      return
+    }
+    if (this.sheetKind === 'projects') {
+      if (t.startsWith(`${base}:`)) this.projects.event(t.slice(base.length + 1), e)
+      return
+    }
+    if (e.type === 'key') return
     if (e.type === 'text') {
       if (t === `${base}:newPaneCommand`) this.setSetting('newPaneCommand', cleanNewPaneCommand(e.text))
       return
     }
     if (e.type !== 'click') return
-    if (t === 'sheet:close' || t === `${base}:btn:done`) {
-      this.closeSheet()
-      return
-    }
     if (!t.startsWith(`${base}:`)) return
     const [field, option] = t.slice(base.length + 1).split(':')
     if (field === undefined) return
@@ -2136,7 +2165,12 @@ export class Controller {
       tokens: withAccent({ ...this.tokens }, this.ui.settings.accent),
       sidebar: this.sidebarModel(),
       drawer: this.drawerModel(),
-      sheet: this.sheetKind === 'settings' ? settingsSheet(this.ui.settings, this.deps.platform, ui) : null,
+      sheet:
+        this.sheetKind === 'settings'
+          ? settingsSheet(this.ui.settings, this.deps.platform, ui)
+          : this.sheetKind === 'projects'
+            ? this.projects.sheet(ui)
+            : null,
     }
   }
 

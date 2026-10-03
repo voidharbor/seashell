@@ -276,6 +276,7 @@ struct DrawerModel {
 // Sheets (Phase 2 Task 12): one at a time, drawn over a dimmed window.
 // Targets: sheet:<kind>:<fieldId>, sheet:<kind>:<fieldId>:<optionId>,
 // sheet:<kind>:btn:<id>, sheet:close; key Escape goes to sheet:<kind>.
+// A rows field (the Projects sheet, Task 13): sheet:<kind>:row:<id>:<button>.
 struct SheetOption {
   std::string id, label;
   bool selected = false, disabled = false;
@@ -290,16 +291,28 @@ struct SheetOption {
   }
 };
 
+struct SheetRow {                   // one saved project: name, 'N tabs · M panes · saved <ago>'
+  std::string id, name, meta;
+  bool confirming = false;          // Delete was pressed: the row shows Delete (danger) and Cancel
+  static SheetRow parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    return SheetRow{ str(j, "id"), str(j, "name"), str(j, "meta"), flag(j, "confirming") };
+  }
+};
+
 struct SheetField {
   std::string id;
-  std::string kind = "note";        // 'buttons' | 'check' | 'text' | 'button' | 'note'
+  std::string kind = "note";        // 'buttons' | 'check' | 'text' | 'button' | 'note' | 'rows'
   std::string label;
   bool check = false;               // value, for a check
-  std::string text;                 // value, for a text field or a button's caption
+  std::string text;                 // value, for a text field or a button's caption (none: the label is the caption)
   std::vector<SheetOption> options;
   std::string placeholder;
   int maxLen = 0;
   std::string note;
+  bool disabled = false;            // a button that does nothing yet
+  int rev = 0;                      // a text field's value revision: a change reloads the widget from text
+  std::vector<SheetRow> rows;
   static SheetField parse(const nlohmann::json& j) {
     using namespace model_detail;
     SheetField f;
@@ -307,6 +320,8 @@ struct SheetField {
     f.check = flag(j, "value"); f.text = str(j, "value");
     f.options = list<SheetOption>(j, "options");
     f.placeholder = str(j, "placeholder"); f.maxLen = integer(j, "maxLen"); f.note = str(j, "note");
+    f.disabled = flag(j, "disabled"); f.rev = integer(j, "rev");
+    f.rows = list<SheetRow>(j, "rows");
     return f;
   }
 };

@@ -7,6 +7,11 @@
 // default's glow ring. The body scrolls with the Win7 scrollbar when the
 // sections are taller than the card allows. Everything comes from
 // UiModel.sheet; the shell keeps only the scroll, the hover and the focus.
+// The Projects sheet (Task 13) adds a rows field: one row per saved project,
+// the name bold over its meta in badgeText, Delete, Add and Open at the right
+// (Delete in danger and Cancel while the row confirms); a field with no label
+// takes no label line, and a button with no caption of its own is its label,
+// at the left with its note beside it.
 #include "ui/sheet.h"
 #include "ui/ui.h"
 #include "app.h"
@@ -15,6 +20,7 @@
 #include "window.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace {
 bool startsWith(const std::string& s, const std::string& p) { return s.rfind(p, 0) == 0; }
@@ -44,6 +50,17 @@ D2D1_RECT_F clipTo(D2D1_RECT_F r, D2D1_RECT_F c) {
   return D2D1::RectF(std::max(r.left, c.left), std::max(r.top, c.top), std::min(r.right, c.right), std::min(r.bottom, c.bottom));
 }
 bool empty(D2D1_RECT_F r) { return r.right <= r.left || r.bottom <= r.top; }
+
+// A rows field's buttons (ProjectsPanel.tsx:194-236): Delete, Add, Open; while
+// the row confirms, Delete in danger and Cancel.
+struct RowButton {
+  const char* id;
+  const wchar_t* label;
+  bool danger, primary;
+};
+constexpr RowButton kRowButtons[] = { { "delete", L"Delete", false, false }, { "add", L"Add", false, false }, { "open", L"Open", false, true } };
+constexpr RowButton kRowConfirm[] = { { "confirm", L"Delete", true, false }, { "cancel", L"Cancel", false, false } };
+constexpr float kRowH = 40;         // name over meta (.proj__row: 7 px padding, a 2 px gap)
 }  // namespace
 
 void Ui::syncSheet(const UiModel& old) {
@@ -56,11 +73,20 @@ void Ui::syncSheet(const UiModel& old) {
       for (const SheetField& f : sec.fields)
         if (f.kind == "text" && !text) { text = &f; target = "sheet:" + m_.sheet->kind + ":" + f.id; }
   }
+  // The field's revision in the model before this one: the core bumps it when
+  // it sets the value itself (the Projects name clears after a save).
+  int oldRev = -1;
+  if (text && old.sheet)
+    for (const SheetSection& sec : old.sheet->sections)
+      for (const SheetField& f : sec.fields)
+        if (f.kind == "text" && "sheet:" + old.sheet->kind + ":" + f.id == target) oldRev = f.rev;
   if (!text) {
     if (sheetEdit_.isOpen()) sheetEdit_.close();
-  } else if (sheetEdit_.target() != target) {
+  } else if (sheetEdit_.target() != target || (oldRev >= 0 && oldRev != text->rev)) {
     // The value lives in the widget while it is open; the core keeps the cleaned copy.
+    bool had = sheetEdit_.target() == target && sheetEdit_.focused();
     sheetEdit_.open(target, text->text, fromUtf8(text->placeholder), text->maxLen > 0 ? (size_t)text->maxLen : 200, false);
+    if (had) sheetEdit_.focus();
   }
   if (!m_.sheet) {
     sheetScroll_ = ScrollState{};
@@ -80,6 +106,9 @@ bool Ui::sheetOptionDisabled(const std::string& target) const {
     for (const SheetField& f : sec.fields)
       for (const SheetOption& o : f.options)
         if (target == base + f.id + ":" + o.id) return o.disabled;
+  for (const SheetSection& sec : m_.sheet->sections)
+    for (const SheetField& f : sec.fields)
+      if (f.kind == "button" && target == base + f.id) return f.disabled;
   for (const SheetButton& b : m_.sheet->buttons)
     if (target == base + "btn:" + b.id) return b.disabled;
   return false;
@@ -92,6 +121,15 @@ std::wstring Ui::sheetTooltip(const std::string& target) const {
     for (const SheetField& f : sec.fields)
       for (const SheetOption& o : f.options)
         if (target == base + f.id + ":" + o.id) return o.tooltip ? fromUtf8(*o.tooltip) : L"";
+  // The rows' titles (ProjectsPanel.tsx:223, 230; the em dash a semicolon).
+  if (startsWith(target, base + "row:")) {
+    auto ends = [&](const char* tail) {
+      size_t n = strlen(tail);
+      return target.size() > n && target.compare(target.size() - n, n, tail) == 0;
+    };
+    if (ends(":add")) return L"Add these tabs to this window, leaving what is open alone";
+    if (ends(":open")) return L"Replace this window with the project; closes every pane open now";
+  }
   return L"";
 }
 
@@ -135,8 +173,10 @@ void Ui::viewSheet(Painter& p) {
       for (const SheetField& f : sec.fields) {
         std::string ft = base + ":" + f.id;
         if (f.kind == "buttons") {
-          if (paint) p.text(D2D1::RectF(x0, y, x0 + w, y + sheet::kLine * s), fromUtf8(f.label), UiFont{ 12 }, t_.toastText, Align::Left, true);
-          y += sheet::kLine * s + 2 * s;
+          if (!f.label.empty()) {
+            if (paint) p.text(D2D1::RectF(x0, y, x0 + w, y + sheet::kLine * s), fromUtf8(f.label), UiFont{ 12 }, t_.toastText, Align::Left, true);
+            y += sheet::kLine * s + 2 * s;
+          }
           float x = x0;
           for (const SheetOption& o : f.options) {
             std::wstring label = fromUtf8(o.label);
@@ -188,8 +228,10 @@ void Ui::viewSheet(Painter& p) {
           if (noteH > 0) y += paragraph(p, tx, y, x0 + w - tx, fromUtf8(f.note), UiFont{ 11 }, t_.badgeText, paint, clip);
           y += 8 * s;
         } else if (f.kind == "text") {
-          if (paint) p.text(D2D1::RectF(x0, y, x0 + w, y + sheet::kLine * s), fromUtf8(f.label), UiFont{ 12 }, t_.toastText, Align::Left, true);
-          y += sheet::kLine * s + 2 * s;
+          if (!f.label.empty()) {
+            if (paint) p.text(D2D1::RectF(x0, y, x0 + w, y + sheet::kLine * s), fromUtf8(f.label), UiFont{ 12 }, t_.toastText, Align::Left, true);
+            y += sheet::kLine * s + 2 * s;
+          }
           D2D1_RECT_F field = D2D1::RectF(std::round(x0), std::round(y), std::round(x0 + std::min(w, 360 * s)), std::round(y + 24 * s));
           reg(field, ft);
           stops.push_back(ft);
@@ -202,19 +244,82 @@ void Ui::viewSheet(Painter& p) {
           y += 24 * s + 4 * s;
           if (!f.note.empty()) y += paragraph(p, x0, y, w, fromUtf8(f.note), UiFont{ 11 }, t_.badgeText, paint, clip);
           y += 8 * s;
-        } else if (f.kind == "button") {
-          float bw = 80 * s;
-          D2D1_RECT_F b = D2D1::RectF(std::round(x0 + w - bw), std::round(y), std::round(x0 + w), std::round(y + sheet::kBtnH * s));
-          reg(b, ft);
-          stops.push_back(ft);
+        } else if (f.kind == "button" && f.text.empty()) {
+          // The label is the caption: the button at the left, sized to it, the note beside it.
+          std::wstring cap = fromUtf8(f.label);
+          float bw = std::max(80 * s, std::ceil(p.textWidth(cap, UiFont{ 11 })) + 24 * s);
+          D2D1_RECT_F b = D2D1::RectF(std::round(x0), std::round(y), std::round(x0 + bw), std::round(y + sheet::kBtnH * s));
+          if (!f.disabled) {
+            reg(b, ft);
+            stops.push_back(ft);
+          }
           if (paint && p.live() && b.bottom > clip.top && b.top < clip.bottom) {
-            p.win7Button(b, btn(ft), fromUtf8(f.text.empty() ? f.label : f.text), 11);
+            p.win7Button(b, f.disabled ? BtnState::Disabled : btn(ft), cap, 11);
+            ring(b, ft);
+          }
+          float nx = b.right + 10 * s;
+          float nh = f.note.empty() ? 0 : paragraph(p, nx, y, x0 + w - nx, fromUtf8(f.note), UiFont{ 11 }, t_.badgeText, false, clip);
+          if (nh > 0) paragraph(p, nx, y + std::max(0.f, std::round((sheet::kBtnH * s - nh) / 2)), x0 + w - nx, fromUtf8(f.note), UiFont{ 11 }, t_.badgeText, paint, clip);
+          y += std::max(sheet::kBtnH * s, nh) + 8 * s;
+        } else if (f.kind == "button") {
+          float bw = std::max(80 * s, std::ceil(p.textWidth(fromUtf8(f.text), UiFont{ 11 })) + 24 * s);
+          D2D1_RECT_F b = D2D1::RectF(std::round(x0 + w - bw), std::round(y), std::round(x0 + w), std::round(y + sheet::kBtnH * s));
+          if (!f.disabled) {
+            reg(b, ft);
+            stops.push_back(ft);
+          }
+          if (paint && p.live() && b.bottom > clip.top && b.top < clip.bottom) {
+            p.win7Button(b, f.disabled ? BtnState::Disabled : btn(ft), fromUtf8(f.text), 11);
             ring(b, ft);
           }
           float lw = w - bw - 12 * s;
           if (paint) p.text(D2D1::RectF(x0, y, x0 + lw, y + sheet::kLine * s), fromUtf8(f.label), UiFont{ 12 }, t_.toastText, Align::Left, true);
           float nh = f.note.empty() ? 0 : paragraph(p, x0, y + sheet::kLine * s, lw, fromUtf8(f.note), UiFont{ 11 }, t_.badgeText, paint, clip);
           y += std::max(sheet::kBtnH * s, sheet::kLine * s + nh) + 8 * s;
+        } else if (f.kind == "rows") {
+          if (f.rows.empty()) y += paragraph(p, x0, y, w, fromUtf8(f.note), UiFont{ 11 }, t_.badgeText, paint, clip) + 2 * s;
+          for (const SheetRow& row : f.rows) {
+            const std::string rb = base + ":row:" + row.id + ":";
+            float rh = std::round(kRowH * s);
+            // .proj__row's 1 px top border in --line.
+            D2D1_RECT_F line = D2D1::RectF(x0, std::round(y), x0 + w, std::round(y) + std::max(1.f, std::floor(p.dpiScale())));
+            bool vis = paint && p.live() && y + rh > clip.top && y < clip.bottom;
+            if (vis) p.fillRect(line, t_.divider, 0.6f);
+            // The buttons from the right; the text takes what is left.
+            const RowButton* set = row.confirming ? kRowConfirm : kRowButtons;
+            int n = row.confirming ? 2 : 3;
+            float bx = x0 + w;
+            float by = std::round(y + (rh - sheet::kBtnH * s) / 2);
+            D2D1_RECT_F rects[3];
+            for (int i = n - 1; i >= 0; --i) {
+              float bw = std::max(64 * s, std::ceil(p.textWidth(set[i].label, UiFont{ 11 })) + 24 * s);
+              rects[i] = D2D1::RectF(std::round(bx - bw), by, std::round(bx), by + std::round(sheet::kBtnH * s));
+              bx = rects[i].left - 6 * s;
+            }
+            for (int i = 0; i < n; i++) {
+              std::string t = rb + set[i].id;
+              reg(rects[i], t);
+              stops.push_back(t);
+            }
+            if (vis) {
+              float tw = std::max(0.f, bx - 6 * s - x0);
+              p.text(D2D1::RectF(x0, y + 3 * s, x0 + tw, y + 21 * s), fromUtf8(row.name), UiFont{ 12, true }, t_.toastText, Align::Left, true);
+              p.text(D2D1::RectF(x0, y + 21 * s, x0 + tw, y + 37 * s), fromUtf8(row.meta), UiFont{ 11 }, t_.badgeText, Align::Left, true);
+              for (int i = 0; i < n; i++) {
+                std::string t = rb + set[i].id;
+                if (set[i].danger) {
+                  // .proj__danger: the danger face and border, white text.
+                  p.roundedRect(rects[i], 3, t_.danger, pressed(t) ? 0.8f : hovered(t) ? 0.9f : 1.f, t_.danger, 1);
+                  p.text(rects[i], set[i].label, UiFont{ 11, true }, 0xFFFFFF, Align::Center, true);
+                } else {
+                  p.win7Button(rects[i], btn(t, set[i].primary), set[i].label, 11);
+                }
+                ring(rects[i], t);
+              }
+            }
+            y += rh + 2 * s;
+          }
+          y += 6 * s;
         } else {
           y += paragraph(p, x0, y, w, fromUtf8(f.note.empty() ? f.label : f.note), UiFont{ 12 }, t_.toastText, paint, clip) + 8 * s;
         }

@@ -71,12 +71,14 @@ export async function collectSaveLookup(
  * Saved tabs rebuilt with fresh ids and their claude sessions settled by
  * main before anything is typed (`app.tsx:649-692`). Anything unsettled
  * restores as a fresh claude, and every claude pane gets the launch mode
- * its session can work in.
+ * its session can work in. `releasing` is the panes about to be reaped
+ * (opening a project replaces the window), whose sessions are free to resume.
  */
 export async function restoreSavedTabs(
   saved: SavedTab[],
   invoke: Invoke,
-  mintId: (prefix: string) => string
+  mintId: (prefix: string) => string,
+  releasing: string[] = []
 ): Promise<TabState[]> {
   const { tabs: restored, lookup } = planRestore(saved, mintId)
   if (restored.length === 0) return []
@@ -84,7 +86,10 @@ export async function restoreSavedTabs(
   if (lookup.length > 0) {
     let ids: Record<string, string> | null = null
     try {
-      const res = await invoke<ProjectsSessionIdsResponse>('projects:sessionIds', { panes: lookup.slice(0, MAX_TERM_PANES) })
+      const res = await invoke<ProjectsSessionIdsResponse>('projects:sessionIds', {
+        panes: lookup.slice(0, MAX_TERM_PANES),
+        ...(releasing.length > 0 ? { releasing: releasing.slice(0, MAX_TERM_PANES) } : {}),
+      })
       ids = res && typeof res.ids === 'object' ? res.ids : null
     } catch {
       /* applyRestoreIds keeps only verified ids when the lookup fails */
