@@ -628,6 +628,13 @@ export class Controller {
       case 'pathclick':
         void this.pathClick(e.paneId, e.line, e.index, e.mods)
         break
+      case 'urlclick': {
+        // terminal.ts:238-243 (WebLinksAddon): a click on a bare http(s) URL
+        // opens it through main's guarded open:externalHttp.
+        const url = typeof e.line === 'string' && Number.isInteger(e.index) ? webUrlAt(e.line, e.index) : null
+        if (url) void this.deps.invoke('open:externalHttp', { url }).catch(() => undefined)
+        break
+      }
       default:
         // Selections are the shell's own business.
         break
@@ -2778,3 +2785,16 @@ function mapPane(state: AppState, paneId: string, fn: (p: PaneState) => PaneStat
   return changed ? { ...state, tabs } : state
 }
 
+/**
+ * The bare http or https URL covering `index` of a logical line, as
+ * WebLinksAddon finds them: no whitespace, quotes or angle brackets, with
+ * trailing sentence punctuation left off. Null when the click is not on one.
+ */
+export function webUrlAt(line: string, index: number): string | null {
+  for (const m of line.matchAll(/https?:\/\/[^\s"'<>`]+/g)) {
+    const url = m[0].replace(/[.,;:!?)\]}]+$/, '')
+    const start = m.index ?? 0
+    if (url.length > 'https://'.length - 1 && index >= start && index < start + url.length) return url
+  }
+  return null
+}

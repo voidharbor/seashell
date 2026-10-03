@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Controller } from '../../src/core/controller/controller.js'
+import { Controller, webUrlAt } from '../../src/core/controller/controller.js'
 import { fakeDeps, GEO } from './controller-fakes.js'
 
 function setup() {
@@ -14,6 +14,23 @@ function setup() {
 }
 const line = 'see /w/README.md for details'
 const idx = line.indexOf('README')
+
+describe('url click', () => {
+  it('a click on a bare https URL asks main to open it, a click beside it does not', async () => {
+    const f = setup()
+    f.handlers['open:externalHttp'] = () => ({ ok: true })
+    const c = new Controller(f.deps, { home: '/w', version: '0', chords: [] })
+    await c.boot(GEO)
+    const l = 'docs at https://example.com/a/b. done'
+    c.term({ type: 'urlclick', paneId: c.model().panes[0]!.id, line: l, index: 0 })
+    c.term({ type: 'urlclick', paneId: c.model().panes[0]!.id, line: l, index: l.indexOf('example') })
+    await new Promise((r) => setTimeout(r, 0))
+    const opens = f.sent.filter(([ch]) => ch === 'open:externalHttp').map(([, p]) => (p as { url: string }).url)
+    expect(opens).toEqual(['https://example.com/a/b'])
+    expect(webUrlAt(l, l.indexOf('done'))).toBeNull()
+    expect(webUrlAt('x file:///etc/passwd', 4)).toBeNull()
+  })
+})
 
 describe('path click gestures', () => {
   it('a plain double-click reveals and never opens', async () => {

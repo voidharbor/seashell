@@ -398,6 +398,8 @@ export type TermEvent =
   | { type: 'cwd'; paneId: string; cwd: string }
   | { type: 'bell'; paneId: string }
   | { type: 'pathclick'; paneId: string; line: string; index: number; mods: Mods }
+  /** A plain click (no drag) at `index` of the logical line: opens a bare http(s) URL there. */
+  | { type: 'urlclick'; paneId: string; line: string; index: number }
   | { type: 'selection'; paneId: string; text: string }
   | { type: 'findResult'; paneId: string; index: number; total: number; capped: boolean }
 

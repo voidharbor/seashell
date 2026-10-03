@@ -46,6 +46,7 @@ private:
   void selectInputLine(Grid& g);
   VTermModifier mods() const;
   void sendPathClick(const Hit& h);
+  void sendUrlClick(const Hit& h);   // a click that selected nothing, over a line holding a URL
   void appBarDown(const Hit& h, int part, float y);
   void appBarSend(Grid& g, GridView& v, int notches);
   static void CALLBACK repeatTick(HWND, UINT, UINT_PTR, DWORD);

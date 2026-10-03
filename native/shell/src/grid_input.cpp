@@ -352,6 +352,21 @@ void GridInput::sendPathClick(const Hit& h) {
                                     { "index", (int)(it - idx.begin()) }, { "mods", modsJson() } });
 }
 
+void GridInput::sendUrlClick(const Hit& h) {
+  const GridStore& st = h.g->store();
+  long first = 0;
+  std::vector<int> idx;
+  std::string line = st.logicalLine(h.absRow, &first, &idx);
+  if (line.find("http") == std::string::npos) return;
+  int col = h.col;
+  const Row& row = st.row(h.absRow);
+  while (col > 0 && col < (int)row.cells.size() && row.cells[col].width == 0) col--;
+  int cell = (int)(h.absRow - first) * st.cols() + col;
+  auto it = std::find(idx.begin(), idx.end(), cell);
+  if (it == idx.end()) return;
+  App::instance().wire().sendTerm({ { "type", "urlclick" }, { "paneId", h.paneId }, { "line", line }, { "index", (int)(it - idx.begin()) } });
+}
+
 void GridInput::appBarSend(Grid& g, GridView& v, int notches) {
   if (notches == 0) return;
   g.mouseMove(g.store().rows() / 2, g.store().cols() / 2, VTERM_MOD_NONE);
@@ -572,7 +587,11 @@ bool GridInput::mouse(UINT msg, WPARAM w, LPARAM l) {
         }
       } else if (d == Drag::Select) {
         auto it = sel_.find(dragPane_);
-        if (it != sel_.end() && it->second.empty()) it->second.clear();
+        if (it != sel_.end() && it->second.empty()) {
+          it->second.clear();
+          // A click that selected nothing: the core opens a bare URL under it (WebLinksAddon).
+          if (hitTest(x, y, false, "", &h) && h.paneId == dragPane_) sendUrlClick(h);
+        }
         invalidate();
       }
       return d != Drag::None || hitTest(x, y, false, "", &h);
