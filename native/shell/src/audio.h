@@ -6,7 +6,9 @@
 // the mastering voice is set to volume 0 before the source voice exists, the
 // source voice is at 0 too, and both are checked before every submit: a gate's
 // ping goes through the whole path and makes no sound. Any failure logs once
-// and leaves the ping silent for the rest of the run. UI thread only.
+// and leaves the ping silent for the rest of the run; a lost device (XAudio2's
+// critical error) is not a failure, and the next ping starts the engine again.
+// UI thread only.
 #pragma once
 
 class Audio {

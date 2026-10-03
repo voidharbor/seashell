@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <mmreg.h>
 #include <xaudio2.h>
+#include <atomic>
 #include <cmath>
 #include <vector>
 
@@ -35,6 +36,21 @@ bool g_muted = false;        // test mode: both voices at volume 0
 ULONGLONG g_lastPingAt = 0;
 bool g_pinged = false;
 
+// XAudio2 reports a lost device (the default output changed, a headset
+// unplugged) on its own thread; the engine is dead from then on. The flag
+// carries it to the UI thread, where the next ping tears down and starts over.
+std::atomic<bool> g_lost{ false };
+std::atomic<long> g_lostHr{ 0 };
+struct EngineCallback : IXAudio2EngineCallback {
+  void STDMETHODCALLTYPE OnProcessingPassStart() override {}
+  void STDMETHODCALLTYPE OnProcessingPassEnd() override {}
+  void STDMETHODCALLTYPE OnCriticalError(HRESULT hr) override {
+    g_lostHr = (long)hr;
+    g_lost = true;
+  }
+};
+EngineCallback g_callback;
+
 // The gain t seconds after a tone starts: Web Audio's exponential ramps,
 // v0 * (v1 / v0) ^ ((t - t0) / (t1 - t0)), then the floor until the stop.
 double gainAt(double t) {
@@ -60,7 +76,11 @@ void render() {
 void teardown() {
   if (g_source) { g_source->DestroyVoice(); g_source = nullptr; }
   if (g_master) { g_master->DestroyVoice(); g_master = nullptr; }
-  if (g_engine) { g_engine->Release(); g_engine = nullptr; }
+  if (g_engine) {
+    g_engine->UnregisterForCallbacks(&g_callback);
+    g_engine->Release();
+    g_engine = nullptr;
+  }
   g_ready = false;
 }
 
@@ -87,6 +107,8 @@ bool Audio::init() {
   g_muted = App::instance().testMode();
   HRESULT hr = XAudio2Create(&g_engine, 0, XAUDIO2_DEFAULT_PROCESSOR);
   if (FAILED(hr)) return fail("XAudio2Create", hr);
+  hr = g_engine->RegisterForCallbacks(&g_callback);
+  if (FAILED(hr)) App::log("audio: RegisterForCallbacks failed 0x%08lx; a lost device will not restart the engine", (unsigned long)hr);
   hr = g_engine->CreateMasteringVoice(&g_master);
   if (FAILED(hr)) return fail("CreateMasteringVoice", hr);
   if (g_muted) {
@@ -123,6 +145,10 @@ void Audio::ping() {
   if (g_pinged && now - g_lastPingAt < kMinGapMs) {
     App::log("audio: ping skipped, %llu ms after the last", (unsigned long long)(now - g_lastPingAt));
     return;
+  }
+  if (g_lost.exchange(false)) {
+    App::log("audio: the device was lost (0x%08lx); starting the engine again", (unsigned long)g_lostHr.load());
+    teardown();
   }
   if (!init()) return;
   if (g_muted && !stillMuted()) {
