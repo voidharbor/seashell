@@ -9,6 +9,7 @@
 #include <bcrypt.h>
 #include <psapi.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -28,6 +29,13 @@ const size_t kModelSamples = 200;     // stats' modelMs: medians over the last t
 const int kModCtrl = 1, kModShift = 2, kModAlt = 4;
 
 json fail(const std::string& code) { return { { "ok", false }, { "code", code } }; }
+
+// Divider `id`'s rect in the applied model, DIP; false when it has none.
+bool dividerRect(const std::string& id, std::array<double, 4>* out) {
+  for (const DividerModel& d : App::instance().model().dividers)
+    if (d.id == id) { *out = { d.rect.x, d.rect.y, d.rect.w, d.rect.h }; return true; }
+  return false;
+}
 
 std::string strArg(const json& j, const char* k) {
   auto it = j.find(k);
@@ -513,11 +521,13 @@ json Driver::click(const json& req, const char* type) {
 // ui:model it causes (up to stepTimeoutMs), then the release. ms is the wall
 // time of the whole drag, press to release (Task 18 divides it by steps).
 // moveMs is per move, from just before the move is posted to the UI thread to
-// the moment Ui::setModel has applied the first model after it (noteModel's
-// stamp): the event-to-model round trip of spec 10. The wait is a condition
-// variable the UI thread signals, never a poll, so no scheduler tick is in it.
-// The release is sent whatever a step did, so a failed step never leaves the
-// button pressed.
+// the moment Ui::setModel has applied the first model after it that moved the
+// dragged divider (noteModel's stamp; a metrics or status bar model in between
+// stamps nothing): the event-to-model round trip of spec 10. The wait is a
+// condition variable the UI thread signals, never a poll, so no scheduler tick
+// is in it. A step that timed out can still have its late model stamp the next
+// step, so a drag is only clean with no timeouts. The release is sent whatever
+// a step did, so a failed step never leaves the button pressed.
 json Driver::drag(const json& req) {
   auto num = [&](const char* k, double d) { return req.contains(k) && req[k].is_number() ? req[k].get<double>() : d; };
   double dx = num("dx", 0), dy = num("dy", 0);
@@ -527,7 +537,15 @@ json Driver::drag(const json& req) {
   QueryPerformanceFrequency(&freq);
   QueryPerformanceCounter(&t0);
   json down = onUi({ { "cmd", "dragStep" }, { "phase", "down" }, { "target", strArg(req, "target") } });
-  if (!down.value("ok", false)) return down;
+  if (!down.value("ok", false)) {
+    // A press that timed out is still queued and runs later, holding the
+    // capture: the release queues behind it (with nothing pressed it answers
+    // ENODRAG). ENOTARGET pressed nothing; EPOST never reached the UI thread.
+    std::string code = down.value("code", "");
+    if (code != "ENOTARGET" && code != "EPOST")
+      down["released"] = onUi({ { "cmd", "dragStep" }, { "phase", "up" }, { "dx", 0 }, { "dy", 0 } }).value("ok", false);
+    return down;
+  }
   int models = 0, timeouts = 0;
   std::vector<double> moveMs;
   moveMs.reserve((size_t)steps);
@@ -642,6 +660,8 @@ json Driver::dragStep(const json& req) {
     HWND to;
     LPARAM pt = at(dragX_, dragY_, &to);
     dragWin_ = to;
+    std::string target = strArg(req, "target");
+    dragDividerId_ = target.rfind("divider:", 0) == 0 ? target.substr(8) : "";
     SendMessageW(to, WM_MOUSEMOVE, 0, pt);
     SendMessageW(to, WM_LBUTTONDOWN, MK_LBUTTON, pt);
     return { { "ok", true }, { "seq", seq }, { "x", dragX_ / scale }, { "y", dragY_ / scale } };
@@ -658,6 +678,7 @@ json Driver::dragStep(const json& req) {
       std::lock_guard<std::mutex> lock(modelMu_);
       modelWaitSeq_ = seq;
       modelAt_ = 0;
+      armedRectSet_ = !dragDividerId_.empty() && dividerRect(dragDividerId_, &armedRect_);
     }
     SendMessageW(dragWin_, WM_MOUSEMOVE, MK_LBUTTON, pt);
     return { { "ok", true }, { "seq", seq } };
@@ -665,6 +686,8 @@ json Driver::dragStep(const json& req) {
   if (phase == "up") {
     SendMessageW(dragWin_, WM_LBUTTONUP, 0, pt);
     dragWin_ = nullptr;
+    dragDividerId_.clear();
+    armedRectSet_ = false;
     return { { "ok", true }, { "seq", seq } };
   }
   return fail("EBADPHASE");
@@ -684,6 +707,9 @@ void Driver::noteModel(double seq) {
   {
     std::lock_guard<std::mutex> lock(modelMu_);
     if (modelWaitSeq_ < 0 || seq <= modelWaitSeq_ || modelAt_ != 0) return;
+    // A divider drag's step is the model that moved the divider.
+    std::array<double, 4> r;
+    if (armedRectSet_ && dividerRect(dragDividerId_, &r) && r == armedRect_) return;
     modelAt_ = t.QuadPart;
   }
   modelCv_.notify_all();
@@ -741,17 +767,22 @@ json Driver::stats() {
   Grid* g = id.empty() ? nullptr : a.grid(id);
   // The model path, medians over the last 200 models (Phase 2 Task 2 step 7):
   // queue is the reader thread's post to the UI thread taking the line, parse
-  // the JSON, build UiModel::parse, layout Ui::setModel, apply the whole
-  // onModel around it, paint the body's invalidate to its paint end (strip
-  // the same for the strip), bodyDraw and stripDraw the paints alone.
+  // the JSON, build UiModel::parse, layout Ui::setModel, apply everything on
+  // the UI thread from the end of build to the end of onModel (the model kept
+  // for the driver, its log line, onModel around layout), paint the body's
+  // invalidate to its paint end (strip the same for the strip), bodyDraw and
+  // stripDraw the paints alone. n counts queue to apply, bodyN paint and
+  // bodyDraw, stripN strip and stripDraw; a series with no samples is null,
+  // not 0 (a drag leaves the strip unpainted).
   auto r3 = [](double v) { return std::round(v * 1000) / 1000; };
-  auto med = [&](std::vector<double> v) { return r3(percentile(std::move(v), 0.5)); };
+  auto med = [&](std::vector<double> v) { return v.empty() ? json() : json(r3(percentile(std::move(v), 0.5))); };
   std::vector<double> q, pa, b, l, ap;
   for (const ModelPath& m : modelPaths_) { q.push_back(m.queue); pa.push_back(m.parse); b.push_back(m.build); l.push_back(m.layout); ap.push_back(m.apply); }
   auto vec = [](const std::deque<double>& d) { return std::vector<double>(d.begin(), d.end()); };
   json modelMs = { { "n", modelPaths_.size() }, { "queue", med(q) }, { "parse", med(pa) }, { "build", med(b) }, { "layout", med(l) },
-                   { "apply", med(ap) }, { "paint", med(vec(paintGap_[0])) }, { "strip", med(vec(paintGap_[1])) },
-                   { "bodyDraw", med(vec(paintDraw_[0])) }, { "stripDraw", med(vec(paintDraw_[1])) } };
+                   { "apply", med(ap) }, { "bodyN", paintGap_[0].size() }, { "paint", med(vec(paintGap_[0])) },
+                   { "bodyDraw", med(vec(paintDraw_[0])) }, { "stripN", paintGap_[1].size() }, { "strip", med(vec(paintGap_[1])) },
+                   { "stripDraw", med(vec(paintDraw_[1])) } };
   return { { "frameMs", { { "p50", percentile(ms, 0.5) }, { "p95", percentile(ms, 0.95) } } }, { "modelMs", modelMs },
            { "framesLast5s", ms.size() }, { "ptyBytesLast5s", (long long)bytes }, { "shellWsMB", std::round(wsMB * 10) / 10 },
            { "paneId", id }, { "mouseMode", g ? g->mouseMode() : 0 }, { "selection", a.input().selectionText(id) },

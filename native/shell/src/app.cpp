@@ -33,6 +33,8 @@ const size_t kMaxEarlyBytes = 4u << 20;
 const UINT kBlinkMs = 530;
 // The search addon re-runs the search this long after the last pty write.
 const UINT kFindRefreshMs = 200;
+// QPC when the UI thread took the core line being handled (the driver's modelMs).
+LONGLONG g_lineAt = 0;
 }
 
 App& App::instance() { static App a; return a; }
@@ -237,6 +239,7 @@ LRESULT App::onAppMessage(UINT msg, WPARAM w, LPARAM l) {
     std::unique_ptr<std::string> line(reinterpret_cast<std::string*>(l));
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
+    g_lineAt = now.QuadPart;
     lineQueueTicks_ = w ? now.QuadPart - (long long)w : 0;
     size_t n = line->size();
     wire_.onCoreLine(std::move(*line));
@@ -607,8 +610,11 @@ int App::main(HINSTANCE hinst) {
 
   wire_.write = [this](const std::string& line) { core_.send(line); };
   wire_.onModel = [this](const UiModel& m) {
-    LARGE_INTEGER a0, l0, l1, a1;
-    QueryPerformanceCounter(&a0);
+    // apply runs from where build ends (the line taken plus parse and build),
+    // so the model Wire keeps for the driver and its log line count in it and
+    // queue + parse + build + apply is the post to the end of this.
+    LARGE_INTEGER l0, l1, a1;
+    LONGLONG a0 = g_lineAt + wire_.parseTicks + wire_.buildTicks;
     double oldFont = model_.window.fontPx;
     double oldStrip = model_.window.tabStripH;
     model_ = m;
@@ -624,7 +630,7 @@ int App::main(HINSTANCE hinst) {
     Driver& d = Driver::instance();
     d.noteModelInvalidated(strip);
     d.noteModelPath(Driver::ticksMs(lineQueueTicks_), Driver::ticksMs(wire_.parseTicks), Driver::ticksMs(wire_.buildTicks),
-                    Driver::ticksMs(l1.QuadPart - l0.QuadPart), Driver::ticksMs(a1.QuadPart - a0.QuadPart));
+                    Driver::ticksMs(l1.QuadPart - l0.QuadPart), Driver::ticksMs(a1.QuadPart - a0));
     d.noteModel(m.seq);   // applied: a driver drag step waiting for it stops its clock here
     if (!firstModel_) {
       firstModel_ = true;

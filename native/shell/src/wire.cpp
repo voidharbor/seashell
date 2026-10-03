@@ -19,6 +19,22 @@ static const std::set<std::string> CORE_PUSH_TO_SHELL = { "pty:data", "ui:model"
 
 using nlohmann::json;
 
+namespace {
+// The per-model log line: the first model, then at most one line a second
+// with the count of models not logged since the line before. A drag pushes
+// models at pointer rate, and each line is OutputDebugStringA plus a blocking
+// WriteFile on the UI thread, inside the driver's moveMs. UI thread only.
+void logModel(const UiModel& m) {
+  static ULONGLONG lastAt = 0;
+  static unsigned skipped = 0;
+  ULONGLONG now = GetTickCount64();
+  if (lastAt && now - lastAt < 1000) { skipped++; return; }
+  App::log("on ui:model seq=%.0f tabs=%zu panes=%zu (%u not logged since the last line)", m.seq, m.tabs.size(), m.panes.size(), skipped);
+  lastAt = now;
+  skipped = 0;
+}
+}  // namespace
+
 std::string base64Decode(const std::string& in) {
   static const signed char* table = [] {
     static signed char t[256];
@@ -125,8 +141,11 @@ void Wire::onCoreLine(std::string line) {
         QueryPerformanceCounter(&t2);
         parseTicks = t1.QuadPart - t0.QuadPart;
         buildTicks = t2.QuadPart - t1.QuadPart;
-        lastModel_ = p;
-        App::log("on ui:model seq=%.0f tabs=%zu panes=%zu", m.seq, m.tabs.size(), m.panes.size());
+        // Kept for the driver's model reply. Moved, not copied: p is not read
+        // again. App's apply clock (the driver's modelMs) counts this and the
+        // log line from where build ends.
+        lastModel_ = e.contains("p") ? std::move(e["p"]) : json();
+        logModel(m);
         if (onModel) onModel(m);
       } else if (ch == "pty:data") {
         const json* batches = p.is_object() && p.contains("batches") ? &p["batches"] : nullptr;

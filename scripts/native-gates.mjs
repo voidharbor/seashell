@@ -393,10 +393,19 @@ async function gateLatency(ud) {
   const d = m.dividers[0]
   const along = d.orientation === 'vertical' ? { dx: 200, dy: 0 } : { dx: 0, dy: 200 }
   const r = await must(ud, { cmd: 'drag', target: `divider:${d.id}`, ...along, steps: 200, stepTimeoutMs: 2000 }, 'drag')
-  const perMove = r1(r.ms / r.steps)
-  const line = `latency: ${perMove} ms per move (${r.ms} ms for ${r.steps} moves, ${r.models} models, ${r.timeouts} timeouts, ${d.orientation} divider)`
+  // Spec 10's bar is the median move-to-model time over the 200 moves (the
+  // driver's moveMs). The average per step also carries each step's post and
+  // wake and the release; it is printed beside it, and judged only when the
+  // driver gave no moveMs.
+  const average = r1(r.ms / r.steps)
+  const median = typeof r.moveMs?.median === 'number' ? r.moveMs.median : null
+  const perMove = median ?? average
+  const counts = `${r.ms} ms for ${r.steps} moves, ${r.models} models, ${r.timeouts} timeouts, ${d.orientation} divider`
+  const line = median !== null
+    ? `latency: ${median} ms median per move (${average} ms average, ${counts})`
+    : `latency: ${average} ms average per move (no moveMs from the driver, ${counts})`
   const ok = perMove < 2 && r.timeouts === 0
-  return { line: ok ? line : `${line}; the bar is under 2`, ok, values: { perMove, ...r, orientation: d.orientation } }
+  return { line: ok ? line : `${line}; the bar is under 2`, ok, values: { perMove, median, average, ...r, orientation: d.orientation } }
 }
 
 // Phase 2 Task 1: a bare core round trip, 200 in a row, timed by the driver
