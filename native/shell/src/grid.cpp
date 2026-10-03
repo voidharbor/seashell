@@ -174,7 +174,7 @@ void Grid::toCell(const VTermScreenCell& vc, Cell& out) {
   out.a.strike = vc.attrs.strike;
   out.a.reverse = vc.attrs.reverse;
   out.a.blink = vc.attrs.blink;
-  out.a.dim = 0;
+  out.a.dim = vc.attrs.dim;
   out.a.uri = vc.uri_id;
 }
 
@@ -198,6 +198,7 @@ void Grid::fromCell(const Cell& c, VTermScreenCell& out) const {
   out.attrs.strike = c.a.strike;
   out.attrs.reverse = c.a.reverse;
   out.attrs.blink = c.a.blink;
+  out.attrs.dim = c.a.dim;
   out.uri_id = c.a.uri;
 }
 

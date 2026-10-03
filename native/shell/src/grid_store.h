@@ -23,7 +23,7 @@ constexpr uint32_t kColorDefault = 0xFF000000u;
 constexpr uint32_t kColorPalette = 0xFE000000u;
 inline bool colorIsPalette(uint32_t c) { return (c & 0xFF000000u) == kColorPalette; }
 
-// dim stays 0: libvterm keeps no faint attribute (SGR 2 is parsed and dropped).
+// dim is SGR 2 (faint), kept by the libvterm patch in PATCHES.md.
 struct CellAttrs {
   uint32_t fg = kColorDefault, bg = kColorDefault;
   uint8_t bold : 1, italic : 1, underline : 2, strike : 1, reverse : 1, blink : 1, dim : 1;

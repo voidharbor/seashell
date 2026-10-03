@@ -51,6 +51,14 @@ inline const TermPalette& paletteFor(const std::string& key) {
 constexpr uint32_t kFindMatch = 0x255A1E;
 constexpr uint32_t kFindActive = 0x3C5A8A;
 
+// Text at half opacity over a background, channel by channel: how xterm.js
+// (addon-webgl, DIM_OPACITY 0.5) draws SGR 2 faint text.
+inline uint32_t blendHalf(uint32_t fg, uint32_t bg) {
+  uint32_t out = 0;
+  for (int shift = 0; shift <= 16; shift += 8) out |= ((((fg >> shift) & 0xFF) + ((bg >> shift) & 0xFF)) / 2) << shift;
+  return out;
+}
+
 // xterm's 256-color table above the 16 the theme owns: the 6x6x6 cube
 // (levels 0, 95, 135, 175, 215, 255) and 24 grays from 8 in steps of 10.
 inline uint32_t xterm256(int idx, const TermPalette& p) {

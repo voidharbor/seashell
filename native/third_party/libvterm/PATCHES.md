@@ -8,8 +8,8 @@ Source: https://github.com/neovim/libvterm, branch `nvim`, commit
 ## Edits
 
 The changes to upstream are the width hooks (Task 10), the OSC 8 cell field
-and the bracketed paste getter (Task 11), and the split-cluster fix in
-`on_text`, listed below.
+and the bracketed paste getter (Task 11), the split-cluster fix in `on_text`,
+and the SGR 2 faint attribute (Phase 2 Task 19), listed below.
 
 ### Width hooks
 
@@ -562,4 +562,175 @@ cursor past it when it grew and still fits on the row.
        putglyph(state, state->combine_chars, state->combine_width, state->combine_pos);
      }
      else {
+```
+
+### SGR 2 faint
+
+Upstream parses SGR 2 and drops it, so faint text drew at full strength where
+xterm.js draws it at half opacity (the VT parity gate's `dim` field, corpus
+04-sgr). The pen, the screen pen and `VTermScreenCellAttrs` gain a `dim` bit,
+`VTERM_ATTR_DIM` and `VTERM_ATTR_DIM_MASK` are appended after the upstream
+values, SGR 2 sets it and SGR 22 clears it with bold (as xterm.js does), and the
+reflow pop path, `vterm_screen_get_cell`, `attrs_differ`, the saved pen,
+DECRQSS and `vterm_get_attr_type` carry it.
+
+```diff
+--- a/include/vterm.h
++++ b/include/vterm.h
+@@ -245,6 +245,7 @@
+   VTERM_ATTR_BACKGROUND, // color:  40-49 100-107
+   VTERM_ATTR_SMALL,      // bool:   73, 74, 75
+   VTERM_ATTR_BASELINE,   // number: 73, 74, 75
++  VTERM_ATTR_DIM,        // bool:   2, 22 (SeaShell, PATCHES.md)
+ 
+   VTERM_N_ATTRS
+ } VTermAttr;
+@@ -513,6 +514,7 @@
+     unsigned int dhl       : 2; /* On a DECDHL line (1=top 2=bottom) */
+     unsigned int small     : 1;
+     unsigned int baseline  : 2;
++    unsigned int dim       : 1; /* SGR 2 faint (SeaShell, PATCHES.md) */
+ } VTermScreenCellAttrs;
+ 
+ enum {
+@@ -598,8 +600,9 @@
+   VTERM_ATTR_CONCEAL_MASK    = 1 << 9,
+   VTERM_ATTR_SMALL_MASK      = 1 << 10,
+   VTERM_ATTR_BASELINE_MASK   = 1 << 11,
++  VTERM_ATTR_DIM_MASK        = 1 << 12,
+ 
+-  VTERM_ALL_ATTRS_MASK = (1 << 12) - 1
++  VTERM_ALL_ATTRS_MASK = (1 << 13) - 1
+ } VTermAttrMask;
+ 
+ int vterm_screen_get_attrs_extent(const VTermScreen *screen, VTermRect *extent, VTermPos pos, VTermAttrMask attrs);
+--- a/src/vterm_internal.h
++++ b/src/vterm_internal.h
+@@ -50,6 +50,7 @@
+   unsigned int font:4; /* To store 0-9 */
+   unsigned int small:1;
+   unsigned int baseline:2;
++  unsigned int dim:1;   /* SeaShell: SGR 2 faint */
+ };
+ 
+ struct VTermState
+--- a/src/pen.c
++++ b/src/pen.c
+@@ -179,6 +179,7 @@
+   state->pen.font = 0;      setpenattr_int (state, VTERM_ATTR_FONT, 0);
+   state->pen.small = 0;     setpenattr_bool(state, VTERM_ATTR_SMALL, 0);
+   state->pen.baseline = 0;  setpenattr_int (state, VTERM_ATTR_BASELINE, 0);
++  state->pen.dim = 0;       setpenattr_bool(state, VTERM_ATTR_DIM, 0);
+ 
+   state->pen.fg = state->default_fg;  setpenattr_col(state, VTERM_ATTR_FOREGROUND, state->default_fg);
+   state->pen.bg = state->default_bg;  setpenattr_col(state, VTERM_ATTR_BACKGROUND, state->default_bg);
+@@ -193,6 +194,7 @@
+     state->pen = state->saved.pen;
+ 
+     setpenattr_bool(state, VTERM_ATTR_BOLD,      state->pen.bold);
++    setpenattr_bool(state, VTERM_ATTR_DIM,       state->pen.dim);
+     setpenattr_int (state, VTERM_ATTR_UNDERLINE, state->pen.underline);
+     setpenattr_bool(state, VTERM_ATTR_ITALIC,    state->pen.italic);
+     setpenattr_bool(state, VTERM_ATTR_BLINK,     state->pen.blink);
+@@ -301,6 +303,11 @@
+       break;
+     }
+ 
++    case 2: // Faint on (SeaShell)
++      state->pen.dim = 1;
++      setpenattr_bool(state, VTERM_ATTR_DIM, 1);
++      break;
++
+     case 3: // Italic on
+       state->pen.italic = 1;
+       setpenattr_bool(state, VTERM_ATTR_ITALIC, 1);
+@@ -359,9 +366,11 @@
+       setpenattr_int(state, VTERM_ATTR_UNDERLINE, state->pen.underline);
+       break;
+ 
+-    case 22: // Bold off
++    case 22: // Bold and faint off
+       state->pen.bold = 0;
+       setpenattr_bool(state, VTERM_ATTR_BOLD, 0);
++      state->pen.dim = 0;
++      setpenattr_bool(state, VTERM_ATTR_DIM, 0);
+       break;
+ 
+     case 23: // Italic and Gothic (currently unsupported) off
+@@ -508,6 +517,9 @@
+   if(state->pen.bold)
+     args[argi++] = 1;
+ 
++  if(state->pen.dim)
++    args[argi++] = 2;
++
+   if(state->pen.italic)
+     args[argi++] = 3;
+ 
+@@ -555,6 +567,10 @@
+     val->boolean = state->pen.bold;
+     return 1;
+ 
++  case VTERM_ATTR_DIM:
++    val->boolean = state->pen.dim;
++    return 1;
++
+   case VTERM_ATTR_UNDERLINE:
+     val->number = state->pen.underline;
+     return 1;
+--- a/src/screen.c
++++ b/src/screen.c
+@@ -27,6 +27,7 @@
+   unsigned int font      : 4; /* 0 to 9 */
+   unsigned int small     : 1;
+   unsigned int baseline  : 2;
++  unsigned int dim       : 1; /* SeaShell: SGR 2 faint */
+ 
+   /* Extra state storage that isn't strictly pen-related */
+   unsigned int protected_cell : 1;
+@@ -488,6 +489,9 @@
+   case VTERM_ATTR_BASELINE:
+     screen->pen.baseline = val->number;
+     return 1;
++  case VTERM_ATTR_DIM:
++    screen->pen.dim = val->boolean;
++    return 1;
+ 
+   case VTERM_N_ATTRS:
+     return 0;
+@@ -746,6 +750,7 @@
+         dst->pen.font      = src->attrs.font;
+         dst->pen.small     = src->attrs.small;
+         dst->pen.baseline  = src->attrs.baseline;
++        dst->pen.dim       = src->attrs.dim;
+ 
+         dst->pen.fg = src->fg;
+         dst->pen.bg = src->bg;
+@@ -1241,6 +1246,7 @@
+   cell->attrs.font      = intcell->pen.font;
+   cell->attrs.small     = intcell->pen.small;
+   cell->attrs.baseline  = intcell->pen.baseline;
++  cell->attrs.dim       = intcell->pen.dim;
+ 
+   cell->attrs.dwl = intcell->pen.dwl;
+   cell->attrs.dhl = intcell->pen.dhl;
+@@ -1357,6 +1363,8 @@
+ {
+   if((attrs & VTERM_ATTR_BOLD_MASK)       && (a->pen.bold != b->pen.bold))
+     return 1;
++  if((attrs & VTERM_ATTR_DIM_MASK)        && (a->pen.dim != b->pen.dim))
++    return 1;
+   if((attrs & VTERM_ATTR_UNDERLINE_MASK)  && (a->pen.underline != b->pen.underline))
+     return 1;
+   if((attrs & VTERM_ATTR_ITALIC_MASK)     && (a->pen.italic != b->pen.italic))
+--- a/src/vterm.c
++++ b/src/vterm.c
+@@ -278,6 +278,7 @@
+     case VTERM_ATTR_BACKGROUND: return VTERM_VALUETYPE_COLOR;
+     case VTERM_ATTR_SMALL:      return VTERM_VALUETYPE_BOOL;
+     case VTERM_ATTR_BASELINE:   return VTERM_VALUETYPE_INT;
++    case VTERM_ATTR_DIM:        return VTERM_VALUETYPE_BOOL;
+ 
+     case VTERM_N_ATTRS: return 0;
+   }
 ```

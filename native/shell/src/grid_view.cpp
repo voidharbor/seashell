@@ -95,6 +95,7 @@ GridView::Colors GridView::resolve(const CellAttrs& a) const {
   };
   Colors out{ one(a.fg, true), one(a.bg, false) };
   if (a.reverse) std::swap(out.fg, out.bg);
+  if (a.dim) out.fg = blendHalf(out.fg, out.bg);   // after the swap, as xterm.js's _getForegroundColor
   return out;
 }
 
