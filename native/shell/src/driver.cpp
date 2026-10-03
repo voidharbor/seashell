@@ -8,6 +8,7 @@
 #include <ws2tcpip.h>
 #include <bcrypt.h>
 #include <psapi.h>
+#include <timeapi.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -16,6 +17,7 @@
 
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "psapi.lib")
+#pragma comment(lib, "winmm.lib")
 
 using nlohmann::json;
 
@@ -515,6 +517,14 @@ json Driver::drag(const json& req) {
   LARGE_INTEGER t0, t1, freq;
   QueryPerformanceFrequency(&freq);
   QueryPerformanceCounter(&t0);
+  // The poll below sleeps 1 ms between looks at the model seq. Sleep(1) waits
+  // for the next scheduler tick, 15.6 ms by default, which would be read as
+  // the shell's own latency; the drag raises the timer resolution to 1 ms
+  // for its duration (test driver only, released on every return).
+  struct TimerPeriod {
+    TimerPeriod() { timeBeginPeriod(1); }
+    ~TimerPeriod() { timeEndPeriod(1); }
+  } period;
   json down = onUi({ { "cmd", "dragStep" }, { "phase", "down" }, { "target", strArg(req, "target") } });
   if (!down.value("ok", false)) return down;
   int models = 0, timeouts = 0;
