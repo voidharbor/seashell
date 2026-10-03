@@ -15,6 +15,8 @@
 #include "model.h"
 #include "ui/edit.h"
 #include "ui/painter.h"
+#include "ui/popup.h"
+#include "ui/scrollbar.h"
 #include "ui/tokens.h"
 
 class Ui {
@@ -30,14 +32,14 @@ public:
   std::string bodyTargetAt(POINT bodyPx) const;      // "pane:<id>:grid" | "pane:<id>:close" | "divider:<id>" | "find:query" | "restore:yes" | ...
   // Mouse messages at client pixels of the top-level window (a body message
   // adds the strip height; a wheel converts its screen point). Emits ui:event;
-  // true when consumed (not a grid).
-  bool mouse(UINT msg, POINT clientPx, int button, Mods);
+  // true when consumed (not a grid). wheelDelta is WM_MOUSEWHEEL's.
+  bool mouse(UINT msg, POINT clientPx, int button, Mods, int wheelDelta = 0);
   bool key(UINT msg, WPARAM, LPARAM, Mods);          // for the focused edit widget or an open card; false lets the grid have it
-  LPCWSTR cursorFor(POINT bodyPx) const;             // IDC_SIZEWE over a vertical divider, IDC_SIZENS over a horizontal one, IDC_IBEAM over an edit, IDC_ARROW
+  LPCWSTR cursorFor(POINT bodyPx) const;             // IDC_SIZEWE over a vertical divider or the sidebar grip, IDC_SIZENS over a horizontal divider, IDC_IBEAM over an edit, IDC_ARROW
   void mouseLeave(bool strip);                       // WM_MOUSELEAVE, or the pointer went onto the caption
   void captionPress();                               // a press on strip:empty (the window drag): blur the edit
   void captionDblClick();                            // dblclick strip:empty, which the core turns into a new tab
-  void cancelDrag();                                 // the body lost the capture mid divider drag: end it where it was
+  void cancelDrag();                                 // the body lost the capture mid divider, grip or scrollbar drag: end it where it was
   // The driver's click by target: what a click on that target does (the
   // shell's own handling first, else the ui:event), without a pointer.
   void targetClick(const std::string& target, bool dbl, int button, Mods m);
@@ -50,8 +52,18 @@ public:
   // A target's rect in client pixels of the top-level window (the driver's
   // drag and point clicks); false when nothing on screen has that id.
   bool targetRect(const std::string& target, D2D1_RECT_F* clientPx) const;
+  // The explorer's rows as the last layout placed them (the driver's `rows`):
+  // y and h in client DIP, `visible` when some of the row shows in the tree.
+  // viewportDip is the tree's rect in client DIP (zero while hidden),
+  // offsetDip its scroll offset.
+  struct DrawnRow { std::string id; float y = 0, h = 0; bool visible = false; };
+  std::vector<DrawnRow> sidebarRows(D2D1_RECT_F* viewportDip, float* offsetDip) const;
+  // The driver's scrollTo: a view's scroll offset in DIP, clamped; false when
+  // that view is not on screen ('sidebar' is the only one so far).
+  bool scrollView(const std::string& view, float offsetDip, float* clamped);
 
 private:
+  Ui();
   struct Hit { D2D1_RECT_F r; std::string target; };
   void layout();                                 // runs every view with a null painter to register the hits
   void hit(bool strip, D2D1_RECT_F r, const std::string& target);
@@ -83,6 +95,29 @@ private:
   void viewStatus(Painter& p);                   // status.cpp
   void viewFindBar(Painter& p);                  // overlays.cpp
   void viewOverlays(Painter& p);                 // overlays.cpp: toast, empty state, splash, restore card, tooltip
+  void viewSidebar(Painter& p);                  // sidebar.cpp: the explorer column, its scrollbar, the strip and the grip
+  void viewMenu(Painter& p);                     // sidebar.cpp: the context menu popup over the body
+
+  // The explorer column's geometry for the current model (sidebar.cpp):
+  // rects in body pixels; rowDip and padDip in the model's DIP (uiScale in).
+  struct SidebarGeom {
+    bool on = false;
+    D2D1_RECT_F col{}, head{}, tree{}, strip{}, bar{};
+    float rowsRight = 0;                         // the rows' right edge: the tree's, or the scrollbar's left
+    float rowDip = 22, padDip = 4;
+    std::vector<int> line;                       // each row's line in the tree (a truncation line takes one)
+    int lines = 0;
+  };
+  void sidebarGeometry();
+  float sidebarRowTop(size_t i) const;           // body pixels
+  void syncSidebar(const UiModel& old);
+  void sidebarReveal();
+  bool sidebarWheel(POINT clientPx, int delta);
+  void sidebarScrolled(POINT clientPx);
+  bool sidebarBarPress(UINT msg, POINT clientPx, const std::string& target);
+  bool sidebarAnimating(ULONGLONG now) const;
+  bool menuSendsOwnDown(const std::string& target, int button) const;
+  void closeMenuOnPress(const std::string& target, float xDip, float yDip, Mods m);
 
   UiModel m_;
   bool haveModel_ = false;
@@ -108,4 +143,11 @@ private:
   std::map<std::string, ULONGLONG> doneSince_;   // when each pane's attention turned 'done'
   std::map<std::string, ULONGLONG> waitingSince_;
   UINT_PTR animTimer_ = 0;
+  SidebarGeom sb_;
+  ScrollBar sbBar_;
+  ScrollState sbScroll_;                         // the tree's scroll, DIP (shell view state)
+  double sbRevealSeq_ = 0;                       // the last revealSeq centred
+  std::map<std::string, ULONGLONG> flashSince_;  // when each flashing row's flash began, by path
+  Popup menu_;                                   // the explorer's context menu
+  int pressedButton_ = 0;                        // the button of the press in pressed_
 };

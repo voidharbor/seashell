@@ -30,9 +30,19 @@ const int kModCtrl = 1, kModShift = 2, kModAlt = 4;
 
 json fail(const std::string& code) { return { { "ok", false }, { "code", code } }; }
 
-// Divider `id`'s rect in the applied model, DIP; false when it has none.
-bool dividerRect(const std::string& id, std::array<double, 4>* out) {
-  for (const DividerModel& d : App::instance().model().dividers)
+// The rect a drag of `target` moves in the applied model, DIP: a divider's
+// rect for divider:<id>, sidebar.gripRect for sidebar:grip; false otherwise.
+bool dragRect(const std::string& target, std::array<double, 4>* out) {
+  const UiModel& m = App::instance().model();
+  if (target == "sidebar:grip") {
+    if (!m.sidebar.visible) return false;
+    const Rect& r = m.sidebar.gripRect;
+    *out = { r.x, r.y, r.w, r.h };
+    return true;
+  }
+  if (target.rfind("divider:", 0) != 0) return false;
+  std::string id = target.substr(8);
+  for (const DividerModel& d : m.dividers)
     if (d.id == id) { *out = { d.rect.x, d.rect.y, d.rect.w, d.rect.h }; return true; }
   return false;
 }
@@ -393,6 +403,15 @@ json Driver::execute(const json& req) {
   if (cmd == "stats") return stats();
   if (cmd == "coreKill") return coreKill();
   if (cmd == "grid") return grid(strArg(req, "paneId"));
+  if (cmd == "wheel") return wheel(req);
+  if (cmd == "rows") return rows();
+  if (cmd == "scrollTo") {
+    // A view's scroll offset in DIP ('sidebar'; the file viewer's 'file:<paneId>' arrives with it).
+    if (!req.contains("offset") || !req["offset"].is_number()) return fail("ENOOFFSET");
+    float clamped = 0;
+    if (!Ui::instance().scrollView(strArg(req, "view"), req["offset"].get<float>(), &clamped)) return fail("ENOVIEW");
+    return { { "ok", true }, { "offset", clamped } };
+  }
   if (cmd == "width") {
     // libvterm's cluster widths with the shell's hooks, as width-test prints them.
     if (!req.contains("strings") || !req["strings"].is_array()) return fail("ENOSTRINGS");
@@ -522,8 +541,8 @@ json Driver::click(const json& req, const char* type) {
 // time of the whole drag, press to release (Task 18 divides it by steps).
 // moveMs is per move, from just before the move is posted to the UI thread to
 // the moment Ui::setModel has applied the first model after it that moved the
-// dragged divider (noteModel's stamp; a metrics or status bar model in between
-// stamps nothing): the event-to-model round trip of spec 10. The wait is a
+// dragged divider, or the grip for sidebar:grip (noteModel's stamp; a metrics
+// or status bar model in between stamps nothing): the event-to-model round trip of spec 10. The wait is a
 // condition variable the UI thread signals, never a poll, so no scheduler tick
 // is in it. A step that timed out can still have its late model stamp the next
 // step, so a drag is only clean with no timeouts. The release is sent whatever
@@ -661,7 +680,8 @@ json Driver::dragStep(const json& req) {
     LPARAM pt = at(dragX_, dragY_, &to);
     dragWin_ = to;
     std::string target = strArg(req, "target");
-    dragDividerId_ = target.rfind("divider:", 0) == 0 ? target.substr(8) : "";
+    std::array<double, 4> r0;
+    dragTarget_ = dragRect(target, &r0) ? target : "";
     SendMessageW(to, WM_MOUSEMOVE, 0, pt);
     SendMessageW(to, WM_LBUTTONDOWN, MK_LBUTTON, pt);
     return { { "ok", true }, { "seq", seq }, { "x", dragX_ / scale }, { "y", dragY_ / scale } };
@@ -678,7 +698,7 @@ json Driver::dragStep(const json& req) {
       std::lock_guard<std::mutex> lock(modelMu_);
       modelWaitSeq_ = seq;
       modelAt_ = 0;
-      armedRectSet_ = !dragDividerId_.empty() && dividerRect(dragDividerId_, &armedRect_);
+      armedRectSet_ = !dragTarget_.empty() && dragRect(dragTarget_, &armedRect_);
     }
     SendMessageW(dragWin_, WM_MOUSEMOVE, MK_LBUTTON, pt);
     return { { "ok", true }, { "seq", seq } };
@@ -686,11 +706,55 @@ json Driver::dragStep(const json& req) {
   if (phase == "up") {
     SendMessageW(dragWin_, WM_LBUTTONUP, 0, pt);
     dragWin_ = nullptr;
-    dragDividerId_.clear();
+    dragTarget_.clear();
     armedRectSet_ = false;
     return { { "ok", true }, { "seq", seq } };
   }
   return fail("EBADPHASE");
+}
+
+// wheel {target?, x?, y?, dy}: a WM_MOUSEWHEEL of dy notches (dy * 120, so
+// negative scrolls toward the end) at the centre of the target's hit rect or
+// at x, y client DIP, sent to the body (the window with the keyboard focus,
+// where Windows delivers the wheel) through the window procedure, with the
+// point in screen coordinates as the real message carries it.
+json Driver::wheel(const json& req) {
+  Window& win = Window::instance();
+  HWND body = win.body();
+  if (!body || !win.hwnd()) return fail("ENOWINDOW");
+  if (!req.contains("dy") || !req["dy"].is_number()) return fail("ENODY");
+  float scale = win.dpi().scale();
+  std::string target = strArg(req, "target");
+  float cx, cy;
+  if (!target.empty()) {
+    D2D1_RECT_F r{};
+    if (!Ui::instance().targetRect(target, &r)) return fail("ENOTARGET");
+    cx = (r.left + r.right) / 2;
+    cy = (r.top + r.bottom) / 2;
+  } else if (req.contains("x") && req["x"].is_number() && req.contains("y") && req["y"].is_number()) {
+    cx = req["x"].get<float>() * scale;
+    cy = req["y"].get<float>() * scale;
+  } else {
+    return fail("ENOTARGET");
+  }
+  POINT sp{ (LONG)std::lround(cx), (LONG)std::lround(cy) };
+  ClientToScreen(win.hwnd(), &sp);
+  int delta = (int)std::lround(req["dy"].get<double>() * WHEEL_DELTA);
+  delta = std::max(-32768, std::min(32767, delta));
+  SendMessageW(body, WM_MOUSEWHEEL, MAKEWPARAM(0, (WORD)(short)delta), MAKELPARAM((WORD)(short)sp.x, (WORD)(short)sp.y));
+  return { { "ok", true }, { "x", cx / scale }, { "y", cy / scale }, { "delta", delta } };
+}
+
+// rows: the explorer's rows as the shell placed them on the last layout,
+// {id, y, h, visible} in client DIP, with the tree's viewport and offset.
+json Driver::rows() {
+  D2D1_RECT_F vp{};
+  float offset = 0;
+  std::vector<Ui::DrawnRow> drawn = Ui::instance().sidebarRows(&vp, &offset);
+  json out = json::array();
+  for (const Ui::DrawnRow& r : drawn) out.push_back({ { "id", r.id }, { "y", r.y }, { "h", r.h }, { "visible", r.visible } });
+  return { { "ok", true }, { "rows", out }, { "offset", offset },
+           { "viewport", { { "x", vp.left }, { "y", vp.top }, { "w", vp.right - vp.left }, { "h", vp.bottom - vp.top } } } };
 }
 
 void Driver::noteFrame(double ms) {
@@ -707,9 +771,9 @@ void Driver::noteModel(double seq) {
   {
     std::lock_guard<std::mutex> lock(modelMu_);
     if (modelWaitSeq_ < 0 || seq <= modelWaitSeq_ || modelAt_ != 0) return;
-    // A divider drag's step is the model that moved the divider.
+    // A divider or grip drag's step is the model that moved it.
     std::array<double, 4> r;
-    if (armedRectSet_ && dividerRect(dragDividerId_, &r) && r == armedRect_) return;
+    if (armedRectSet_ && dragRect(dragTarget_, &r) && r == armedRect_) return;
     modelAt_ = t.QuadPart;
   }
   modelCv_.notify_all();

@@ -226,7 +226,7 @@ bool App::onInput(HWND from, UINT msg, WPARAM w, LPARAM l) {
     if (body && msg != WM_MOUSEWHEEL) pt.y += win.bodyRect().top;
     int button = (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP || msg == WM_RBUTTONDBLCLK) ? 2
                : (msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP || msg == WM_MBUTTONDBLCLK) ? 1 : 0;
-    if (Ui::instance().mouse(msg, pt, button, mods)) return true;
+    if (Ui::instance().mouse(msg, pt, button, mods, msg == WM_MOUSEWHEEL ? GET_WHEEL_DELTA_WPARAM(w) : 0)) return true;
     // Only the body's client coordinates map onto the grids.
     if (!body && msg != WM_MOUSEWHEEL) return false;
     return input_.mouse(msg, w, l);

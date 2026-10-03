@@ -31,6 +31,98 @@ const Face kNormal{ 0xF2F2F2, 0xEBEBEB, 0xDDDDDD, 0xCFCFCF, 0x707070 };
 const Face kHover{ 0xEAF6FD, 0xD9F0FC, 0xBEE6FD, 0xA7D9F5, 0x3C7FB1 };
 const Face kPressed{ 0xE5F4FC, 0xC4E5F6, 0x98D1EF, 0x68B3DB, 0x2C628B };
 const Face kDisabled{ 0xF4F4F4, 0xF4F4F4, 0xF4F4F4, 0xF4F4F4, 0xADB2B5 };
+
+// The row icons and arrows: factory resources built once in their own unit
+// box (icons.tsx's 16 by 16 viewBox; 10 by 10 for the triangles) and mapped
+// onto the target rect with a transform when drawn.
+using P = D2D1_POINT_2F;
+ComPtr<ID2D1PathGeometry> buildPath(void (*fn)(ID2D1GeometrySink*)) {
+  ComPtr<ID2D1PathGeometry> g;
+  ID2D1Factory1* f = Gfx::instance().d2d();
+  if (!f || FAILED(f->CreatePathGeometry(g.GetAddressOf()))) return nullptr;
+  ComPtr<ID2D1GeometrySink> sk;
+  if (FAILED(g->Open(sk.GetAddressOf()))) return nullptr;
+  fn(sk.Get());
+  if (FAILED(sk->Close())) return nullptr;
+  return g;
+}
+void bez(ID2D1GeometrySink* s, P a, P b, P c) { s->AddBezier(D2D1::BezierSegment(a, b, c)); }
+P pt(float x, float y) { return D2D1::Point2F(x, y); }
+
+// icons.tsx FolderIcon, first path (the back and tab), in absolute coordinates.
+void folderBack(ID2D1GeometrySink* s) {
+  s->BeginFigure(pt(1.5f, 4.2f), D2D1_FIGURE_BEGIN_FILLED);
+  bez(s, pt(1.5f, 3.54f), pt(2.04f, 3.0f), pt(2.7f, 3.0f));
+  s->AddLine(pt(5.8f, 3.0f));
+  bez(s, pt(6.2f, 3.0f), pt(6.58f, 3.2f), pt(6.8f, 3.54f));
+  s->AddLine(pt(7.4f, 4.44f));
+  s->AddLine(pt(13.4f, 4.44f));
+  bez(s, pt(14.06f, 4.44f), pt(14.6f, 4.98f), pt(14.6f, 5.64f));
+  s->AddLine(pt(14.6f, 11.8f));
+  bez(s, pt(14.6f, 12.46f), pt(14.06f, 13.0f), pt(13.4f, 13.0f));
+  s->AddLine(pt(2.7f, 13.0f));
+  bez(s, pt(2.04f, 13.0f), pt(1.5f, 12.46f), pt(1.5f, 11.8f));
+  s->EndFigure(D2D1_FIGURE_END_CLOSED);
+}
+// Its second path (the front).
+void folderFront(ID2D1GeometrySink* s) {
+  s->BeginFigure(pt(1.5f, 6.6f), D2D1_FIGURE_BEGIN_FILLED);
+  s->AddLine(pt(14.6f, 6.6f));
+  s->AddLine(pt(14.6f, 11.8f));
+  bez(s, pt(14.6f, 12.46f), pt(14.06f, 13.0f), pt(13.4f, 13.0f));
+  s->AddLine(pt(2.7f, 13.0f));
+  bez(s, pt(2.04f, 13.0f), pt(1.5f, 12.46f), pt(1.5f, 11.8f));
+  s->EndFigure(D2D1_FIGURE_END_CLOSED);
+}
+// icons.tsx FileIcon: the page and its folded corner.
+void filePage(ID2D1GeometrySink* s) {
+  s->BeginFigure(pt(3.6f, 1.6f), D2D1_FIGURE_BEGIN_FILLED);
+  s->AddLine(pt(8.9f, 1.6f));
+  s->AddLine(pt(12.4f, 5.1f));
+  s->AddLine(pt(12.4f, 14.4f));
+  bez(s, pt(12.4f, 14.9f), pt(12.0f, 15.3f), pt(11.5f, 15.3f));
+  s->AddLine(pt(3.6f, 15.3f));
+  bez(s, pt(3.1f, 15.3f), pt(2.7f, 14.9f), pt(2.7f, 14.4f));
+  s->AddLine(pt(2.7f, 2.5f));
+  bez(s, pt(2.7f, 2.0f), pt(3.1f, 1.6f), pt(3.6f, 1.6f));
+  s->EndFigure(D2D1_FIGURE_END_CLOSED);
+}
+void fileFold(ID2D1GeometrySink* s) {
+  s->BeginFigure(pt(8.9f, 1.6f), D2D1_FIGURE_BEGIN_FILLED);
+  s->AddLine(pt(12.4f, 5.1f));
+  s->AddLine(pt(9.5f, 5.1f));
+  s->AddArc(D2D1::ArcSegment(pt(8.9f, 4.5f), D2D1::SizeF(0.6f, 0.6f), 0, D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+  s->EndFigure(D2D1_FIGURE_END_CLOSED);
+}
+void triangle(ID2D1GeometrySink* s, P a, P b, P c) {
+  s->BeginFigure(a, D2D1_FIGURE_BEGIN_FILLED);
+  s->AddLine(b);
+  s->AddLine(c);
+  s->EndFigure(D2D1_FIGURE_END_CLOSED);
+}
+void triRight(ID2D1GeometrySink* s) { triangle(s, pt(2.5f, 1), pt(7.5f, 5), pt(2.5f, 9)); }
+void triDown(ID2D1GeometrySink* s) { triangle(s, pt(1, 2.5f), pt(9, 2.5f), pt(5, 7.5f)); }
+void triLeft(ID2D1GeometrySink* s) { triangle(s, pt(7.5f, 1), pt(2.5f, 5), pt(7.5f, 9)); }
+void triUp(ID2D1GeometrySink* s) { triangle(s, pt(1, 7.5f), pt(9, 7.5f), pt(5, 2.5f)); }
+
+struct Shapes {
+  ComPtr<ID2D1PathGeometry> folderBack, folderFront, filePage, fileFold, tri[4];
+};
+const Shapes& shapes() {
+  static Shapes s = [] {
+    Shapes x;
+    x.folderBack = buildPath(folderBack);
+    x.folderFront = buildPath(folderFront);
+    x.filePage = buildPath(filePage);
+    x.fileFold = buildPath(fileFold);
+    x.tri[0] = buildPath(triRight);
+    x.tri[1] = buildPath(triDown);
+    x.tri[2] = buildPath(triLeft);
+    x.tri[3] = buildPath(triUp);
+    return x;
+  }();
+  return s;
+}
 }  // namespace
 
 uint32_t mixRgb(uint32_t rgb, uint32_t base, float w) {
@@ -116,6 +208,88 @@ void Painter::gradientV(D2D1_RECT_F r, const D2D1_GRADIENT_STOP* stops, UINT n, 
   } else {
     rt_->FillRectangle(r, g.Get());
   }
+}
+
+void Painter::gradientH(D2D1_RECT_F r, const D2D1_GRADIENT_STOP* stops, UINT n, float radiusDip) {
+  if (!rt_ || r.right <= r.left) return;
+  ComPtr<ID2D1GradientStopCollection> coll;
+  if (FAILED(rt_->CreateGradientStopCollection(stops, n, coll.GetAddressOf()))) return;
+  ComPtr<ID2D1LinearGradientBrush> g;
+  if (FAILED(rt_->CreateLinearGradientBrush(D2D1::LinearGradientBrushProperties(D2D1::Point2F(r.left, 0), D2D1::Point2F(r.right, 0)),
+                                            coll.Get(), g.GetAddressOf())))
+    return;
+  if (radiusDip > 0) {
+    float rad = radiusDip * scale();
+    rt_->FillRoundedRectangle(D2D1::RoundedRect(r, rad, rad), g.Get());
+  } else {
+    rt_->FillRectangle(r, g.Get());
+  }
+}
+
+void Painter::fillShape(ID2D1Geometry* g, D2D1_RECT_F box, float units, uint32_t rgb, float alpha) {
+  if (!rt_ || !g) return;
+  D2D1_MATRIX_3X2_F old;
+  rt_->GetTransform(&old);
+  float sx = (box.right - box.left) / units, sy = (box.bottom - box.top) / units;
+  rt_->SetTransform(D2D1::Matrix3x2F::Scale(sx, sy) * D2D1::Matrix3x2F::Translation(box.left, box.top) * old);
+  rt_->FillGeometry(g, brush(rgb, alpha));
+  rt_->SetTransform(old);
+}
+
+void Painter::strokeShape(ID2D1Geometry* g, D2D1_RECT_F box, float units, uint32_t rgb, float alpha) {
+  if (!rt_ || !g) return;
+  D2D1_MATRIX_3X2_F old;
+  rt_->GetTransform(&old);
+  float sx = (box.right - box.left) / units, sy = (box.bottom - box.top) / units;
+  rt_->SetTransform(D2D1::Matrix3x2F::Scale(sx, sy) * D2D1::Matrix3x2F::Translation(box.left, box.top) * old);
+  // One device pixel whatever the box's size.
+  rt_->DrawGeometry(g, brush(rgb, alpha), std::max(1.f, std::round(dpi_)) / std::max(0.01f, sx));
+  rt_->SetTransform(old);
+}
+
+namespace {
+// The 16 DIP icon box at r's centre, on whole pixels.
+D2D1_RECT_F iconBox(D2D1_RECT_F r, float side) {
+  float x = std::round((r.left + r.right - side) / 2), y = std::round((r.top + r.bottom - side) / 2);
+  return D2D1::RectF(x, y, x + side, y + side);
+}
+}  // namespace
+
+void Painter::folderGlyph(D2D1_RECT_F r, bool open, float alpha) {
+  if (!rt_) return;
+  const Shapes& sh = shapes();
+  D2D1_RECT_F b = iconBox(r, px(16));
+  fillShape(sh.folderBack.Get(), b, 16, open ? 0x6FB1F0 : 0x5A9BE0, alpha);
+  fillShape(sh.folderFront.Get(), b, 16, open ? 0x9CCBF7 : 0x7FB6EC, alpha);
+}
+
+void Painter::fileGlyph(D2D1_RECT_F r, const uint32_t* chip, float alpha) {
+  if (!rt_) return;
+  const Shapes& sh = shapes();
+  D2D1_RECT_F b = iconBox(r, px(16));
+  fillShape(sh.filePage.Get(), b, 16, 0xE8EDF2, alpha);
+  // The page's own #e8edf2 hardly shows on the light panel: a 1 px edge.
+  strokeShape(sh.filePage.Get(), b, 16, 0x8D9BA8, alpha);
+  fillShape(sh.fileFold.Get(), b, 16, 0xB9C6D2, alpha);
+  if (chip) {
+    float u = (b.right - b.left) / 16;
+    D2D1_RECT_F c = D2D1::RectF(std::round(b.left + 4.55f * u), std::round(b.top + 8.4f * u), 0, 0);
+    c.right = c.left + std::round(6 * u);
+    c.bottom = c.top + std::round(6 * u);
+    roundedRect(c, 1, *chip, alpha, 0, 0);
+  }
+}
+
+void Painter::arrow(D2D1_RECT_F box, Dir dir, uint32_t rgb, float alpha) {
+  if (!rt_) return;
+  fillShape(shapes().tri[(int)dir].Get(), box, 10, rgb, alpha);
+}
+
+void Painter::twisty(D2D1_RECT_F r, bool open, uint32_t rgb, float alpha) {
+  if (!rt_) return;
+  float side = px(9);
+  float x = (r.left + r.right - side) / 2, y = (r.top + r.bottom - side) / 2;
+  arrow(D2D1::RectF(x, y, x + side, y + side), open ? Dir::Down : Dir::Right, rgb, alpha);
 }
 
 void Painter::win7Button(D2D1_RECT_F r, BtnState state, const std::wstring& label, float labelDip) {

@@ -163,6 +163,74 @@ struct ChordModel {
   }
 };
 
+// The file explorer (Phase 2 Task 4). Paths are the core's (Linux) paths.
+struct SidebarRow {
+  std::string id;                   // 'row:' + path; the target is 'sidebar:' + id
+  std::string path, name;
+  int depth = 0;
+  bool isDir = false, expanded = false, selected = false, ignored = false, flashing = false;
+  std::optional<std::string> chip;  // '#rrggbb' for a file's extension chip
+  std::optional<std::string> error; // '(ENOENT)' for an open directory that failed to list
+  bool truncatedAfter = false;      // the '… too many entries to list' line follows this row
+  static SidebarRow parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    SidebarRow r;
+    r.id = str(j, "id"); r.path = str(j, "path"); r.name = str(j, "name");
+    r.depth = integer(j, "depth");
+    r.isDir = flag(j, "isDir"); r.expanded = flag(j, "expanded"); r.selected = flag(j, "selected");
+    r.ignored = flag(j, "ignored"); r.flashing = flag(j, "flashing");
+    r.chip = optStr(j, "chip"); r.error = optStr(j, "error");
+    r.truncatedAfter = flag(j, "truncatedAfter");
+    return r;
+  }
+};
+
+struct SidebarMenuItem {
+  std::string id, label;
+  bool enabled = true;
+  static SidebarMenuItem parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    return SidebarMenuItem{ str(j, "id"), str(j, "label"), flag(j, "enabled", true) };
+  }
+};
+
+struct SidebarMenu {
+  std::string rowId;
+  double x = 0, y = 0;              // the right click's point, window client DIP
+  std::vector<SidebarMenuItem> items;
+};
+
+struct SidebarModel {
+  bool visible = false;
+  Rect rect, gripRect;              // DIP; all zero while hidden
+  double width = 260;               // the stored base width (uiScale 1)
+  std::vector<SidebarRow> rows;
+  double revealSeq = 0;
+  std::optional<std::string> revealRowId;
+  std::string strip;                // the selected path or the root
+  std::optional<SidebarMenu> menu;
+  static SidebarModel parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    SidebarModel s;
+    s.visible = flag(j, "visible");
+    if (const json* r = field(j, "rect")) s.rect = Rect::parse(*r);
+    if (const json* r = field(j, "gripRect")) s.gripRect = Rect::parse(*r);
+    s.width = num(j, "width", 260);
+    s.rows = list<SidebarRow>(j, "rows");
+    s.revealSeq = num(j, "revealSeq");
+    s.revealRowId = optStr(j, "revealRowId");
+    s.strip = str(j, "strip");
+    if (const json* m = field(j, "menu"); m && m->is_object()) {
+      SidebarMenu menu;
+      menu.rowId = str(*m, "rowId");
+      menu.x = num(*m, "x"); menu.y = num(*m, "y");
+      menu.items = list<SidebarMenuItem>(*m, "items");
+      s.menu = std::move(menu);
+    }
+    return s;
+  }
+};
+
 struct WindowModel {
   std::string title;
   double uiScale = 1, fontPx = 0, tabStripH = 0, statusH = 0;
@@ -192,6 +260,7 @@ struct UiModel {
   StatusModel status;
   std::vector<ChordModel> chords;
   std::map<std::string, std::string> tokens;   // the Aero token table (Task 16)
+  SidebarModel sidebar;
 
   static UiModel parse(const nlohmann::json& j) {
     using namespace model_detail;
@@ -222,6 +291,7 @@ struct UiModel {
     if (const json* t = field(j, "tokens"); t && t->is_object())
       for (auto it = t->begin(); it != t->end(); ++it)
         if (it.value().is_string()) m.tokens[it.key()] = it.value().get<std::string>();
+    if (const json* s = field(j, "sidebar")) m.sidebar = SidebarModel::parse(*s);
     return m;
   }
 };

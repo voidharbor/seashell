@@ -6,7 +6,9 @@
 // model from the connection thread; `quit` replies, then posts WM_CLOSE;
 // `pingCore` times core:ping round trips from the connection thread; `drag`
 // waits for each move's model on a condition variable that the UI thread
-// signals once Ui::setModel has applied it (noteModel).
+// signals once Ui::setModel has applied it (noteModel). `wheel` sends a
+// WM_MOUSEWHEEL, `scrollTo` sets a view's scroll offset, `rows` lists the
+// explorer's rows as drawn.
 #pragma once
 #include <winsock2.h>
 #include <windows.h>
@@ -41,7 +43,7 @@ public:
   // Stats hooks, UI thread.
   void noteFrame(double ms);        // one body paint, BeginDraw to EndDraw
   void notePtyBytes(size_t n);      // decoded pty:data bytes for any pane
-  void noteModel(double seq);       // a ui:model has been applied (after Ui::setModel); wakes a drag step waiting for it if it moved the dragged divider
+  void noteModel(double seq);       // a ui:model has been applied (after Ui::setModel); wakes a drag step waiting for it if it moved the dragged divider or grip
   // The model path (stats' modelMs, medians over the last 200 models): per
   // ui:model the reader-to-UI queue hop, the JSON parse, UiModel::parse,
   // Ui::setModel, and the apply from the end of the build to the end of
@@ -71,6 +73,8 @@ private:
   nlohmann::json stats();
   nlohmann::json grid(const std::string& paneId);
   nlohmann::json coreKill();
+  nlohmann::json wheel(const nlohmann::json& req);           // UI thread: one WM_MOUSEWHEEL through the window procedure
+  nlohmann::json rows();                                     // UI thread: the explorer rows as drawn
 
   SOCKET listen_ = INVALID_SOCKET;
   std::thread acceptor_;
@@ -82,7 +86,7 @@ private:
   int heldMods_ = -1;                      // -1, or the kMod* bits (driver.cpp) while dispatching a chord
   HWND dragWin_ = nullptr;                 // the window a driver drag pressed in, UI thread only
   float dragX_ = 0, dragY_ = 0;            // the press point, client pixels of the top-level window
-  std::string dragDividerId_;              // the divider a driver drag pressed, "" for any other target, UI thread only
+  std::string dragTarget_;                 // the divider or grip a driver drag pressed, "" for any other target, UI thread only
   struct ModelPath { double queue, parse, build, layout, apply; };
   std::deque<ModelPath> modelPaths_;       // the last 200 ui:models, UI thread only
   std::deque<double> paintGap_[2], paintDraw_[2];   // [0] body, [1] strip: invalidate to paint end, and the paint alone
@@ -94,6 +98,6 @@ private:
   std::condition_variable modelCv_;
   double modelWaitSeq_ = -1;               // the seq before the move; -1 while no step waits
   LONGLONG modelAt_ = 0;                   // QPC ticks when that model had been applied; 0 until it has
-  bool armedRectSet_ = false;              // the step armed with the dragged divider's rect: only a model that changes it stamps
+  bool armedRectSet_ = false;              // the step armed with the dragged divider's (or grip's) rect: only a model that changes it stamps
   std::array<double, 4> armedRect_{};      // that rect before the move, DIP x, y, w, h (UI thread only)
 };

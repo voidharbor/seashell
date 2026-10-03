@@ -35,6 +35,13 @@ bool sameStrip(const UiModel& a, const UiModel& b) {
 
 Ui& Ui::instance() { static Ui u; return u; }
 
+Ui::Ui() {
+  // The popup and the scrollbar register their parts in the body's hit list.
+  menu_.hit = [this](D2D1_RECT_F r, const std::string& t) { hit(false, r, t); };
+  sbBar_.hit = [this](D2D1_RECT_F r, const std::string& t) { hit(false, r, t); };
+  menu_.emit = [](const nlohmann::json& e) { App::instance().wire().sendEvent(e); };
+}
+
 float Ui::dpi() const { return Window::instance().dpi().scale(); }
 float Ui::bodyTop() const { return (float)Window::instance().bodyRect().top; }
 
@@ -77,8 +84,10 @@ void Ui::setModel(const UiModel& m) {
   // The rename field draws in the strip; syncEdits can open, close or blur it.
   bool renameOpen = rename_.isOpen(), renameFocused = rename_.focused();
   syncEdits(old);
+  syncSidebar(old);
   stripChanged_ = !hadModel || !sameStrip(old, m_) || rename_.isOpen() != renameOpen || rename_.focused() != renameFocused;
   layout();
+  sidebarReveal();
   updateAnimTimer();
 }
 
@@ -133,12 +142,15 @@ void Ui::layout() {
   registering_ = true;
   stripHits_.clear();
   bodyHits_.clear();
+  sidebarGeometry();
   Painter none(nullptr, dpi(), (float)m_.window.uiScale);
   viewTabs(none);
+  viewSidebar(none);
   viewPanes(none);
   viewDividers(none);
   viewStatus(none);
   viewFindBar(none);
+  viewMenu(none);
   viewOverlays(none);
   registering_ = false;
 }
@@ -172,6 +184,7 @@ LPCWSTR Ui::cursorFor(POINT bodyPx) const {
     return d && d->orientation == "horizontal" ? IDC_SIZENS : IDC_SIZEWE;
   }
   std::string t = bodyTargetAt(bodyPx);
+  if (t == "sidebar:grip") return IDC_SIZEWE;
   if (startsWith(t, "divider:")) {
     for (const DividerModel& d : m_.dividers)
       if ("divider:" + d.id == t) return d.orientation == "horizontal" ? IDC_SIZENS : IDC_SIZEWE;
@@ -199,6 +212,15 @@ std::wstring Ui::tooltipFor(const std::string& target) const {
   if (target == "find:prev") return L"Previous (Shift+Enter)";
   if (target == "find:next") return L"Next (Enter)";
   if (target == "find:close") return L"Close (esc)";
+  // The explorer: each row's full path, as the renderer's title attribute.
+  if (startsWith(target, "sidebar:row:")) return fromUtf8(target.substr(12));
+  if (startsWith(target, "sidebar:twisty:")) return fromUtf8(target.substr(15));
+  if (target == "sidebar:strip") return L"Click to copy";
+  if (target == "sidebar:refresh") {
+    for (const ChordModel& c : m_.chords)
+      if (c.command == "explorer.refresh") return L"Refresh (" + fromUtf8(c.chord) + L")";
+    return L"Refresh";
+  }
   if (startsWith(target, "pane:") && endsWith(target, ":title")) {
     const PaneModel* p = pane(target.substr(5, target.size() - 5 - 6));
     if (p && !p->tooltip.empty()) return fromUtf8(p->tooltip);
@@ -238,6 +260,23 @@ void Ui::mouseLeave(bool strip) {
 
 void Ui::captionPress() {
   if (EditWidget* e = focusedEdit()) { e->blur(); Window::instance().invalidateStrip(); Window::instance().invalidateBody(); }
+  closeMenuOnPress("strip:empty", 0, 0, Mods{});
+}
+
+// Which left presses send a `down` of their own in Ui::mouse below (tabs,
+// panes' title parts, dividers, the grip). The rest send one here while the
+// explorer's menu is open: the core closes the menu on a `down` anywhere
+// outside it (Explorer.tsx's capture-phase listener).
+bool Ui::menuSendsOwnDown(const std::string& t, int button) const {
+  if (button != 0) return false;
+  if (startsWith(t, "divider:") || t == "sidebar:grip") return true;
+  if (!startsWith(t, "tab:") && !startsWith(t, "pane:")) return false;
+  return !isGrid(t) && !endsWith(t, ":close") && !endsWith(t, ":restart") && !endsWith(t, ":rename");
+}
+
+void Ui::closeMenuOnPress(const std::string& target, float xDip, float yDip, Mods m) {
+  if (!m_.sidebar.menu || coreDead_ || menu_.owns(target)) return;
+  send("down", target, xDip, yDip, 0, m);
 }
 
 void Ui::captionDblClick() {
@@ -248,6 +287,10 @@ void Ui::captionDblClick() {
 // Without this a lost capture (Alt+Tab, a modal loop) would leave the drag on,
 // and every later pointer move would resize the panes with no button down.
 void Ui::cancelDrag() {
+  if (sbScroll_.dragging) {
+    sbScroll_.dragging = false;
+    Window::instance().invalidateBody();
+  }
   if (dragDivider_.empty()) return;
   std::string target = std::move(dragDivider_);
   dragDivider_.clear();
@@ -262,6 +305,8 @@ void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
     return;
   }
   if (target == "web:new" && m_.tabFull) return;   // dimmed: the tab already holds six panes
+  if (startsWith(target, "sidebar:scroll:")) return;   // the scrollbar is the shell's own
+  if (menu_.owns(target) && target != menu_.base() && !menu_.enabled(target)) return;   // a greyed menu item
   if (coreDead_) {
     // Nothing is listening; Restart starts a new core (spec 4.5: the user's call).
     if (startsWith(target, "pane:") && endsWith(target, ":restart")) App::instance().restartCore();
@@ -274,6 +319,24 @@ void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
 }
 
 void Ui::targetClick(const std::string& target, bool dbl, int button, Mods m) {
+  // The event's point is the target's centre (the explorer's menu opens there).
+  D2D1_RECT_F r{};
+  float xd = 0, yd = 0;
+  if (targetRect(target, &r)) {
+    xd = (r.left + r.right) / 2 / dpi();
+    yd = (r.top + r.bottom) / 2 / dpi();
+  }
+  // A drag handle's `down` would start a drag in the core; its click leaves the menu be.
+  if (!startsWith(target, "divider:") && target != "sidebar:grip") closeMenuOnPress(target, xd, yd, m);
+  if (startsWith(target, "sidebar:scroll:")) {
+    POINT c{ (LONG)std::lround(xd * dpi()), (LONG)std::lround(yd * dpi()) };
+    sidebarBarPress(WM_LBUTTONDOWN, c, target);
+    if (sbScroll_.dragging) {
+      sbScroll_.dragging = false;
+      if (GetCapture() == Window::instance().body()) ReleaseCapture();
+    }
+    return;
+  }
   EditWidget* e = target == find_.target() ? &find_ : target == rename_.target() ? &rename_ : nullptr;
   EditWidget* fe = focusedEdit();
   if (fe && fe != e) fe->blur();
@@ -281,31 +344,43 @@ void Ui::targetClick(const std::string& target, bool dbl, int button, Mods m) {
     e->focus();
     if (dbl) e->selectAll();
   } else if (dbl || button != 0) {
-    send(dbl ? "dblclick" : "click", target, 0, 0, button, m);
+    send(dbl ? "dblclick" : "click", target, xd, yd, button, m);
   } else {
-    activate(target, m, 0, 0);
+    activate(target, m, xd, yd);
   }
   Window::instance().invalidateStrip();
   Window::instance().invalidateBody();
 }
 
-bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods) {
+bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
   Window& win = Window::instance();
   if (msg == WM_MOUSEWHEEL) {
     ScreenToClient(win.hwnd(), &pt);
-    return modal();
+    if (modal()) return true;
+    return sidebarWheel(pt, wheelDelta);   // the explorer's rows; elsewhere a grid's
   }
   bool inStrip = pt.y < win.stripHeightPx();
   std::string target = inStrip ? stripTargetAt(pt) : bodyTargetAt(POINT{ pt.x, pt.y - (LONG)bodyTop() });
   float xd = pt.x / dpi(), yd = pt.y / dpi();
 
-  // A divider drag owns the pointer until the button comes up. The core takes
-  // the divider's leading edge, so the grab offset inside the strip is kept.
+  // A scrollbar thumb drag owns the pointer until the button comes up.
+  if (sbScroll_.dragging) {
+    if (msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP) {
+      sbBar_.mouse(msg, (float)pt.x, (float)pt.y - bodyTop(), sbScroll_, sb_.rowDip, "");
+      if (msg == WM_LBUTTONUP && GetCapture() == win.body()) ReleaseCapture();
+      sidebarScrolled(pt);
+    }
+    return true;
+  }
+
+  // A divider or grip drag owns the pointer until the button comes up. The
+  // core takes the divider's leading edge (the column's width for the grip),
+  // so the grab offset inside the strip is kept.
   if (!dragDivider_.empty()) {
     const DividerModel* d = nullptr;
     for (const DividerModel& dv : m_.dividers)
       if ("divider:" + dv.id == dragDivider_) d = &dv;
-    bool vertical = !d || d->orientation != "horizontal";
+    bool vertical = !d || d->orientation != "horizontal";   // the grip is vertical
     float ex = vertical ? xd - dragGrabDip_ : xd, ey = vertical ? yd : yd - dragGrabDip_;
     if (msg == WM_MOUSEMOVE) {
       dragLastX_ = ex;
@@ -347,9 +422,36 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods) {
     pointer_ = pt;
     EditWidget* fe = focusedEdit();
     if (fe && fe->target() != target) { fe->blur(); win.invalidateStrip(); win.invalidateBody(); }
+    if (!menuSendsOwnDown(target, button)) closeMenuOnPress(target, xd, yd, mods);
     if (target.empty() || isGrid(target)) return false;   // GridInput's
-    if (button != 0) return true;                        // the chrome has no context menu yet
+    if (button == 2 && startsWith(target, "sidebar:row:")) {
+      // The explorer's context menu opens on the release, at its point.
+      pressed_ = target;
+      pressedButton_ = 2;
+      win.invalidateBody();
+      return true;
+    }
+    if (button != 0) return true;                        // no other chrome has a context menu
     if (target == "strip:empty") return true;
+    if (startsWith(target, "sidebar:scroll:")) {
+      sidebarBarPress(msg, pt, target);
+      return true;
+    }
+    if (target == "sidebar:grip") {
+      if (msg == WM_LBUTTONDBLCLK) {
+        send("dblclick", target, xd, yd, 0, mods);   // the core resets the width
+        return true;
+      }
+      float edge = (float)m_.sidebar.gripRect.x;
+      dragGrabDip_ = xd - edge;
+      dragDivider_ = target;
+      dragLastX_ = edge;
+      dragLastY_ = yd;
+      SetCapture(win.body());
+      send("down", target, dragLastX_, dragLastY_, 0, mods);
+      win.invalidateBody();
+      return true;
+    }
     if (startsWith(target, "divider:")) {
       for (const DividerModel& d : m_.dividers) {
         if ("divider:" + d.id != target) continue;
@@ -373,13 +475,14 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods) {
       return true;
     }
     bool dblTarget = (startsWith(target, "tab:") && std::count(target.begin(), target.end(), ':') == 1 && target != "tab:new") ||
-                     (startsWith(target, "pane:") && endsWith(target, ":title"));
+                     (startsWith(target, "pane:") && endsWith(target, ":title")) || startsWith(target, "sidebar:row:");
     if (msg == WM_LBUTTONDBLCLK && dblTarget) {
       send("dblclick", target, xd, yd, 0, mods);
       pressed_.clear();
       return true;
     }
     pressed_ = target;
+    pressedButton_ = 0;
     // Tabs select and panes focus on press (app.tsx onMouseDown); the rest act on click.
     if (startsWith(target, "tab:") || startsWith(target, "pane:")) {
       if (!coreDead_ && !endsWith(target, ":close") && !endsWith(target, ":restart")) send("down", target, xd, yd, 0, mods);
@@ -390,8 +493,13 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods) {
   if (up) {
     if (pressed_.empty()) return inStrip;   // a grid gesture's release stays with GridInput
     std::string was = pressed_;
+    int wasButton = pressedButton_;
     pressed_.clear();
-    if (button == 0 && was == target) activate(target, mods, xd, yd);
+    pressedButton_ = 0;
+    if (button == wasButton && was == target) {
+      if (button == 0) activate(target, mods, xd, yd);
+      else if (button == 2 && !coreDead_) send("click", target, xd, yd, 2, mods);   // the explorer row's menu
+    }
     win.invalidateStrip();
     win.invalidateBody();
     return true;
@@ -414,6 +522,11 @@ bool Ui::key(UINT msg, WPARAM w, LPARAM l, Mods m) {
                                            { "mods", { { "ctrl", m.ctrl }, { "alt", m.alt }, { "shift", m.shift } } } });
       }
     }
+    return true;
+  }
+  // The open context menu takes Up, Down, Enter and Escape first.
+  if (menu_.key(msg, w, m)) {
+    win.invalidateBody();
     return true;
   }
   if (EditWidget* e = focusedEdit()) {
@@ -465,6 +578,7 @@ void Ui::updateAnimTimer() {
       if (paneVisible(p)) attentionLevel(p, now, &on);
       want = want || on;
     }
+    want = want || sidebarAnimating(now);   // a revealed row's flash fading
   }
   if (want && !animTimer_) animTimer_ = SetTimer(nullptr, 0, kAnimMs, animTick);
   if (!want && animTimer_) { KillTimer(nullptr, animTimer_); animTimer_ = 0; }
@@ -508,9 +622,11 @@ bool Ui::onGlass() const {
 void Ui::drawBody(ID2D1RenderTarget* rt) {
   Painter p(rt, dpi(), (float)m_.window.uiScale);
   if (!p.live()) return;
+  viewSidebar(p);
   viewPanes(p);
   viewDividers(p);
   viewStatus(p);
   viewFindBar(p);
+  viewMenu(p);
   viewOverlays(p);
 }

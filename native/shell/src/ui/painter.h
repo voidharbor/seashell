@@ -32,6 +32,7 @@ public:
   void strokeRect(D2D1_RECT_F r, uint32_t rgb, float widthDip = 1, float alpha = 1);
   void roundedRect(D2D1_RECT_F r, float radiusDip, uint32_t fill, float fillAlpha, uint32_t stroke, float strokeAlpha);
   void gradientV(D2D1_RECT_F r, const D2D1_GRADIENT_STOP* stops, UINT n, float radiusDip = 0);
+  void gradientH(D2D1_RECT_F r, const D2D1_GRADIENT_STOP* stops, UINT n, float radiusDip = 0);   // left to right
   // 6.3 button: two-stop gradient, 1 px border, inner highlight, a label.
   void win7Button(D2D1_RECT_F r, BtnState state, const std::wstring& label = L"", float labelDip = 12);
   // The IE9 tab: 6 px top radii; the active one shades into joinColor (the body
@@ -39,6 +40,15 @@ public:
   void win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor);
   void text(D2D1_RECT_F r, const std::wstring& s, UiFont f, uint32_t rgb, Align a = Align::Left, bool ellipsis = true, float alpha = 1);
   void glyph(D2D1_RECT_F r, uint32_t codepoint, uint32_t rgb, float dip = 12, float alpha = 1);
+  // The explorer's row icons (src/renderer/explorer/icons.tsx, a 16 DIP box at
+  // r's centre): the folder outline in its open or closed tint, and the page
+  // with its folded corner plus a 6 DIP chip square when the row has a chip.
+  void folderGlyph(D2D1_RECT_F r, bool open, float alpha = 1);
+  void fileGlyph(D2D1_RECT_F r, const uint32_t* chip, float alpha = 1);
+  // The disclosure triangle at r's centre: pointing right, or down when open.
+  void twisty(D2D1_RECT_F r, bool open, uint32_t rgb, float alpha = 1);
+  enum class Dir { Right, Down, Left, Up };
+  void arrow(D2D1_RECT_F box, Dir dir, uint32_t rgb, float alpha = 1);   // a filled triangle filling box
   // The Win7 caption glow behind text on glass: a white rect blurred by
   // blurDip through the D2D Gaussian blur (stacked soft rects without it).
   void glow(D2D1_RECT_F r, float blurDip = 4, float alpha = 0.85f);
@@ -53,6 +63,9 @@ public:
 
 private:
   ID2D1SolidColorBrush* brush(uint32_t rgb, float alpha);
+  // A cached geometry drawn in a units-square box mapped onto `box`.
+  void fillShape(ID2D1Geometry* g, D2D1_RECT_F box, float units, uint32_t rgb, float alpha);
+  void strokeShape(ID2D1Geometry* g, D2D1_RECT_F box, float units, uint32_t rgb, float alpha);
   Microsoft::WRL::ComPtr<IDWriteTextLayout> layout(const std::wstring& s, UiFont f, float maxW, float maxH) const;
 
   ID2D1RenderTarget* rt_;
