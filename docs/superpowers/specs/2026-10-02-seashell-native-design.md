@@ -229,6 +229,6 @@ The six other themes, the five pane frames and the CRT effects (Settings shows t
 
 | Phase | Night(s) | Gate result | Windows tree WS MB at W10 | Core RSS MB | Snapshot |
 |---|---|---|---|---|---|
-| 1 | | | | | |
+| 1 | 10/02 (15:08 to 18:41, resumed 21:04) | pass: W10, parity, throughput, pane env, pid files, restore round trip, control, nesting; two bars not met: divider latency 8.8 ms per move (bar 2; the core alone 0.32), core RSS back within 30 MB at 90 to 105 s (bar 30 s); report ~/.codex/notes/seashell-native-report-2026-10-02.md | 111.2, then 110.8 on the final build (6 processes, 83.8 and 83.3 private) | 84.7, 84.3 | snapshot/native-after-phase1 |
 | 2 | | | | | |
 | 3 | | | | | |
