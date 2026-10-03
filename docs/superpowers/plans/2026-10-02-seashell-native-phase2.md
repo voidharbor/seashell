@@ -6,7 +6,7 @@
 
 **Architecture:** Unchanged from Phase 1: `SeaShell.exe` draws a view model and reports input; the core (`src/main` plus the headless controller) inside WSL owns every piece of application state. Phase 2 adds the remaining views (explorer, drawer, previews, sheets, popovers, menu, banner) to the model and the shell, moves the remaining `app.tsx` logic into the controller, hosts WebView2 only while a web or PDF pane exists, and first fixes the one Phase 1 gate the architecture missed: the event-to-model round trip, which the wsl.exe stdio relay made 8.8 ms when the core answers in 0.32.
 
-**Tech Stack:** As Phase 1 (C++17, MSVC via `vcvars64.bat`, CMake, vcpkg `utf8proc` and `nlohmann-json`, Direct2D 1.1, DirectWrite, DWM, libvterm; TypeScript, esbuild, vitest; Node 26.10 in Ubuntu 24.04) plus the vcpkg `webview2` port (WebView2 SDK headers and loader; the Evergreen WebView2 Runtime that ships with Windows 11), WIC for images, XAudio2 for the attention ping, `IDropTarget` for drops, `shiki/core` with the JavaScript regex engine in the core bundle.
+**Tech Stack:** As Phase 1 (C++17, MSVC via `vcvars64.bat`, CMake, vcpkg `utf8proc` and `nlohmann-json`, Direct2D 1.1, DirectWrite, DWM, libvterm; TypeScript, esbuild, vitest; Node 26.10 in Ubuntu 24.04) plus the vcpkg `webview2` port (WebView2 SDK headers and loader; the Evergreen WebView2 Runtime that ships with Windows 11), WIC for images, XAudio2 for the attention ping, `IDropTarget` for drops, `shiki/core` with the JavaScript regex engine in the core bundle. (Amendment 10/03: the `webview2` port, WIC and `shiki/core` are not used.)
 
 **Spec:** `docs/superpowers/specs/2026-10-02-seashell-native-design.md` (sections 4, 7, 8, 9, 10, 11, 12); scope `docs/superpowers/specs/2026-10-02-seashell-renderer-inventory.md` (every lettered row); Aero control values and the path matrix in `docs/superpowers/specs/2026-10-02-seashell-redesign.md` sections 6.3 and 7; what Phase 1 left in `~/.codex/notes/seashell-native-report-2026-10-02.md` ("What Phase 2 starts from", "Follow-ups", "Not verified").
 
@@ -15,10 +15,77 @@
 1. **The wire moves to a loopback TCP socket if Task 1 shows the wsl.exe stdio relay costs over 1 ms per round trip.** Spec 4.2 says stdin and stdout; Phase 1 measured the relay at about 8.5 ms of an 8.8 ms divider move against the 2 ms bar, with the core itself at 0.32 ms. The core opens the socket and announces it on stdout; stdio stays as the bootstrap and the fallback. Task 2 amends spec 4.2 if it runs.
 2. **Alt taps the menu open at the `≡` button instead of showing a menu bar.** A real menu bar does not fit under the DWM custom frame with the glass strip (spec 6 and 7). Alt+letter chords still reach the terminal.
 3. **The other six themes, the pane frames and the CRT effects appear in Settings greyed with the tooltip `coming back`** (spec 12). Accent and terminal palette work, because the tokens and the grid palette already exist.
-4. **File contents never ride in `ui:model`.** A new core-to-shell channel `view:cmd` carries a preview's text and highlight runs once per load, and a shell-to-core `view:event` carries saves and WebView2 navigation reports (the same split as `grid:cmd` and `term:event`).
-5. **Images and PDFs are read by the shell from the Windows path** (`/mnt/c/x` as `C:\x`, anything else as `\\wsl.localhost\Ubuntu-24.04\...`), after the core's `fs:probe` route said `viewer` and the path guard accepted it. No base64 image across the pipe.
+4. (Moot, see the amendment.) **File contents never ride in `ui:model`.** A new core-to-shell channel `view:cmd` carries a preview's text and highlight runs once per load, and a shell-to-core `view:event` carries saves and WebView2 navigation reports (the same split as `grid:cmd` and `term:event`).
+5. (Moot, see the amendment.) **Images and PDFs are read by the shell from the Windows path** (`/mnt/c/x` as `C:\x`, anything else as `\\wsl.localhost\Ubuntu-24.04\...`), after the core's `fs:probe` route said `viewer` and the path guard accepted it. No base64 image across the pipe.
 6. **The update check stays off on `wslhost` until Phase 3** (`update:state` is only `idle`), because today's checker would offer the Linux AppImage. The banner is built and tested with an injected state.
 7. **Confirms are `MessageBox` through a shell-answered invoke `dialog:confirm`;** in test mode the driver pre-answers them so no dialog ever blocks a gate.
+
+## Amendment, 10/03 04:30 (Josh): no file viewer, no code editor, no web or PDF panes
+
+Josh, 10/03 04:30, while Stage G was closing: "skip adding file viewer, web browser, code editor". Consequences, binding on every task below:
+
+- **Stage H (Tasks 8 to 11) is skipped in full.** No `view:cmd` or `view:event` channel, no Shiki in the core bundle, no `EDIT` editor, no WIC image view, no WebView2 for web or PDF panes, no `webview2` vcpkg port. Header decisions 4 and 5 are moot. Review Focus items 1 and 4 are moot.
+- **Path double-click.** Plain double-click reveals (unchanged). Ctrl+double-click and the explorer's double-click on a file hand the file to the Windows default app through `open:withDefaultApp`, the same path Ctrl+Alt already takes (an executable is still refused with the Finder toast). Directories are only revealed and expanded. Task 7b below does this.
+- **Preview commands.** `preview.file` (Ctrl+Alt+O) toasts `File previews are not in this build` and opens the explorer. `web:new` (Ctrl+Alt+U) toasts `Web previews are not in this build`. `pane.closeAll` keeps closing non-term panes and toasts `No preview panes open` when there are none. The menu items stay (Task 16) and run these commands.
+- **Restored preview panes.** A saved session or project that holds a file or web pane restores it as the placeholder pane the shell already draws, with its copy changed to `Previews are not in this build`; `pane.closeAll` removes them. No skip logic.
+- **Stage J.** The inventory walk prints `skipped (Josh 10/03)` for rows K and L and for every preview line in the other letters (B tab-close confirm for dirty previews, C close-all of previews, E Ctrl double-click preview, H find in a preview, I paste into a preview, J drop on a preview, W the four preview confirms, X the preview shortcuts). The path matrix (`scripts/native-matrix.mjs`) is created in Task 7b with four rows and no preview row. The restore gate's saved session still holds a file and a web pane, and passes when they come back as placeholders. W10 row (c) is dropped. The report's Stage H section is one line.
+- **Spec.** `docs/superpowers/specs/2026-10-02-seashell-native-design.md` sections 4.1, 7, 8, 11 and 12 are amended in the same commit as this section, by the orchestrator, not by a task.
+
+### Task 7b: Previews out (amendment 10/03)
+
+**Files:**
+- Create: `scripts/native-matrix.mjs`
+- Modify: `src/core/controller/controller.ts` (`openDeps().onOpenInViewer`, `preview.file`, `web:new`), `test/unit/controller-pathclick.test.ts` (the Ctrl test), `native/shell/src/ui/panes.cpp` (the two placeholder strings)
+
+**Interfaces:**
+- Consumes: Task 7's `pathClick` and `openDeps()`, `openPath(fullPath, deps, force?)`, `open:withDefaultApp` (a `SHELL_CHANNELS` invoke; in test mode the shell logs `open:withDefaultApp <C:\ path>` to `shell.log` and returns ok without executing), the driver's `text`, `key`, `dblclick`, `model` and the tty check from `scripts/native-gates.mjs`.
+- Produces: `onOpenInViewer(path)` calls the same code as the `'os'` route (`withDefaultApp`), so no `pane.newFile` is ever dispatched by the controller; `preview.file` → `toast('File previews are not in this build')` plus the explorer opening as before; `web:new` → `toast('Web previews are not in this build')`; `panes.cpp` draws `Previews are not in this build` for any non-term pane. `node scripts/native-matrix.mjs` launches scratch `g7b` with one zsh pane, waits for the prompt, and runs four rows, each typed as an `echo` through the driver after the tty check: (1) `echo /Users/joshwald/seashell-wt/redesign/README.md`, plain `dblclick` on the path → `sidebar.visible` and `revealRowId` = `row:/Users/joshwald/seashell-wt/redesign/README.md`; (2) the same path with `mods { ctrl: true }` → `shell.log` gains `open:withDefaultApp \\wsl.localhost\Ubuntu-24.04\Users\joshwald\seashell-wt\redesign\README.md` and `panes` are all `term`; (3) `echo /mnt/c/seashell-build/redesign/bakeoff/results.jsonl` with `mods { ctrl: true, alt: true }` → `open:withDefaultApp C:\seashell-build\redesign\bakeoff\results.jsonl`; (4) `echo "/Users/joshwald/seashell-wt/redesign/test/fixtures/width corpus.txt:12"` (create that file with a space in its name under `test/fixtures/` only if the matrix needs it, else use an existing path with a space under `/mnt/c/seashell-build/redesign/scratch/`) plain `dblclick` → the quoted path with the `:12` suffix resolves and reveals. It prints `matrix: <n> ok` lines and exits non-zero on any failure, quits the scratch through the driver.
+
+- [ ] **Step 1: Change the Ctrl test, add the toast tests, run them to see them fail**
+
+In `test/unit/controller-pathclick.test.ts` replace the test `Ctrl opens a file pane in the tab, retargeted by the next file` with:
+
+```ts
+  it('Ctrl hands the file to the default app and never creates a pane', async () => {
+    const f = setup()
+    const c = new Controller(f.deps, { home: '/w', version: '0', chords: [] })
+    await c.boot(GEO)
+    c.term({ type: 'pathclick', paneId: c.model().panes[0].id, line, index: idx, mods: { ctrl: true, alt: false, shift: false } })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(f.sent.some(([ch, p]) => ch === 'open:withDefaultApp' && (p as { path: string }).path === '/w/README.md')).toBe(true)
+    expect(c.model().panes.every((p) => p.kind === 'term')).toBe(true)
+  })
+  it('the preview commands toast and open nothing', async () => {
+    const f = setup()
+    const c = new Controller(f.deps, { home: '/w', version: '0', chords: [] })
+    await c.boot(GEO)
+    c.command('preview.file')
+    expect(c.model().toast).toBe('File previews are not in this build')
+    expect(c.model().sidebar.visible).toBe(true)
+    c.command('web:new')
+    expect(c.model().toast).toBe('Web previews are not in this build')
+    expect(c.model().panes.every((p) => p.kind === 'term')).toBe(true)
+  })
+```
+
+(If `web:new` arrives as a `ui:command` under another name in `controller.ts`, use that name; the controller's switch is the authority.) Run: `npx vitest run test/unit/controller-pathclick.test.ts --project unit` Expected: the two new tests FAIL.
+
+- [ ] **Step 2: Implement**
+
+Per Interfaces: `onOpenInViewer` routes to `withDefaultApp`; the two toasts; the placeholder copy in `panes.cpp`. Run: `npx vitest run test/unit/controller*.test.ts --project unit && npm run typecheck` Expected: PASS, clean.
+
+- [ ] **Step 3: The matrix**
+
+Write `scripts/native-matrix.mjs` per Interfaces (reuse the launch, wait, drive, quit and tty helpers from `scripts/native-gates.mjs`; export them from there if they are not exported yet). Rebuild (core, sync, shell, pack). Run: `node scripts/native-matrix.mjs` Expected: four `ok` lines. `shot` the revealed state to `bakeoff\P2-matrix.png`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/core/controller/controller.ts test/unit/controller-pathclick.test.ts native/shell/src/ui/panes.cpp scripts/native-matrix.mjs scripts/native-gates.mjs
+git commit -m "Hand previews to the default app and drop the preview panes"
+```
+
+Then Stage I (Tasks 12 to 17) and Stage J (18 to 20) as written, read with this amendment.
 
 ## Global Constraints
 
@@ -33,17 +100,17 @@
 - Gates before any snapshot: `npm run typecheck && npm test` clean in the worktree, plus the stage's Windows gate named in the task. Run one vitest file as `npx vitest run <path> --project unit` (or `--project dom` for `test/dom`). Do not `git add -A`; add files by name.
 - The core imports pure renderer modules in place (`src/renderer/layout/*`, `store.ts`, `links/*`, `projects/serialize.ts`, `session/offer.ts`, `term/zoom.ts`, `term/osc7.ts`, `term/inputline.ts`, `panes/{paneTitle,attention,colors,drop,link}.ts`, `settings/settings.ts`, `explorer/{open,chain,ignored}.ts`, `drawer/{cd,id}.ts`, `viewer/highlight.ts`, `theme/tokens.ts`); nothing moves, the renderer keeps building for the other platforms. A renderer module that drags in `document`, `window`, `localStorage`, `React` or `AudioContext` at import time is not imported; its pure functions and its data are copied into `src/core/controller/` with a comment naming the source file and lines.
 - Every subagent dispatched by this plan is given `model: "opus"` explicitly unless the ultracode-lite ladder assigns a cheaper tier for a mechanical step.
-- Microsoft Edge must be closed during any RAM measurement; `measure-ram.ps1` refuses otherwise. Close nothing you did not start: if Edge is open, record "not measured, Edge was open" and continue. A WebView2 pane starts `msedgewebview2.exe` processes under the shell's tree; the W10 rows are measured with no web or PDF pane open (spec 4.1: no Chromium unless such a pane is open), and a separate row with one web pane is reported, never compared with the bar.
+- Microsoft Edge must be closed during any RAM measurement; `measure-ram.ps1` refuses otherwise. Close nothing you did not start: if Edge is open, record "not measured, Edge was open" and continue. A WebView2 pane starts `msedgewebview2.exe` processes under the shell's tree; the W10 rows are measured with no web or PDF pane open (spec 4.1: no Chromium unless such a pane is open), and a separate row with one web pane is reported, never compared with the bar. (Amendment 10/03: no web pane exists, so no such row.)
 - After every task that ends a stage, append a section to `~/.codex/notes/seashell-native-phase2-report-<date>.md` (Task 20 defines the sections) so a cut-off run still reports.
 - The W10 workload, counting rules and the 200 MB bar are redesign spec section 2 and spec section 4.7 and are not reinterpreted. The latency bar is spec 10: a divider move to its model, median under 2 ms over 200 moves.
 - Target ids keep the Phase 1 grammar in `src/core/controller/model.ts` and extend it only with the ids this plan names. The shell computes no application layout: every rect in a view comes from the model in DIP, except the shell's own view state (hover, scroll offsets, carets, the active drag, the strip's scroll).
 
 ## Review Focus
 
-1. **A previewed file changes on disk while it is being edited.** Saving must never overwrite silently: `fs:writeTextFile` with `expectedMtimeMs` answers `ECONFLICT`, the banner `Reload from disk` appears, and reloading asks first. Task 8 step 1 tests the controller path; Task 9 step 2 drives it on a real file.
+1. (Moot, Stage H skipped.) **A previewed file changes on disk while it is being edited.** Saving must never overwrite silently: `fs:writeTextFile` with `expectedMtimeMs` answers `ECONFLICT`, the banner `Reload from disk` appears, and reloading asks first. Task 8 step 1 tests the controller path; Task 9 step 2 drives it on a real file.
 2. **An expanded explorer directory disappears or grows past the listing cap.** The row must show `(ENOENT)` or `… too many entries to list` and the watcher's `lost` must not throw or spin. Task 4 step 1 tests both.
 3. **A drop or paste of a path with spaces, quotes or non-ASCII, and a `\\wsl.localhost` path.** The pty must receive one shell-quoted, `/mnt`-mapped path with a trailing space, never a half-escaped one. Task 17 step 1 tests `CF_HDROP` to `drop` conversion; `dropText` keeps its own tests.
-4. **A web pane asked to go to `javascript:`, `file:` or `about:` or to open a popup.** Navigation must be cancelled, the popup must open in the system browser, and the pane must still answer. Task 10 step 3 drives it.
+4. (Moot, Stage H skipped.) **A web pane asked to go to `javascript:`, `file:` or `about:` or to open a popup.** Navigation must be cancelled, the popup must open in the system browser, and the pane must still answer. Task 10 step 3 drives it.
 5. **Alt held for a terminal chord while the menu exists.** A bare Alt tap opens the menu; `Alt+.` and every other Alt+key reach the pty unchanged, and an open edit widget or sheet swallows the tap. Task 16 step 3 drives it.
 
 ---
@@ -718,6 +785,8 @@ git branch -f snapshot/native-after-explorer
 
 ---
 ## Stage H: previews (Tasks 8 to 11)
+
+**SKIPPED in full by the amendment of 10/03 04:30 (Josh). Do not run Tasks 8 to 11. Task 7b replaces them.**
 
 ### Task 8: The view channel and the file preview in the core
 
@@ -1641,7 +1710,7 @@ git branch -f snapshot/native-after-chrome2
 
 **Interfaces:**
 - Consumes: every driver command from Phase 1 and this plan; `scripts/native-gates.mjs` (its launch, wait and quit helpers, exported for reuse); the inventory's rows A to X.
-- Produces: `node scripts/native-inventory.mjs` launches scratch `j18` seeded with the W10 session plus the file and web panes (Task 11's `make-session.mjs`), runs one check per row (each check a function returning `{ row: 'B3', ok, detail }`; the rows are numbered in document order inside each letter), writes the status document, prints every line, quits the scratch, and exits non-zero when any row is `fail`. Rows that spec 12 defers print `deferred (spec 12)`: R (the six themes, pane frames, CRT), Y (not ported by design), the Mac-only items in D and V (Option as Meta, traffic lights), drag out and reordering in J, IME. Checks that Phase 1 left undriven run here: D wheel ramp (a `seq 1 500` then three `wheel` notches at increasing speed: the scrolled distance per notch grows), D app scrollbar (a pane in `less` with mouse tracking on: `appBar.on true`, `click` on the track pages, `wheel` moves `offset`), D drag-select (`dragSelect` over two rows, `selection` returns the text with the line break), H paste into the find field (`key Ctrl+Shift+F`, `editorType`-like `text`, then the find `query`).
+- Produces: `node scripts/native-inventory.mjs` launches scratch `j18` seeded with the W10 session (the session file Phase 1's `run-native-w10.ps1` uses), runs one check per row (each check a function returning `{ row: 'B3', ok, detail }`; the rows are numbered in document order inside each letter), writes the status document, prints every line, quits the scratch, and exits non-zero when any row is `fail`. Rows the amendment of 10/03 skips print `skipped (Josh 10/03)`: K, L, and the preview lines of B, C, E, H, I, J, W and X. Rows that spec 12 defers print `deferred (spec 12)`: R (the six themes, pane frames, CRT), Y (not ported by design), the Mac-only items in D and V (Option as Meta, traffic lights), drag out and reordering in J, IME. Checks that Phase 1 left undriven run here: D wheel ramp (a `seq 1 500` then three `wheel` notches at increasing speed: the scrolled distance per notch grows), D app scrollbar (a pane in `less` with mouse tracking on: `appBar.on true`, `click` on the track pages, `wheel` moves `offset`), D drag-select (`dragSelect` over two rows, `selection` returns the text with the line break), H paste into the find field (`key Ctrl+Shift+F`, `editorType`-like `text`, then the find `query`).
 
 - [ ] **Step 1: Implement and run**
 
@@ -1690,10 +1759,10 @@ On the final build (rebuild everything once more from the branch head):
 
 1. `npm run typecheck && npm test` green (record the counts against Phase 1's 112 files, 1161 tests).
 2. `node scripts/width-parity.mjs` and `node scripts/vt-parity.mjs`: `0 mismatches` (named exceptions listed).
-3. `scripts/win/run-native-gates.ps1` on a fresh scratch: `env`, `throughput` (the core back within 30 MB at 30 s, or the Task 3 result recorded), `latency` (under 2 ms per move, or the Stage F result recorded), `relay`, `nesting`, `control`, `restore` (with a file and a web pane in the saved session) all ok.
-4. `node scripts/native-matrix.mjs`: four rows ok.
+3. `scripts/win/run-native-gates.ps1` on a fresh scratch: `env`, `throughput` (the core back within 30 MB at 30 s, or the Task 3 result recorded), `latency` (under 2 ms per move, or the Stage F result recorded), `relay`, `nesting`, `control`, `restore` (the saved session also holds a file and a web pane; they come back as placeholder panes reading `Previews are not in this build`) all ok.
+4. `node scripts/native-matrix.mjs` (Task 7b): four rows ok.
 5. `node scripts/native-inventory.mjs`: no `fail`.
-6. The W10 rows with `run-native-w10.ps1`, Edge closed, five samples each: (a) W10 as Phase 1 measured it (no sidebar, no drawer, no previews): the row against the 200 bar and against Phase 1's 110.8; (b) W10 with the sidebar open at home expanded two levels and the drawer open on one pane; (c) W10 plus one web pane at a local `http.server` (reported, with the `msedgewebview2.exe` processes counted separately, never compared with the bar). The core RSS for each as its own column.
+6. The W10 rows with `run-native-w10.ps1`, Edge closed, five samples each: (a) W10 as Phase 1 measured it (no sidebar, no drawer, no previews): the row against the 200 bar and against Phase 1's 110.8; (b) W10 with the sidebar open at home expanded two levels and the drawer open on one pane; (c) dropped by the amendment of 10/03: no web pane exists. The core RSS for each as its own column.
 7. The Aero screenshots at 1x: `P2-glass-strip.png` (the strip on glass with the menu button, 9 tabs and the overflow arrows), `P2-sidebar.png`, `P2-settings.png` (a sheet), `P2-color.png` (a popover), `P2-menu.png`, all already produced by the stages; re-shoot the strip on the final build.
 8. Every scratch closed through its driver; no `msedgewebview2.exe`, run-owned `wsl.exe`, core or scratch `SeaShell.exe` left; Josh's SeaShell pids untouched; `%APPDATA%\seashell` and `~/.config/seashell` untouched; nothing on main; nothing pushed.
 
@@ -1716,7 +1785,7 @@ Write `~/.codex/notes/seashell-native-phase2-report-<YYYY-MM-DD>.md` (the sectio
 ## Where it stopped (one line: stage reached, time, why)
 ## Stage F: the wire (the relay medians, the branch taken, the drag figure before and after, the throughput numbers, the heap settle result)
 ## Stage G: explorer, drawer, path click (PNG paths, the reveal and drawer checks, decisions)
-## Stage H: previews (PNG paths, the matrix lines, the WebView2 process count and working set, the Shiki staging size)
+## Stage H: skipped (Josh 10/03 04:30, one line naming what was not built; the Task 7b matrix lines)
 ## Stage I: sheets, popovers, menu, drops (PNG paths, the ping result, the Alt result, the overflow result)
 ## Stage J: the inventory walk (every row's line, the deferred list with spec 12 cited), parity hardening (what the richer comparison found)
 ## The W10 rows (a, b, c) against the bar and against Phase 1's 110.8; every gate line

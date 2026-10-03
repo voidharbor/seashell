@@ -53,11 +53,11 @@ Renderer-side state that today lives in localStorage (settings, zoom index, side
 
 | Process | Code | Owns |
 |---|---|---|
-| `SeaShell.exe`, the shell | C++17, `native/shell/` | the window (class `SeaShellHost`, title `SeaShell`, AppUserModelID `dev.seashell.app`, icon `build/icon.ico`), the DWM glass frame, every terminal grid (VT state, scrollback, selection, find, drawing), all drawing of the view model, keyboard and mouse, the chord table, clipboard, `IFileDialog`, `ShellExecute` for open and reveal, `MessageBox` confirms, the attention ping, WebView2 controls for web and PDF panes only while such a pane exists, saved window bounds, single-instance mutex `Local\SeaShellHost`, the core's lifetime, the loopback test driver |
+| `SeaShell.exe`, the shell | C++17, `native/shell/` | the window (class `SeaShellHost`, title `SeaShell`, AppUserModelID `dev.seashell.app`, icon `build/icon.ico`), the DWM glass frame, every terminal grid (VT state, scrollback, selection, find, drawing), all drawing of the view model, keyboard and mouse, the chord table, clipboard, `IFileDialog`, `ShellExecute` for open and reveal, `MessageBox` confirms, the attention ping, saved window bounds, single-instance mutex `Local\SeaShellHost`, the core's lifetime, the loopback test driver |
 | `wsl.exe` plus its two conhost.exe and one wslhost.exe | Windows | the pipe into Ubuntu. Spawned once with piped stdio and `CREATE_NO_WINDOW`. Measured 10/02 at 50.7 MB working set, 8.7 MB private for the five processes |
 | `node`, the core | Ubuntu, `/usr/bin/node` 24 or newer, bundle `core/index.cjs` | today's `src/main` through the Electron shim on the `wslhost` platform (section 4.4): panes as Linux ptys through node-pty, fs tree and reads with the path guard, watcher pool, metrics sweeps from `ps` and `/proc`, session lookup, state files, the TCP control endpoint, update check, link notes; plus the headless UI controller (section 4.3) |
 
-Nothing else. No renderer process, no Chromium unless a web or PDF pane is open.
+Nothing else. No renderer process, no Chromium at all (amendment 10/03: web and PDF panes are not built).
 
 ### 4.2 The wire
 
@@ -167,8 +167,8 @@ Drawn from the view model, Direct2D, one window:
 - **Sheets and cards**: Restore card (Restore autofocused, Start fresh, Esc), Settings (theme row with the deferred themes greyed, accent, palette, pane frame greyed, CRT greyed, the four checkboxes, the new-pane command field, the tutorial button), Projects (scope, save, name, rows with Delete confirm, Add, Open), Tutorial (12 steps, dots, Back, Next, Skip, the checkbox, arrow keys captured).
 - **Popovers**: color picker (7 swatches plus none), link picker (`Share notes with`, disabled states, `Stop sharing`), explorer context menu. Esc or an outside click closes them.
 - **Text fields**: one custom single-line edit widget (caret, selection, Ctrl+A, Home and End, clipboard) used by tab rename, find, the URL bar, the project name and the new-pane command. Preview edit mode uses a child `EDIT` control with `ES_MULTILINE`, Consolas, Ctrl+S to save, which matches a textarea.
-- **File preview pane**: the core reads the file (8 MB cap, truncated flag) and, below 512 KB, runs Shiki in the core (the same 27 grammars and `github-dark-default`) and returns colored runs; the shell draws them with a `Plain / Highlight` toggle. Edit, Reveal, Open, the dirty flag, the mtime conflict banner with `Reload from disk`, the save error text, the four confirms as `MessageBox`. Images through WIC into a Direct2D bitmap, centred; animated GIF frames play with their delays. PDF opens in a WebView2 control (Edge's viewer) with Reveal and Open and no find bar, as today.
-- **Web preview pane**: a WebView2 control created in the pane rect and destroyed with the pane. The URL bar, back, forward, reload or stop, open externally, the `normalizeUrl` rules, the `Could not load` banner and the host:port label are shell and core code; only the page is Chromium.
+- **File preview pane** (not built, amendment 10/03; Ctrl+double-click opens the file with the default app instead): the core reads the file (8 MB cap, truncated flag) and, below 512 KB, runs Shiki in the core (the same 27 grammars and `github-dark-default`) and returns colored runs; the shell draws them with a `Plain / Highlight` toggle. Edit, Reveal, Open, the dirty flag, the mtime conflict banner with `Reload from disk`, the save error text, the four confirms as `MessageBox`. Images through WIC into a Direct2D bitmap, centred; animated GIF frames play with their delays. PDF opens in a WebView2 control (Edge's viewer) with Reveal and Open and no find bar, as today.
+- **Web preview pane** (not built, amendment 10/03; `web:new` toasts `Web previews are not in this build`): a WebView2 control created in the pane rect and destroyed with the pane. The URL bar, back, forward, reload or stop, open externally, the `normalizeUrl` rules, the `Could not load` banner and the host:port label are shell and core code; only the page is Chromium.
 - **Status bar**: pane count, `~X in panes`, used of total with warn and crit, compressed, swap, the hint string in Windows spelling.
 - **Toasts, update banner, the `Starting SeaShell...` splash and the `No tabs open` state.**
 - **Attention**: breathing border on a timer (2.8 s loop for waiting, four 1.8 s cycles for done), the tag color when set, never on the focused pane, off when Sleep is on, honouring `SPI_GETCLIENTAREAANIMATION` for reduced motion. The ping is the two sine tones (880 Hz then 587.33 Hz, 90 ms apart) rendered into a buffer once and played through XAudio2, at most once per 1.8 s, only when glow and sound are both on.
@@ -178,7 +178,7 @@ Drawn from the view model, Direct2D, one window:
 
 ## 8. Path double-click
 
-Unchanged in substance: the shell maps a double-click to a cell, joins wrapped rows, sends the logical line and index; the core runs `tokenizer.ts` and `resolve.ts` (moved, same tests) and reveals, previews or opens. The redesign spec section 7 matrix, including the quoted path with a space and a `:12` suffix, must pass on the native build with text that a real zsh pane printed. Ctrl replaces Cmd in the modifier forms.
+Unchanged in substance: the shell maps a double-click to a cell, joins wrapped rows, sends the logical line and index; the core runs `tokenizer.ts` and `resolve.ts` (moved, same tests) and reveals or opens with the default app (amendment 10/03: there is no preview; Ctrl and Ctrl+Alt double-click both open with the default app). The redesign spec section 7 matrix, including the quoted path with a space and a `:12` suffix, must pass on the native build with text that a real zsh pane printed. Ctrl replaces Cmd in the modifier forms.
 
 ## 9. Contracts preserved
 
@@ -204,7 +204,7 @@ Unchanged in substance: the shell maps a double-click to a cell, joins wrapped r
 
 **Phase 1, the terminal core.** Core: `wslhost` platform, shim, stdio bridge, the controller for tabs, panes, layout, zoom, find, session restore, settings load, toasts, status bar. Shell: window and glass strip, core lifetime and staging, grids (5.1 to 5.6), tabs, pane title bars, dividers, zoomed pane, restore card, find bar, status bar, toasts, the custom edit widget, the chord table, clipboard copy and paste, the test driver, `measure` support. Gate: W10 measured under 200 on the Windows side, parity corpus green, throughput green, pane env and pid files green, session restore round trip green, a screenshot of 9 tabs on glass. Deliverable: a build Josh can run panes in.
 
-**Phase 2, everything else.** Explorer with watch and reveal, drawer, file and image preview with Shiki from the core and the `EDIT` editor, WebView2 panes for web and PDF, projects, settings sheet, tutorial, update banner, color and link pickers, attention glow and ping, drag and drop, the menu, path double-click matrix, contract proofs, the inventory walked row by row with each row's check named in the report. Gate: every inventory row checked or listed as deferred with Josh's answer cited.
+**Phase 2, everything else.** Explorer with watch and reveal, drawer, projects, settings sheet, tutorial, update banner, color and link pickers, attention glow and ping, drag and drop, the menu, path double-click matrix, contract proofs, the inventory walked row by row with each row's check named in the report. Gate: every inventory row checked or listed as deferred with Josh's answer cited.
 
 **Phase 3, cutover.** Aero exactness pass against Win7 references, colorization edge cases, no-glass fallback, packaging (`pack-native.ps1`, the updater reporting `platform: win-native` and declining until a matching asset exists), the `WorkPanel.cs` and `pane-hook.zsh` edits with Josh's go, replacing `Programs\SeaShell` only with his in-the-moment OK to quit the running one.
 
@@ -213,6 +213,8 @@ Each phase is one plan under `docs/superpowers/plans/` and one or more overnight
 ## 12. Deferred and out of scope
 
 The six other themes, the five pane frames and the CRT effects (Settings shows them greyed with `coming back` in the tooltip); Mac and Linux shells; a C++ port of main; IME composition and screen-reader accessibility; drag out; tab and pane reordering; the shared-memory pty transport (binary frames are the fallback if base64 fails the throughput check); Tauri; per-monitor DPI testing beyond 1x (the code paths exist, Josh's main display is 1x).
+
+Amendment 10/03 04:30 (Josh: "skip adding file viewer, web browser, code editor"): the file preview pane (text, images, PDF), the editor and the web preview pane (inventory K and L and the preview lines of B, C, E, H, I, J, W, X) are not built. Plain double-click on a path reveals it; Ctrl and Ctrl+Alt double-click open the file with the Windows default app; `preview.file` and `web:new` toast `File previews are not in this build` and `Web previews are not in this build`; a restored file or web pane shows the placeholder `Previews are not in this build` and `pane.closeAll` removes it. No WebView2, no Shiki, no `EDIT` control in the native build.
 
 ## 13. Risks
 
