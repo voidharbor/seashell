@@ -41,6 +41,14 @@ public:
   void noteFrame(double ms);        // one body paint, BeginDraw to EndDraw
   void notePtyBytes(size_t n);      // decoded pty:data bytes for any pane
   void noteModel(double seq);       // a ui:model has been applied (after Ui::setModel); wakes a drag step waiting for it
+  // The model path (stats' modelMs, medians over the last 200 models): per
+  // ui:model the reader-to-UI queue hop, the JSON parse, UiModel::parse,
+  // Ui::setModel and the whole apply around it; then each surface's gap from
+  // the model's invalidate to the end of the paint that follows it.
+  void noteModelPath(double queueMs, double parseMs, double buildMs, double layoutMs, double applyMs);
+  void noteModelInvalidated(bool strip);   // the model invalidated the body, and the strip when `strip`
+  void notePaint(bool strip, LONGLONG beginQpc, LONGLONG endQpc);   // one strip or body paint, QPC ticks
+  static double ticksMs(LONGLONG qpcTicks);
 
   // GetKeyState(vk) < 0, except while the driver dispatches a `key` chord:
   // then the chord's own Ctrl, Shift and Alt (Task 13's key path asks here).
@@ -72,6 +80,10 @@ private:
   int heldMods_ = -1;                      // -1, or the kMod* bits (driver.cpp) while dispatching a chord
   HWND dragWin_ = nullptr;                 // the window a driver drag pressed in, UI thread only
   float dragX_ = 0, dragY_ = 0;            // the press point, client pixels of the top-level window
+  struct ModelPath { double queue, parse, build, layout, apply; };
+  std::deque<ModelPath> modelPaths_;       // the last 200 ui:models, UI thread only
+  std::deque<double> paintGap_[2], paintDraw_[2];   // [0] body, [1] strip: invalidate to paint end, and the paint alone
+  LONGLONG paintPending_[2] = { 0, 0 };    // QPC of the oldest model invalidate that surface has not painted yet
   // A drag step's wait: the UI thread arms it (dragStep move, before the
   // WM_MOUSEMOVE) and stamps the first model past modelWaitSeq_ in noteModel;
   // the connection thread sleeps on modelCv_ until then or the step timeout.

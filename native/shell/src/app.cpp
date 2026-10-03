@@ -235,6 +235,9 @@ bool App::onInput(HWND from, UINT msg, WPARAM w, LPARAM l) {
 LRESULT App::onAppMessage(UINT msg, WPARAM w, LPARAM l) {
   if (msg == Window::WM_APP_CORE_LINE) {
     std::unique_ptr<std::string> line(reinterpret_cast<std::string*>(l));
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    lineQueueTicks_ = w ? now.QuadPart - (long long)w : 0;
     size_t n = line->size();
     wire_.onCoreLine(std::move(*line));
     CoreProc::lineHandled(n);
@@ -498,6 +501,7 @@ void App::paintBody() {
   QueryPerformanceCounter(&t1);
   QueryPerformanceFrequency(&freq);
   Driver::instance().noteFrame((t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart);   // the driver's stats
+  Driver::instance().notePaint(false, t0.QuadPart, t1.QuadPart);
   if (hr == D2DERR_RECREATE_TARGET) {
     log("body target lost; recreating");
     Gfx::instance().discardBodyTarget();   // each GridView sees the new target and rebuilds its brushes
@@ -603,15 +607,24 @@ int App::main(HINSTANCE hinst) {
 
   wire_.write = [this](const std::string& line) { core_.send(line); };
   wire_.onModel = [this](const UiModel& m) {
+    LARGE_INTEGER a0, l0, l1, a1;
+    QueryPerformanceCounter(&a0);
     double oldFont = model_.window.fontPx;
     double oldStrip = model_.window.tabStripH;
     model_ = m;
     input_.setChords(m.chords);
+    QueryPerformanceCounter(&l0);
     Ui::instance().setModel(m);
+    QueryPerformanceCounter(&l1);
     if (m.window.tabStripH > 0 && m.window.tabStripH != oldStrip) Window::instance().onStripHeightChanged();
     Window::instance().invalidateStrip();
     Window::instance().invalidateBody();
-    Driver::instance().noteModel(m.seq);   // applied: a driver drag step waiting for it stops its clock here
+    QueryPerformanceCounter(&a1);
+    Driver& d = Driver::instance();
+    d.noteModelInvalidated(true);
+    d.noteModelPath(Driver::ticksMs(lineQueueTicks_), Driver::ticksMs(wire_.parseTicks), Driver::ticksMs(wire_.buildTicks),
+                    Driver::ticksMs(l1.QuadPart - l0.QuadPart), Driver::ticksMs(a1.QuadPart - a0.QuadPart));
+    d.noteModel(m.seq);   // applied: a driver drag step waiting for it stops its clock here
     if (!firstModel_) {
       firstModel_ = true;
       wire_.sendGeometry();

@@ -106,7 +106,10 @@ void Wire::reset() {
 }
 
 void Wire::onCoreLine(std::string line) {
+  LARGE_INTEGER t0, t1, t2;
+  QueryPerformanceCounter(&t0);
   json e = json::parse(line, nullptr, false);
+  QueryPerformanceCounter(&t1);
   if (e.is_discarded() || !e.is_object() || !e.contains("k") || !e["k"].is_string() || !e.contains("ch") || !e["ch"].is_string()) {
     App::log("error: malformed core line (%zu bytes): %.200s", line.size(), line.c_str());
     return;
@@ -119,6 +122,9 @@ void Wire::onCoreLine(std::string line) {
     if (k == "on") {
       if (ch == "ui:model") {
         UiModel m = UiModel::parse(p);
+        QueryPerformanceCounter(&t2);
+        parseTicks = t1.QuadPart - t0.QuadPart;
+        buildTicks = t2.QuadPart - t1.QuadPart;
         lastModel_ = p;
         App::log("on ui:model seq=%.0f tabs=%zu panes=%zu", m.seq, m.tabs.size(), m.panes.size());
         if (onModel) onModel(m);

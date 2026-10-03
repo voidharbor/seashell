@@ -161,6 +161,8 @@ void Window::freeStripDib() {
 // premultiplied DIB through a DC render target, then BitBlt it to the window.
 // Pixels left at alpha 0 show the DWM glass.
 void Window::paintStrip() {
+  LARGE_INTEGER t0, t1;
+  QueryPerformanceCounter(&t0);
   PAINTSTRUCT ps;
   HDC dc = BeginPaint(hwnd_, &ps);
   RECT rc; GetClientRect(hwnd_, &rc);
@@ -193,6 +195,8 @@ void Window::paintStrip() {
     }
   }
   EndPaint(hwnd_, &ps);
+  QueryPerformanceCounter(&t1);
+  Driver::instance().notePaint(true, t0.QuadPart, t1.QuadPart);   // the driver's modelMs
 }
 
 void Window::paintBody() {

@@ -96,4 +96,5 @@ private:
   bool argbForced_ = false;                        // the driver's colorization override (never DWM's own state)
   std::string argbForce_;
   bool compositionOff_ = false;                    // the driver's composition {on:false}
+  long long lineQueueTicks_ = 0;                   // the core line being handled: its post to here, QPC ticks (the driver's modelMs)
 };

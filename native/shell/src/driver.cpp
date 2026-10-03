@@ -24,6 +24,7 @@ using nlohmann::json;
 namespace {
 const DWORD kUiTimeoutMs = 15000;     // a UI-thread command that has not run by then is reported, not waited on
 const ULONGLONG kStatsWindowMs = 5000;
+const size_t kModelSamples = 200;     // stats' modelMs: medians over the last this many models
 const int kModCtrl = 1, kModShift = 2, kModAlt = 4;
 
 json fail(const std::string& code) { return { { "ok", false }, { "code", code } }; }
@@ -688,6 +689,36 @@ void Driver::noteModel(double seq) {
   modelCv_.notify_all();
 }
 
+double Driver::ticksMs(LONGLONG t) {
+  static const double perMs = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f.QuadPart / 1000.0; }();
+  return t / perMs;
+}
+
+void Driver::noteModelPath(double queueMs, double parseMs, double buildMs, double layoutMs, double applyMs) {
+  if (!running_) return;
+  modelPaths_.push_back({ queueMs, parseMs, buildMs, layoutMs, applyMs });
+  while (modelPaths_.size() > kModelSamples) modelPaths_.pop_front();
+}
+
+void Driver::noteModelInvalidated(bool strip) {
+  if (!running_) return;
+  LARGE_INTEGER t;
+  QueryPerformanceCounter(&t);
+  // A second model before the paint keeps the first one's stamp.
+  if (!paintPending_[0]) paintPending_[0] = t.QuadPart;
+  if (strip && !paintPending_[1]) paintPending_[1] = t.QuadPart;
+}
+
+void Driver::notePaint(bool strip, LONGLONG t0, LONGLONG t1) {
+  if (!running_) return;
+  LONGLONG& pending = paintPending_[strip ? 1 : 0];
+  if (!pending) return;   // a paint no model asked for (output, the caret, a resize)
+  auto push = [](std::deque<double>& d, double v) { d.push_back(v); while (d.size() > kModelSamples) d.pop_front(); };
+  push(paintGap_[strip ? 1 : 0], ticksMs(t1 - pending));
+  push(paintDraw_[strip ? 1 : 0], ticksMs(t1 - t0));
+  pending = 0;
+}
+
 void Driver::notePtyBytes(size_t n) {
   if (!running_) return;
   ULONGLONG now = GetTickCount64();
@@ -708,7 +739,20 @@ json Driver::stats() {
   App& a = App::instance();
   std::string id = a.defaultPaneId();
   Grid* g = id.empty() ? nullptr : a.grid(id);
-  return { { "frameMs", { { "p50", percentile(ms, 0.5) }, { "p95", percentile(ms, 0.95) } } },
+  // The model path, medians over the last 200 models (Phase 2 Task 2 step 7):
+  // queue is the reader thread's post to the UI thread taking the line, parse
+  // the JSON, build UiModel::parse, layout Ui::setModel, apply the whole
+  // onModel around it, paint the body's invalidate to its paint end (strip
+  // the same for the strip), bodyDraw and stripDraw the paints alone.
+  auto r3 = [](double v) { return std::round(v * 1000) / 1000; };
+  auto med = [&](std::vector<double> v) { return r3(percentile(std::move(v), 0.5)); };
+  std::vector<double> q, pa, b, l, ap;
+  for (const ModelPath& m : modelPaths_) { q.push_back(m.queue); pa.push_back(m.parse); b.push_back(m.build); l.push_back(m.layout); ap.push_back(m.apply); }
+  auto vec = [](const std::deque<double>& d) { return std::vector<double>(d.begin(), d.end()); };
+  json modelMs = { { "n", modelPaths_.size() }, { "queue", med(q) }, { "parse", med(pa) }, { "build", med(b) }, { "layout", med(l) },
+                   { "apply", med(ap) }, { "paint", med(vec(paintGap_[0])) }, { "strip", med(vec(paintGap_[1])) },
+                   { "bodyDraw", med(vec(paintDraw_[0])) }, { "stripDraw", med(vec(paintDraw_[1])) } };
+  return { { "frameMs", { { "p50", percentile(ms, 0.5) }, { "p95", percentile(ms, 0.95) } } }, { "modelMs", modelMs },
            { "framesLast5s", ms.size() }, { "ptyBytesLast5s", (long long)bytes }, { "shellWsMB", std::round(wsMB * 10) / 10 },
            { "paneId", id }, { "mouseMode", g ? g->mouseMode() : 0 }, { "selection", a.input().selectionText(id) },
            { "coreDead", a.coreDead() }, { "coreAlive", a.coreAlive() } };

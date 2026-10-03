@@ -197,7 +197,10 @@ bool postLine(std::string* line) {
     Sleep(2);
   }
   g_queuedLineBytes += n;
-  if (postToWindow(Window::WM_APP_CORE_LINE, 0, (LPARAM)line)) return true;
+  // wParam carries the post time (QPC) for the driver's queue hop in modelMs.
+  LARGE_INTEGER t;
+  QueryPerformanceCounter(&t);
+  if (postToWindow(Window::WM_APP_CORE_LINE, (WPARAM)t.QuadPart, (LPARAM)line)) return true;
   g_queuedLineBytes -= n;
   return false;
 }

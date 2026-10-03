@@ -23,7 +23,7 @@ public:
   void post(UINT msg, WPARAM w = 0, LPARAM l = 0);   // PostMessage to hwnd()
   SavedBounds bounds() const;   // the last normal rect plus the maximized flag, for saveBounds
   // WM_APP messages the rest of the shell uses:
-  static constexpr UINT WM_APP_CORE_LINE = WM_APP + 1;   // lParam: std::string* (heap, receiver deletes)
+  static constexpr UINT WM_APP_CORE_LINE = WM_APP + 1;   // wParam: QPC at the post; lParam: std::string* (heap, receiver deletes)
   static constexpr UINT WM_APP_CORE_EXIT = WM_APP + 2;   // wParam: exit code
   static constexpr UINT WM_APP_DRIVER   = WM_APP + 3;   // lParam: DriverCall* (Task 9)
   static constexpr UINT WM_APP_PTY_FEED = WM_APP + 4;   // batched pty bytes ready (Task 11)
