@@ -190,9 +190,12 @@ private:
   // The tab strip's overflow: the scroll of the tab row in device pixels, its
   // largest value and one tab's pitch as the last layout found them, and
   // whether the next layout scrolls the active tab into view (a model whose
-  // active tab changed).
+  // active tab changed). The last layout's overflow, pitch and view width
+  // tell a resize that starts the overflow or moves the row (tabs.cpp).
   float stripScroll_ = 0, stripMax_ = 0, stripPitch_ = 0;
   bool stripReveal_ = true;
+  bool stripWasOver_ = false;
+  float stripLastPitch_ = 0, stripLastViewW_ = 0;
   UINT_PTR stripTimer_ = 0;
   bool stripTimerFast_ = false;
 };

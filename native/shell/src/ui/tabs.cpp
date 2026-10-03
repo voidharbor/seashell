@@ -111,6 +111,15 @@ void Ui::viewTabs(Painter& p) {
     float viewW = std::max(0.f, viewR - viewL);
     stripPitch_ = pitch;
     stripMax_ = std::max(0.f, (float)n * pitch - gap - viewW);
+    if (registering_) {
+      // A resize, zoom or DPI change that starts the overflow or moves the
+      // row's geometry reveals the active tab too, not only a model change.
+      if (!stripWasOver_ || std::abs(pitch - stripLastPitch_) > 0.01f || std::abs(viewW - stripLastViewW_) > 0.01f)
+        stripReveal_ = true;
+      stripWasOver_ = true;
+      stripLastPitch_ = pitch;
+      stripLastViewW_ = viewW;
+    }
     if (registering_ && stripReveal_) {
       for (size_t i = 0; i < n; i++) {
         if (!m_.tabs[i].active) continue;
@@ -134,6 +143,7 @@ void Ui::viewTabs(Painter& p) {
     stripScroll_ = stripMax_ = 0;
     stripPitch_ = pitch;
     stripReveal_ = false;
+    if (registering_) stripWasOver_ = false;
   }
   // A tab scrolled partly out of the row hits only where it shows.
   auto shown = [&](D2D1_RECT_F r) {
