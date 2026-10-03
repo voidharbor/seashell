@@ -61,6 +61,7 @@ import { mem, statusModel } from './status.js'
 import { colorizationToTokens, isColorization, withAccent } from './colorization.js'
 import { accentOptionId, cleanNewPaneCommand, paletteOverride, SETTINGS_CHECKS, settingsSheet } from './sheets.js'
 import { ACCENTS, PALETTE_ORDER, type PaletteKey } from '../../renderer/theme/tokens.js'
+import { TAB_STRIP_ORDER, type TabStripMode } from '../../renderer/settings/settings.js'
 import type {
   ChordModel,
   DrawerModel,
@@ -203,6 +204,8 @@ export class Controller {
   private seq = 0
   /** The Aero tokens from the shell's `shell:colorization`; the 6.2 table until it reports. */
   private tokens: Record<string, string> = { ...colorizationToTokens(null), composition: '1' }
+  /** The last `shell:colorization` payload, kept so a `tabStrip` change can rebuild the tokens; null until it reports. */
+  private colorization: { argb: string | null; opaque: boolean; composition: boolean; appsDark: boolean } | null = null
   /** The file explorer while the sidebar shows; null while hidden, as the renderer unmounts it. */
   private explorer: ExplorerState | null = null
   /** The row context menu: the row it is for and where it opened. */
@@ -255,6 +258,8 @@ export class Controller {
     if (this.paths?.userData) {
       this.uiFile = path.posix.join(this.paths.userData, 'ui-state.json')
       this.ui = loadUiState(this.uiFile)
+      // A saved `Dark` tab strip paints before the shell's first colorization.
+      this.rebuildTokens()
     }
     this.s = reducer(this.s, { type: 'explorer.setRoot', root: this.home })
 
@@ -640,14 +645,17 @@ export class Controller {
         break
       }
       case 'shell:colorization': {
-        // DwmGetColorizationColor and DwmIsCompositionEnabled, at start and on
-        // WM_DWMCOLORIZATIONCOLORCHANGED / WM_DWMCOMPOSITIONCHANGED.
-        const c = p as { argb?: unknown; opaque?: unknown; composition?: unknown } | null
-        const argb = typeof c?.argb === 'string' ? c.argb : null
-        // A missing or malformed colorization (DWM off, a remote session) paints
-        // the opaque strip, as composition off does (Review Focus 5).
-        const glass = c?.composition !== false && isColorization(argb)
-        this.tokens = { ...colorizationToTokens(argb, c?.opaque === true), composition: glass ? '1' : '0' }
+        // DwmGetColorizationColor, DwmIsCompositionEnabled and AppsUseLightTheme,
+        // at start and on WM_DWMCOLORIZATIONCOLORCHANGED / WM_DWMCOMPOSITIONCHANGED /
+        // WM_SETTINGCHANGE "ImmersiveColorSet".
+        const c = p as { argb?: unknown; opaque?: unknown; composition?: unknown; appsDark?: unknown } | null
+        this.colorization = {
+          argb: typeof c?.argb === 'string' ? c.argb : null,
+          opaque: c?.opaque === true,
+          composition: c?.composition !== false,
+          appsDark: c?.appsDark === true,
+        }
+        this.rebuildTokens()
         this.emit()
         break
       }
@@ -1980,8 +1988,30 @@ export class Controller {
   private setSetting<K extends keyof UiState['settings']>(key: K, value: UiState['settings'][K]): void {
     if (this.ui.settings[key] === value) return
     this.ui = { ...this.ui, settings: { ...this.ui.settings, [key]: value } }
+    if (key === 'tabStrip') this.rebuildTokens()
     this.saveUi()
     this.emit()
+  }
+
+  /**
+   * The token table from the last colorization and the `tabStrip` setting
+   * (plan amendment 10/03 05:40): `System` follows Windows' app theme, `Light`
+   * and `Dark` pin it. The accent override rides on top in `build()`, so it
+   * survives every rebuild.
+   */
+  private rebuildTokens(): void {
+    const c = this.colorization
+    const mode = this.ui.settings.tabStrip
+    const darkStrip = mode === 'dark' || (mode === 'system' && c?.appsDark === true)
+    if (c === null) {
+      // The shell has not reported: the 6.2 table on glass, as at construction.
+      this.tokens = { ...colorizationToTokens(null, false, darkStrip), composition: '1' }
+      return
+    }
+    // A missing or malformed colorization (DWM off, a remote session) paints
+    // the opaque strip, as composition off does (Review Focus 5).
+    const glass = c.composition && isColorization(c.argb)
+    this.tokens = { ...colorizationToTokens(c.argb, c.opaque, darkStrip), composition: glass ? '1' : '0' }
   }
 
   private sheetEvent(t: string, e: UiEvent): void {
@@ -2022,6 +2052,8 @@ export class Controller {
       }
     } else if (field === 'palette') {
       if ((PALETTE_ORDER as readonly string[]).includes(option)) this.setSetting('palette', option as PaletteKey)
+    } else if (field === 'tabStrip') {
+      if ((TAB_STRIP_ORDER as readonly string[]).includes(option)) this.setSetting('tabStrip', option as TabStripMode)
     }
     // Theme (Aero only), pane frame and CRT glass are greyed: nothing to apply.
   }

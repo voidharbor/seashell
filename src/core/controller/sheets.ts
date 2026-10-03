@@ -5,9 +5,9 @@
  *
  * Only Aero is drawn on the native build, so the other themes, the pane frames
  * and the CRT glass are listed greyed with the tooltip `coming back` (spec 12).
- * Accent and terminal palette work.
+ * Accent, the tab strip and terminal palette work.
  */
-import type { Settings } from '../../renderer/settings/settings.js'
+import { TAB_STRIP_ORDER, type Settings, type TabStripMode } from '../../renderer/settings/settings.js'
 import {
   ACCENTS,
   PALETTE_LABELS,
@@ -31,6 +31,8 @@ export const SETTINGS_SHEET_WIDTH = 620
 export const NEW_PANE_COMMAND_MAX = 200
 
 const COMING_BACK = 'coming back'
+
+const TAB_STRIP_LABELS: Record<TabStripMode, string> = { system: 'System', light: 'Light', dark: 'Dark' }
 
 /** UI copy here never carries an em dash (U+2014): the renderer's spaced dash becomes ', '. */
 const noDash = (s: string): string => s.replace(/\s*\u2014\s*/g, ', ')
@@ -99,6 +101,14 @@ export function settingsSheet(settings: Settings, platform: string, uiScale = 1)
         option('default', 'Theme default', settings.accent === null, false, null),
         ...ACCENTS.map((a) => option(accentOptionId(a.key), a.label, settings.accent === a.key, false, a.label, a.key)),
       ],
+    },
+    {
+      // Plan amendment 10/03 05:40: a dark mode for the tabs only.
+      id: 'tabStrip',
+      kind: 'buttons',
+      label: 'Tab strip',
+      options: TAB_STRIP_ORDER.map((k) => option(k, TAB_STRIP_LABELS[k], settings.tabStrip === k, false, null)),
+      note: 'System follows the Windows app theme. Only the tabs darken; everything below them stays light.',
     },
     {
       id: 'palette',

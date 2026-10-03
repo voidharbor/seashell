@@ -662,12 +662,13 @@ void Ui::drawStrip(ID2D1RenderTarget* rt) {
   RECT rc{};
   GetClientRect(Window::instance().hwnd(), &rc);
   D2D1_RECT_F strip = D2D1::RectF(0, 0, (float)rc.right, (float)Window::instance().stripHeightPx());
-  if (onGlass()) p.fillRect(strip, t_.glassTint & 0xFFFFFF, 0.10f);   // the colorization's wash over the glass
+  // The colorization's wash over the glass; the dark strip's is black at 55 percent.
+  if (onGlass()) p.fillRect(strip, stripDark() ? 0x000000 : t_.glassTint & 0xFFFFFF, stripDark() ? 0.55f : 0.10f);
   else {
     // No composition: the opaque frame. The DWM caption buttons sit under the
     // client pixels, so their 138 DIP stay at alpha 0 or they would be covered.
     strip.right = std::max(0.f, strip.right - 138 * dpi());
-    p.fillRect(strip, t_.frame);
+    p.fillRect(strip, t_.frame);   // the dark strip's frame token is #1F1F1F
   }
   viewTabs(p);
 }
@@ -675,6 +676,11 @@ void Ui::drawStrip(ID2D1RenderTarget* rt) {
 bool Ui::onGlass() const {
   auto comp = m_.tokens.find("composition");
   return comp == m_.tokens.end() || comp->second != "0";
+}
+
+bool Ui::stripDark() const {
+  auto it = m_.tokens.find("stripDark");
+  return it != m_.tokens.end() && it->second == "1";
 }
 
 void Ui::drawBody(ID2D1RenderTarget* rt) {

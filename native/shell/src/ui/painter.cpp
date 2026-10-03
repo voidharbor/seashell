@@ -340,7 +340,8 @@ void Painter::win7Button(D2D1_RECT_F r, BtnState state, const std::wstring& labe
     text(r, label, UiFont{ labelDip }, state == BtnState::Disabled ? 0x838383 : 0x1E1E1E, Align::Center, true);
 }
 
-void Painter::win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor) {
+void Painter::win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor,
+                      uint32_t sheen, uint32_t border) {
   if (!rt_) return;
   ID2D1Factory* fac = nullptr;
   rt_->GetFactory(&fac);
@@ -366,8 +367,8 @@ void Painter::win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFac
   fac->Release();
   // Active: tabActive into the body color below it, so it joins the content.
   // Inactive: 6.3's #f2f2f2 to #dcdcdc, lighter under the pointer.
-  uint32_t top = active ? activeFace : mixRgb(0xFFFFFF, inactiveFace, hover ? 0.75f : 0.4f);
-  uint32_t bottom = active ? joinColor : (hover ? mixRgb(0xFFFFFF, inactiveFace, 0.4f) : inactiveFace);
+  uint32_t top = active ? activeFace : mixRgb(sheen, inactiveFace, hover ? 0.75f : 0.4f);
+  uint32_t bottom = active ? joinColor : (hover ? mixRgb(sheen, inactiveFace, 0.4f) : inactiveFace);
   D2D1_GRADIENT_STOP stops[] = { { 0.f, color(top, 1) }, { 1.f, color(bottom, 1) } };
   ComPtr<ID2D1GradientStopCollection> coll;
   ComPtr<ID2D1LinearGradientBrush> g;
@@ -376,8 +377,8 @@ void Painter::win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFac
                                                coll.Get(), g.GetAddressOf())))
     rt_->FillGeometry(fill.Get(), g.Get());
   // 6.3: a 1 px #8e8f8f border on three sides; the active tab has no bottom edge.
-  rt_->DrawGeometry(edge.Get(), brush(0x8E8F8F, 1), one);
-  if (!active) rt_->FillRectangle(D2D1::RectF(r.left, r.bottom - one, r.right, r.bottom), brush(0x8E8F8F, 1));
+  rt_->DrawGeometry(edge.Get(), brush(border, 1), one);
+  if (!active) rt_->FillRectangle(D2D1::RectF(r.left, r.bottom - one, r.right, r.bottom), brush(border, 1));
 }
 
 void Painter::text(D2D1_RECT_F r, const std::wstring& s, UiFont f, uint32_t rgb, Align a, bool ellipsis, float alpha) {

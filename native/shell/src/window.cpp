@@ -255,6 +255,10 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       App::instance().sendColorization();   // the chrome follows the desktop color
       break;
+    case WM_SETTINGCHANGE:
+      // The Windows app theme changed: the tab strip's System mode follows it (Task 12b).
+      if (l && lstrcmpiW(reinterpret_cast<LPCWSTR>(l), L"ImmersiveColorSet") == 0) App::instance().sendColorization();
+      break;
     case WM_NCLBUTTONDOWN:
       if (w == HTCAPTION) Ui::instance().captionPress();
       break;

@@ -58,7 +58,17 @@ export interface Settings {
   crt: CrtKey
   /** A key from ACCENTS, or null for the theme's own accent. */
   accent: string | null
+  /**
+   * The native shell's tab strip: `system` follows Windows' app theme
+   * (`AppsUseLightTheme`), `light` and `dark` pin it. Only the strip darkens;
+   * the chrome below it keeps its light faces.
+   */
+  tabStrip: TabStripMode
 }
+
+export type TabStripMode = 'system' | 'light' | 'dark'
+
+export const TAB_STRIP_ORDER: readonly TabStripMode[] = ['system', 'light', 'dark']
 
 export const DEFAULT_SETTINGS: Settings = {
   attentionGlow: true,
@@ -71,6 +81,7 @@ export const DEFAULT_SETTINGS: Settings = {
   palette: 'native',
   crt: 'theme',
   accent: null,
+  tabStrip: 'system',
 }
 
 /** Allowed values per enum setting, so nothing out of localStorage can paint. */
@@ -79,6 +90,7 @@ const ENUMS = {
   paneStyle: PANE_STYLE_ORDER,
   palette: PALETTE_ORDER,
   crt: ['theme', 'on', 'off'] as const,
+  tabStrip: TAB_STRIP_ORDER,
 } satisfies Record<string, readonly string[]>
 
 const ACCENT_KEYS: readonly string[] = ACCENTS.map((a) => a.key)

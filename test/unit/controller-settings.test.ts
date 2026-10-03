@@ -64,4 +64,40 @@ describe('settings sheet', () => {
     click(c, 'sheet:settings:btn:done')
     expect(c.model().sheet).toBeNull()
   })
+  it('the tab strip follows the Windows app theme by default and the setting overrides it', async () => {
+    const f = fakeDeps()
+    const c = new Controller(f.deps, { home: '/h', version: '0', chords: [] })
+    await c.boot(GEO)
+    c.push('shell:colorization', { argb: '#FF881798', opaque: false, composition: true, appsDark: true })
+    expect(c.model().tokens.stripDark).toBe('1')
+    expect(c.model().tokens.tabActive).toBe('#2B2B2B')
+    expect(c.model().tokens.tabText).toBe('#F0F0F0')
+    expect(c.model().tokens.body).toBe('#ECE2F0') // below the strip nothing changes
+    c.push('shell:colorization', { argb: '#FF881798', opaque: false, composition: true, appsDark: false })
+    expect(c.model().tokens.stripDark).toBe('0')
+    expect(c.model().tokens.tabActive).toBe('#FFFFFF')
+    c.command('app.settings')
+    click(c, 'sheet:settings:tabStrip:dark')
+    expect(c.model().tokens.stripDark).toBe('1')
+    expect(c.uiState().settings.tabStrip).toBe('dark')
+    c.push('shell:colorization', { argb: '#FF881798', opaque: false, composition: true, appsDark: true })
+    click(c, 'sheet:settings:tabStrip:light')
+    expect(c.model().tokens.stripDark).toBe('0')
+    expect(c.model().tokens.tabActive).toBe('#FFFFFF')
+    click(c, 'sheet:settings:accent:0a84ff')
+    expect(c.model().tokens.accent).toBe('#0a84ff') // the accent override survives a token rebuild
+    click(c, 'sheet:settings:tabStrip:system')
+    expect(c.model().tokens.stripDark).toBe('1')
+    expect(c.model().tokens.accent).toBe('#0a84ff')
+    expect(c.model().tokens.composition).toBe('1')
+    const field = c.model().sheet!.sections[0]!.fields.find((x) => x.id === 'tabStrip')!
+    expect(field.label).toBe('Tab strip')
+    expect(field.options!.map((o) => [o.id, o.label, o.selected])).toEqual([
+      ['system', 'System', true],
+      ['light', 'Light', false],
+      ['dark', 'Dark', false],
+    ])
+    const ids = c.model().sheet!.sections[0]!.fields.map((x) => x.id)
+    expect(ids.indexOf('tabStrip')).toBe(ids.indexOf('accent') + 1)
+  })
 })

@@ -127,6 +127,13 @@ json App::dwmColorization() {
   // So does a DWM that has no colorization to give (off, a remote session),
   // even with the registry value still there (Review Focus 5).
   out["composition"] = haveDwm && SUCCEEDED(DwmIsCompositionEnabled(&comp)) && comp != FALSE;
+  // Windows' app theme (Settings > Personalization > Colors), read only: the
+  // core darkens the tab strip on it when the Tab strip setting is System.
+  // A missing value is the light theme.
+  DWORD light = 1, lsize = sizeof light;
+  bool haveTheme = RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                                L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &lsize) == ERROR_SUCCESS;
+  out["appsDark"] = haveTheme && light == 0;
   return out;
 }
 
@@ -135,6 +142,7 @@ void App::sendColorization() {
   json p = dwmColorization();
   if (argbForced_) p["argb"] = argbForce_;
   if (compositionOff_) p["composition"] = false;
+  if (appsDarkForced_) p["appsDark"] = appsDarkForce_;
   wire_.send("shell:colorization", p);
   log("colorization sent %s", p.dump().c_str());
 }
@@ -143,6 +151,12 @@ void App::overrideColorization(const json& argb) {
   argbForced_ = argb.is_string();
   argbForce_ = argbForced_ ? argb.get<std::string>() : std::string();
   sendColorization();
+}
+
+void App::overrideAppsDark(const json& dark, bool send) {
+  appsDarkForced_ = dark.is_boolean();
+  appsDarkForce_ = appsDarkForced_ && dark.get<bool>();
+  if (send) sendColorization();
 }
 
 void App::overrideComposition(bool on) {

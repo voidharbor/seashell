@@ -392,8 +392,15 @@ json Driver::execute(const json& req) {
   if (cmd == "colorization") {
     // The WM_DWMCOLORIZATIONCOLORCHANGED handler with a test value instead of
     // DWM's: the desktop and the registry are never touched. {argb:null}
-    // reads DWM again.
-    App::instance().overrideColorization(req.contains("argb") ? req["argb"] : json(nullptr));
+    // reads DWM again. {appsDark:true|false} stands in for Windows' app theme
+    // and {appsDark:null} reads the registry again; a request with appsDark
+    // and no argb leaves the argb override alone, one without appsDark is the
+    // argb override as before.
+    App& app = App::instance();
+    bool hasDark = req.contains("appsDark");
+    if (hasDark) app.overrideAppsDark(req["appsDark"], false);
+    if (req.contains("argb") || !hasDark) app.overrideColorization(req.contains("argb") ? req["argb"] : json(nullptr));
+    else app.sendColorization();
     return { { "ok", true }, { "dwm", App::dwmColorization() } };
   }
   if (cmd == "composition") {

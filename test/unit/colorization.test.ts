@@ -16,6 +16,28 @@ describe('colorizationToTokens (Review Focus 5)', () => {
     const t = colorizationToTokens('#C8F0F0F0')
     expect(t.frameText).toBe('#1E1E1E')
   })
+  it('darkens only the strip tokens when darkStrip is set', () => {
+    const light = colorizationToTokens('#FF881798', false)
+    expect(light.stripDark).toBe('0')
+    expect(light.tabActive).toBe('#FFFFFF')
+    const dark = colorizationToTokens('#FF881798', false, true)
+    expect(dark).toMatchObject({
+      frame: '#1F1F1F',
+      frameText: '#F0F0F0',
+      tabActive: '#2B2B2B',
+      tabInactive: '#1A1A1A',
+      tabText: '#F0F0F0',
+      badge: '#3A3A3A',
+      badgeText: '#D0D0D0',
+      glassTint: '#8C000000',
+      stripDark: '1',
+    })
+    expect(dark.body).toBe(light.body)
+    expect(dark.panel).toBe(light.panel)
+    expect(dark.accent).toBe(light.accent)
+    // A derived colorization keeps its own body too.
+    expect(colorizationToTokens('#C8107C10', false, true).body).toBe(colorizationToTokens('#C8107C10').body)
+  })
   it('never throws', () => {
     for (const bad of ['', '#', '#GGGGGG', '#1234567890', 7 as never, {} as never]) expect(() => colorizationToTokens(bad)).not.toThrow()
   })

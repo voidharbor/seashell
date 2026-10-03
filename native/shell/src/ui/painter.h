@@ -37,7 +37,9 @@ public:
   void win7Button(D2D1_RECT_F r, BtnState state, const std::wstring& label = L"", float labelDip = 12);
   // The IE9 tab: 6 px top radii; the active one shades into joinColor (the body
   // color under it) with no bottom border, so it merges into the content.
-  void win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor);
+  // sheen is mixed into the inactive face for its highlight and hover; border is the 1 px edge.
+  void win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor,
+               uint32_t sheen = 0xFFFFFF, uint32_t border = 0x8E8F8F);
   void text(D2D1_RECT_F r, const std::wstring& s, UiFont f, uint32_t rgb, Align a = Align::Left, bool ellipsis = true, float alpha = 1);
   // text() in two halves, so a caller can keep the layout across frames (the
   // explorer's row names): build it for a w by h box, then draw it in r.

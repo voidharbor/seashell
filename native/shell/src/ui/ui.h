@@ -91,6 +91,7 @@ private:
   // The views, one file each.
   void viewTabs(Painter& p);                     // tabs.cpp
   bool onGlass() const;                          // tokens.composition is not '0': the strip is DWM glass
+  bool stripDark() const;                        // tokens.stripDark is '1': the dark tab strip (Task 12b); nothing below the strip reads it
   void viewPanes(Painter& p);                    // panes.cpp
   void viewExitOverlay(Painter& p, const PaneModel& pm, D2D1_RECT_F grid);   // panes.cpp
   void viewDividers(Painter& p);                 // dividers.cpp

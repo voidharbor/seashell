@@ -47,10 +47,12 @@ public:
   void paintBody();                                // the body child's WM_PAINT: every visible pane's grid
   // shell:colorization (Task 16): at start, on WM_DWMCOLORIZATIONCOLORCHANGED
   // and WM_DWMCOMPOSITIONCHANGED, and from the driver's test overrides.
-  void sendColorization();                         // {argb, opaque, composition} to the core
+  // Also on WM_SETTINGCHANGE "ImmersiveColorSet" (the Windows app theme, Task 12b).
+  void sendColorization();                         // {argb, opaque, composition, appsDark} to the core
   void overrideColorization(const nlohmann::json& argb);   // a "#AARRGGBB" string is used instead of DWM's; null reads DWM again
+  void overrideAppsDark(const nlohmann::json& dark, bool send = true);   // true or false is used instead of the registry's; null reads it again
   void overrideComposition(bool on);               // false forces the composition-off branch; true reads DWM again
-  static nlohmann::json dwmColorization();         // the real DWM state, read now: {argb, opaque, composition}
+  static nlohmann::json dwmColorization();         // the real DWM state, read now: {argb, opaque, composition, appsDark}
 
 private:
   int main(HINSTANCE hinst);
@@ -96,5 +98,7 @@ private:
   bool argbForced_ = false;                        // the driver's colorization override (never DWM's own state)
   std::string argbForce_;
   bool compositionOff_ = false;                    // the driver's composition {on:false}
+  bool appsDarkForced_ = false;                    // the driver's colorization {appsDark} override (the registry is never written)
+  bool appsDarkForce_ = false;
   long long lineQueueTicks_ = 0;                   // the core line being handled: its post to here, QPC ticks (the driver's modelMs)
 };

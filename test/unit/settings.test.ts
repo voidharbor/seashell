@@ -53,4 +53,12 @@ describe('coerceSettings', () => {
   it('leaves the ping opt-in', () => {
     expect(DEFAULT_SETTINGS.attentionSound).toBe(false)
   })
+
+  it('keeps the tab strip mode and maps anything else to system', () => {
+    expect(coerceSettings({ tabStrip: 'purple' }).tabStrip).toBe('system')
+    expect(coerceSettings({ tabStrip: 'dark' }).tabStrip).toBe('dark')
+    expect(coerceSettings({ tabStrip: 'light' }).tabStrip).toBe('light')
+    expect(coerceSettings({}).tabStrip).toBe('system')
+    expect(DEFAULT_SETTINGS.tabStrip).toBe('system')
+  })
 })

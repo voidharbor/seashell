@@ -50,6 +50,26 @@ const SPEC_TABLE: Readonly<TokenTable> = Object.freeze({
   glassTint: '#38881798', // --barBg rgba(136, 23, 152, .22)
 })
 
+/**
+ * The dark tab strip (plan amendment 10/03 05:40): these keys replace the
+ * table's own when the strip is dark. Only the strip's tokens are here; the
+ * body, panels, cards and accent below it keep their light values.
+ * `glassTint` is black at 55 percent, the wash the shell paints on glass.
+ */
+const DARK_STRIP: Readonly<Partial<TokenTable>> = Object.freeze({
+  frame: '#1F1F1F',
+  frameText: '#F0F0F0',
+  tabActive: '#2B2B2B',
+  tabInactive: '#1A1A1A',
+  tabText: '#F0F0F0',
+  badge: '#3A3A3A',
+  badgeText: '#D0D0D0',
+  glassTint: '#8C000000',
+})
+
+/** The token table plus `stripDark`, a non-colour key: `'1'` when the strip is dark, `'0'` otherwise. */
+export type ChromeTokens = TokenTable & { stripDark: '0' | '1' }
+
 const DARK_TEXT = 0x1e1e1e
 const LIGHT_TEXT = 0xffffff
 const GLASS_ALPHA = 0x38 // --barBg's .22
@@ -136,15 +156,20 @@ function derive(c: number): TokenTable {
  * reports it set on Windows 10 and 11 while OpenGlass still draws glass (read
  * on the live desktop), so the strip's glass or opaque paint follows the
  * shell's composition flag instead.
+ *
+ * `darkStrip` swaps in the dark strip keys (`DARK_STRIP`) and sets
+ * `stripDark` to `'1'`; everything below the strip is the same table.
  */
-export function colorizationToTokens(argb: string | null | undefined, opaque?: boolean): TokenTable {
+export function colorizationToTokens(argb: string | null | undefined, opaque?: boolean, darkStrip?: boolean): ChromeTokens {
   void opaque
+  let table: TokenTable
   try {
     const rgb = parseRgb(argb)
-    return rgb === null || rgb === DEFAULT_RGB ? { ...SPEC_TABLE } : derive(rgb)
+    table = rgb === null || rgb === DEFAULT_RGB ? { ...SPEC_TABLE } : derive(rgb)
   } catch {
-    return { ...SPEC_TABLE }
+    table = { ...SPEC_TABLE }
   }
+  return darkStrip === true ? { ...table, ...DARK_STRIP, stripDark: '1' } : { ...table, stripDark: '0' }
 }
 
 /**
