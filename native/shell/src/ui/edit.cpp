@@ -151,6 +151,7 @@ bool EditWidget::key(UINT msg, WPARAM w, LPARAM l, Mods m, const ChordTable& cho
     if (cmd && *cmd == "edit.paste") { swallowChar_ = true; paste(); return true; }
     if (cmd && *cmd == "edit.copy") { swallowChar_ = true; if (hasSelection()) writeClipboard(value_.substr(selFrom(), selTo() - selFrom())); return true; }
     if (cmd && *cmd == "edit.selectAll") { swallowChar_ = true; selectAll(); return true; }
+    if (cmd && *cmd == "pane.clear") { swallowChar_ = true; return true; }   // Clear is ignored while a field has the keys
     if (msg == WM_KEYDOWN && ((ctrlOnly && (w == 'A' || w == 'C' || w == 'V' || w == 'X')) ||
                               (m.shift && !m.ctrl && w == VK_INSERT) || (m.ctrl && !m.shift && w == VK_INSERT) ||
                               (m.shift && !m.ctrl && w == VK_DELETE))) {
