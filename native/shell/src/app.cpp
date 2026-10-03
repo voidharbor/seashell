@@ -4,6 +4,7 @@
 #include "gfx.h"
 #include "log.h"
 #include "paths.h"
+#include "ui/menu.h"
 #include "ui/sheet.h"
 #include "ui/ui.h"
 #include "window.h"
@@ -308,10 +309,11 @@ std::string App::defaultPaneId() const {
 
 // The core's one-off orders outside the model (ShellCmd in model.ts). XAudio2
 // starts on the first ping, not at launch, so a window that never pings never
-// loads the audio engine.
+// loads the audio engine. `menu` is the application menu (ui/menu.h).
 void App::onShellCmd(const nlohmann::json& cmd) {
   std::string op = cmd.is_object() && cmd.contains("op") && cmd["op"].is_string() ? cmd["op"].get<std::string>() : std::string();
   if (op == "ping") Audio::ping();
+  else if (op == "menu") AppMenu::instance().set(cmd.contains("items") ? cmd["items"] : nlohmann::json());
   else log("shell:cmd %s ignored", op.c_str());
 }
 

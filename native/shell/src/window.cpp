@@ -2,6 +2,7 @@
 #include "app.h"
 #include "driver.h"
 #include "gfx.h"
+#include "ui/menu.h"
 #include "ui/ui.h"
 #include <dwmapi.h>
 #include <windowsx.h>
@@ -206,6 +207,32 @@ void Window::paintBody() {
   EndPaint(body_, &ps);
 }
 
+bool Window::menuKeys(UINT msg, WPARAM w, LPARAM l) {
+  bool alt = w == VK_MENU || w == VK_LMENU || w == VK_RMENU;
+  bool chord = Driver::keyDown(VK_CONTROL) || Driver::keyDown(VK_SHIFT);
+  if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+    if (!alt) altTap_ = false;
+    else if (!(l & (1 << 30))) altTap_ = !chord;   // the first Alt down arms the tap; its auto-repeats leave it be
+  } else if ((msg == WM_KEYUP || msg == WM_SYSKEYUP) && alt) {
+    bool tap = altTap_ && !chord;
+    altTap_ = false;
+    if (tap) {
+      AppMenu& menu = AppMenu::instance();
+      if (menu.open()) menu.dismiss("Alt");   // the test-mode menu; a shown one runs its own loop
+      else Ui::instance().altTap();
+      return true;   // a lone Alt never reaches DefWindowProc's menu-bar mode
+    }
+  }
+  return AppMenu::instance().key(msg, w);
+}
+
+void Window::noteMouse(UINT msg) {
+  if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN ||
+      msg == WM_LBUTTONDBLCLK || msg == WM_RBUTTONDBLCLK || msg == WM_MBUTTONDBLCLK || msg == WM_MOUSEWHEEL ||
+      msg == WM_NCLBUTTONDOWN || msg == WM_NCRBUTTONDOWN)
+    altTap_ = false;
+}
+
 LRESULT CALLBACK Window::hostProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
   Window& self = instance();
   if (!self.hwnd_) self.hwnd_ = h;   // messages sent during CreateWindowEx
@@ -260,7 +287,9 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       if (l && lstrcmpiW(reinterpret_cast<LPCWSTR>(l), L"ImmersiveColorSet") == 0) App::instance().sendColorization();
       break;
     case WM_NCLBUTTONDOWN:
+      altTap_ = false;
       if (w == HTCAPTION) Ui::instance().captionPress();
+      else AppMenu::instance().noteDown();
       break;
     case WM_NCLBUTTONDBLCLK:
       // strip:empty's double-click is the core's new tab, not maximize.
@@ -310,6 +339,8 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
         TRACKMOUSEEVENT t{ sizeof t, TME_LEAVE, h, 0 };
         TrackMouseEvent(&t);
       }
+      noteMouse(msg);
+      if (msg >= WM_KEYFIRST && msg <= WM_KEYLAST && menuKeys(msg, w, l)) return 0;
       if ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || (msg >= WM_KEYFIRST && msg <= WM_KEYLAST)) {
         if (App::instance().onInput(h, msg, w, l)) return 0;
       }
@@ -344,6 +375,7 @@ LRESULT Window::onBody(HWND h, UINT msg, WPARAM w, LPARAM l) {
       return 0;
     case WM_SETFOCUS:
     case WM_KILLFOCUS:
+      altTap_ = false;
       App::instance().onInput(h, msg, w, l);   // the focused pane's grid takes the keys; focus loss resets the wheel ramp
       return 0;
     case WM_CAPTURECHANGED:
@@ -369,6 +401,8 @@ LRESULT Window::onBody(HWND h, UINT msg, WPARAM w, LPARAM l) {
         TRACKMOUSEEVENT t{ sizeof t, TME_LEAVE, h, 0 };
         TrackMouseEvent(&t);
       }
+      noteMouse(msg);
+      if (msg >= WM_KEYFIRST && msg <= WM_KEYLAST && menuKeys(msg, w, l)) return 0;
       if ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || (msg >= WM_KEYFIRST && msg <= WM_KEYLAST)) {
         if (App::instance().onInput(h, msg, w, l)) return 0;
       }

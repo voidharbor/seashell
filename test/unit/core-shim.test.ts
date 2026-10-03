@@ -59,7 +59,7 @@ describe('electron shim', () => {
     await shim.dispatch({ k: 'reply', ch: 'open:withDefaultApp', id: sent.id, p: { ok: true } })
     expect(await p).toBe('')
   })
-  it('the virtual window takes what createWindow and the window controls call, and does nothing', async () => {
+  it('the virtual window takes what createWindow and the window controls call, and does nothing but minimize and close', async () => {
     const { out, pushes, shim } = make()
     const win = new (shim.BrowserWindow as unknown as new (o: unknown) => ReturnType<typeof shim.BrowserWindow.getAllWindows>[number])({ width: 1440 })
     expect(win).toBe(shim.BrowserWindow.getAllWindows()[0])
@@ -79,7 +79,8 @@ describe('electron shim', () => {
     await win.loadURL('app://seashell/index.html')
     expect(shim.BrowserWindow.fromWebContents(wc)).toBe(win)
     expect(shim.BrowserWindow.fromWebContents({})).toBeNull()
-    expect(out).toEqual([])
+    // The menu's Window items (menu.ts): the shell minimizes and closes its own window.
+    expect(out.map((l) => JSON.parse(l)).map((e) => [e.k, e.ch])).toEqual([['invoke', 'window:minimize'], ['invoke', 'window:close']])
     expect(pushes).toEqual([])
   })
   it('Menu keeps the template and draws nothing', () => {

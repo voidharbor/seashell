@@ -2,6 +2,7 @@
 #include "app.h"
 #include "hostapi.h"
 #include "paths.h"
+#include "ui/menu.h"
 #include "ui/ui.h"
 #include "width.h"
 #include "window.h"
@@ -418,6 +419,23 @@ json Driver::execute(const json& req) {
     App::instance().wire().send(ch, req.contains("p") ? req["p"] : json::object());
     return { { "ok", true } };
   }
+  if (cmd == "menu") {
+    // The application menu as the shell builds its HMENU (Task 16): the items
+    // with their paths and command ids, toggleDevTools and the Mac roles out.
+    json b = AppMenu::instance().built();
+    b["ok"] = true;
+    return b;
+  }
+  if (cmd == "menuPick") {
+    // A pick of the item at `path`, as the shown menu's would be, showing nothing.
+    std::vector<int> path;
+    if (req.contains("path") && req["path"].is_array())
+      for (const json& i : req["path"])
+        if (i.is_number_integer()) path.push_back(i.get<int>());
+    if (path.empty()) return fail("ENOPATH");
+    if (!AppMenu::instance().pick(path)) return fail("ENOITEM");
+    return { { "ok", true } };
+  }
   if (cmd == "key") return key(strArg(req, "chord"));
   if (cmd == "text") return text(strArg(req, "s"));
   if (cmd == "click") return click(req, "click");
@@ -449,6 +467,19 @@ json Driver::execute(const json& req) {
 // state for the chord comes from Driver::keyDown, since sent messages leave the
 // real keyboard state alone.
 json Driver::key(const std::string& chordText) {
+  std::string bare = chordText;
+  std::transform(bare.begin(), bare.end(), bare.begin(), [](unsigned char ch) { return (char)tolower(ch); });
+  if (bare == "alt") {
+    // A bare Alt tap (Task 16): VK_MENU down and up alone, as the keyboard sends them.
+    HWND body = Window::instance().body();
+    if (!body) return fail("ENOWINDOW");
+    heldMods_ = kModAlt;
+    SendMessageW(body, WM_SYSKEYDOWN, VK_MENU, keyLParam(VK_MENU, false, true));
+    heldMods_ = 0;
+    SendMessageW(body, WM_SYSKEYUP, VK_MENU, keyLParam(VK_MENU, true, false));
+    heldMods_ = -1;
+    return { { "ok", true } };
+  }
   KeyChord c = parseChord(chordText);
   if (!c.vk) return fail("EBADCHORD");
   HWND body = Window::instance().body();
@@ -881,7 +912,10 @@ json Driver::stats() {
            { "framesLast5s", ms.size() }, { "ptyBytesLast5s", (long long)bytes }, { "shellWsMB", std::round(wsMB * 10) / 10 },
            { "paneId", id }, { "mouseMode", g ? g->mouseMode() : 0 }, { "selection", a.input().selectionText(id) },
            { "focusedGrid", a.focusedGridId() },
-           { "coreDead", a.coreDead() }, { "coreAlive", a.coreAlive() } };
+           { "coreDead", a.coreDead() }, { "coreAlive", a.coreAlive() },
+           { "menuOpen", AppMenu::instance().open() },
+           { "stripScroll", Ui::instance().stripScroll() / Window::instance().dpi().scale() },
+           { "stripScrollMax", Ui::instance().stripScrollMax() / Window::instance().dpi().scale() } };
 }
 
 // The visible rows of a pane's grid (the focused pane when paneId is empty),

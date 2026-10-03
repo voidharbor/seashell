@@ -298,8 +298,28 @@ export interface PopoverModel {
   items: PopoverItem[]
 }
 
-/** A one-off order to the shell (`shell:cmd`), outside the model. Task 16 adds the menu. */
-export type ShellCmd = { op: 'ping' }
+/**
+ * One item of the application menu as the core's shim serializes main's
+ * template (`src/main/menu.ts`). `path` is the item's index at each level from
+ * the top, which `menu:click { path }` sends back. A role item without a label
+ * carries Electron's default label for that role.
+ */
+export interface MenuItemModel {
+  label: string
+  accelerator: string | null
+  role: string | null
+  type: 'normal' | 'separator' | 'submenu'
+  enabled: boolean
+  path: number[]
+  submenu: MenuItemModel[] | null
+}
+
+/**
+ * A one-off order to the shell (`shell:cmd`), outside the model. `menu` is the
+ * application menu, sent whenever main sets it (once at boot); the shell pops
+ * it under the `≡` button (the `menu` target) or on an Alt tap.
+ */
+export type ShellCmd = { op: 'ping' } | { op: 'menu'; items: MenuItemModel[] }
 
 export interface UiModel {
   seq: number

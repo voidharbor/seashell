@@ -1,5 +1,6 @@
 #include "ui/ui.h"
 #include "app.h"
+#include "ui/menu.h"
 #include "window.h"
 #include <algorithm>
 #include <cmath>
@@ -97,6 +98,14 @@ void Ui::setModel(UiModel&& m) {
   }
   doneSince_ = std::move(done);
   waitingSince_ = std::move(waiting);
+  // A new active tab, or a tab more or fewer, scrolls the active tab into view
+  // on an overflowing strip (the layout below does it).
+  auto activeTab = [](const UiModel& mm) {
+    for (const TabModel& t : mm.tabs)
+      if (t.active) return t.id;
+    return std::string();
+  };
+  if (!hadModel || activeTab(old) != activeTab(m_) || old.tabs.size() != m_.tabs.size()) stripReveal_ = true;
   // The rename field draws in the strip; syncEdits can open, close or blur it.
   bool renameOpen = rename_.isOpen(), renameFocused = rename_.focused();
   syncEdits(old);
@@ -290,6 +299,7 @@ void Ui::mouseLeave(bool strip) {
 }
 
 void Ui::captionPress() {
+  AppMenu::instance().noteDown();
   if (EditWidget* e = focusedEdit()) { e->blur(); Window::instance().invalidateStrip(); Window::instance().invalidateBody(); }
   closeMenuOnPress("strip:empty", 0, 0, 0, Mods{});
 }
@@ -366,7 +376,11 @@ void Ui::cancelDrag() {
 // A click the shell answers itself, or the ui:event the core acts on.
 void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
   if (target == "menu") {
-    App::instance().wire().send("app:toast", { { "message", "The menu arrives in phase 2" } });
+    popAppMenu();
+    return;
+  }
+  if (target == "strip:left" || target == "strip:right") {   // the driver's click; a press steps in Ui::mouse
+    stripStep(target == "strip:left" ? -1 : 1);
     return;
   }
   if (target == "web:new" && m_.tabFull) return;   // dimmed: the tab already holds six panes
@@ -399,6 +413,7 @@ std::string Ui::rightOnRow(const std::string& target, int button) {
 }
 
 void Ui::targetClick(const std::string& clicked, bool dbl, int button, Mods m) {
+  AppMenu::instance().noteDown();   // a press anywhere closes the test-mode menu
   // The event's point is the target's centre (the explorer's menu opens there).
   D2D1_RECT_F r{};
   float xd = 0, yd = 0;
@@ -437,10 +452,14 @@ void Ui::targetClick(const std::string& clicked, bool dbl, int button, Mods m) {
 
 bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
   Window& win = Window::instance();
+  if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN || msg == WM_LBUTTONDBLCLK ||
+      msg == WM_RBUTTONDBLCLK || msg == WM_MBUTTONDBLCLK)
+    AppMenu::instance().noteDown();   // a press anywhere closes the test-mode menu
   if (msg == WM_MOUSEWHEEL) {
     ScreenToClient(win.hwnd(), &pt);
     if (modal() && !m_.restore) return sheetMouse(msg, pt, button, mods, "", wheelDelta);
     if (modal()) return true;
+    if (stripWheel(pt, wheelDelta)) return true;   // an overflowing tab strip
     return sidebarWheel(pt, wheelDelta);   // the explorer's rows; elsewhere a grid's
   }
   bool inStrip = pt.y < win.stripHeightPx();
@@ -527,6 +546,15 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
     }
     if (button != 0) return true;                        // no other chrome has a context menu
     if (target == "strip:empty") return true;
+    if (target == "strip:left" || target == "strip:right") {
+      // A step on the press, then the hold repeats it (Ui::stripRepeatTick).
+      pressed_ = target;
+      pressedButton_ = 0;
+      stripStep(target == "strip:left" ? -1 : 1);
+      stripRepeat(true);
+      win.invalidateStrip();
+      return true;
+    }
     if (startsWith(target, "sidebar:scroll:")) {
       sidebarBarPress(msg, pt, target);
       return true;
@@ -602,6 +630,11 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
     int wasButton = pressedButton_;
     pressed_.clear();
     pressedButton_ = 0;
+    if (was == "strip:left" || was == "strip:right") {   // stepped on the press
+      stripRepeat(false);
+      win.invalidateStrip();
+      return true;
+    }
     if (button == wasButton && was == target) {
       if (button == 0) activate(target, mods, xd, yd);
       else if (button == 2 && !coreDead_) send("click", target, xd, yd, 2, mods);   // the explorer row's menu
@@ -651,6 +684,39 @@ bool Ui::key(UINT msg, WPARAM w, LPARAM l, Mods m) {
     }
   }
   return false;
+}
+
+// The `≡` button's rect in screen pixels: the menu's top-left sits at its
+// bottom-left and the menu keeps clear of it. Without it on screen, the pointer.
+void Ui::popAppMenu() {
+  Window& win = Window::instance();
+  HWND h = win.hwnd();
+  if (!h) return;
+  D2D1_RECT_F r{};
+  RECT avoid{};
+  POINT at{};
+  bool under = targetRect("menu", &r);
+  if (under) {
+    avoid = RECT{ (LONG)std::floor(r.left), (LONG)std::floor(r.top), (LONG)std::ceil(r.right), (LONG)std::ceil(r.bottom) };
+    MapWindowPoints(h, nullptr, reinterpret_cast<POINT*>(&avoid), 2);
+    at = POINT{ avoid.left, avoid.bottom };
+  } else {
+    GetCursorPos(&at);
+  }
+  pressed_.clear();
+  win.invalidateStrip();
+  AppMenu::instance().pop(h, at, under ? &avoid : nullptr);
+  win.invalidateStrip();
+}
+
+// Review Focus 5: the tap pops the menu only when nothing else has the keys.
+void Ui::altTap() {
+  if (wantsBlink() || modal()) {
+    App::log("menu: Alt tap swallowed (%s has the keys)", modal() ? "a sheet or the restore card" : "an edit widget");
+    return;
+  }
+  App::log("menu: Alt tap");
+  popAppMenu();
 }
 
 // 0..1 for the attention border now; *on is false once it should not draw.

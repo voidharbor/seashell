@@ -424,6 +424,32 @@ struct PopoverModel {
   }
 };
 
+// One application menu item (MenuItemModel in model.ts), from shell:cmd
+// { op: 'menu', items }, outside the ui:model. `path` is what menu:click sends back.
+struct MenuItemModel {
+  std::string label;
+  std::optional<std::string> accelerator;   // the item's right text ('Ctrl+Shift+T')
+  std::optional<std::string> role;          // 'about' | 'togglefullscreen' | 'quit' | 'help' | ...
+  std::string type = "normal";              // 'normal' | 'separator' | 'submenu'
+  bool enabled = true;
+  std::vector<int> path;
+  std::vector<MenuItemModel> submenu;
+  static MenuItemModel parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    MenuItemModel m;
+    m.label = str(j, "label");
+    m.accelerator = optStr(j, "accelerator");
+    m.role = optStr(j, "role");
+    m.type = str(j, "type", "normal");
+    m.enabled = flag(j, "enabled", true);
+    if (const json* p = field(j, "path"); p && p->is_array())
+      for (const json& i : *p)
+        if (i.is_number_integer()) m.path.push_back(i.get<int>());
+    m.submenu = list<MenuItemModel>(j, "submenu");
+    return m;
+  }
+};
+
 struct WindowModel {
   std::string title;
   double uiScale = 1, fontPx = 0, tabStripH = 0, statusH = 0;

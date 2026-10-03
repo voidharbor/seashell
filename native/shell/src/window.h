@@ -42,10 +42,18 @@ private:
   void paintStrip();
   void paintBody();
   void freeStripDib();
+  // The Alt tap (Phase 2 Task 16, Review Focus 5): WM_SYSKEYUP for VK_MENU
+  // with no other key and no press since its WM_SYSKEYDOWN, and neither Ctrl
+  // nor Shift held, pops the application menu (Ui::altTap); every Alt+<key>
+  // goes on to the grid untouched. Also the test-mode menu's keyboard
+  // (AppMenu::key). True when the key message was taken here.
+  bool menuKeys(UINT msg, WPARAM w, LPARAM l);
+  void noteMouse(UINT msg);     // a press or the wheel: the Alt down is not a tap any more
 
   HWND hwnd_ = nullptr, body_ = nullptr;
   UINT dpi_ = 96;
   RECT normal_{};               // last normal (not maximized, not minimized) window rect
   HDC stripDc_ = nullptr; HBITMAP stripBmp_ = nullptr; HGDIOBJ stripOld_ = nullptr;
   int stripW_ = 0, stripH_ = 0;
+  bool altTap_ = false;         // Alt went down alone and nothing else happened since
 };

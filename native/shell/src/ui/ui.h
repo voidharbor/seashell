@@ -63,6 +63,14 @@ public:
   // The driver's scrollTo: a view's scroll offset in DIP, clamped; false when
   // that view is not on screen ('sidebar' is the only one so far).
   bool scrollView(const std::string& view, float offsetDip, float* clamped);
+  // The application menu (ui/menu.h) under the `≡` button, or at the pointer
+  // when the strip has no button on screen.
+  void popAppMenu();
+  // A bare Alt tap: pops the menu unless an edit widget or a sheet has the keys.
+  void altTap();
+  // The tab strip's scroll (shell view state): device pixels, and its range.
+  float stripScroll() const { return stripScroll_; }
+  float stripScrollMax() const { return stripMax_; }
 
 private:
   Ui();
@@ -90,6 +98,12 @@ private:
 
   // The views, one file each.
   void viewTabs(Painter& p);                     // tabs.cpp
+  // The strip's overflow (tabs.cpp): one tab's pitch left (-1) or right (+1),
+  // snapped to tab edges; the wheel over the strip; the arrows' hold repeat.
+  void stripStep(int dir);
+  bool stripWheel(POINT clientPx, int delta);
+  void stripRepeat(bool start);
+  static void CALLBACK stripRepeatTick(HWND, UINT, UINT_PTR, DWORD);
   bool onGlass() const;                          // tokens.composition is not '0': the strip is DWM glass
   bool stripDark() const;                        // tokens.stripDark is '1': the dark tab strip (Task 12b); nothing below the strip reads it
   void viewPanes(Painter& p);                    // panes.cpp
@@ -173,4 +187,12 @@ private:
   std::vector<std::string> sheetStops_;          // the focusable targets in Tab order, as the last layout placed them
   std::string sheetFocus_;                       // the target with the keyboard focus ring; "" none
   int pressedButton_ = 0;                        // the button of the press in pressed_
+  // The tab strip's overflow: the scroll of the tab row in device pixels, its
+  // largest value and one tab's pitch as the last layout found them, and
+  // whether the next layout scrolls the active tab into view (a model whose
+  // active tab changed).
+  float stripScroll_ = 0, stripMax_ = 0, stripPitch_ = 0;
+  bool stripReveal_ = true;
+  UINT_PTR stripTimer_ = 0;
+  bool stripTimerFast_ = false;
 };

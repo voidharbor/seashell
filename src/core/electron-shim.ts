@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events'
 import os from 'node:os'
 import path from 'node:path'
 import { CORE_PUSH_TO_SHELL, encodeEnvelope, type Envelope } from './protocol.js'
+import type { MenuItemModel, ShellCmd } from './controller/model.js'
 
 export interface ShimOptions {
   write: (line: string) => void // one envelope line to the shell
@@ -115,7 +116,9 @@ export interface WebContentsShim {
 /**
  * The one virtual window `src/main` addresses. The shell owns the real window,
  * so its state reads as a plain visible, unmaximized window and the actions
- * (maximize, close, loadURL, ...) do nothing here.
+ * (maximize, loadURL, ...) do nothing here. `minimize` and `close` are the
+ * application menu's Window items (menu.ts), so they reach the shell's own
+ * `window:minimize` and `window:close`.
  */
 export interface WindowShim {
   webContents: WebContentsShim
@@ -202,6 +205,70 @@ function overlap(a: Rect, b: Rect): number {
   const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
   const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
   return w > 0 && h > 0 ? w * h : 0
+}
+
+/**
+ * Electron's own labels (win32) for the roles main's template leaves
+ * unlabelled: `{ role: 'about' }`, `{ role: 'togglefullscreen' }` and the
+ * top-level `{ role: 'help' }`.
+ */
+const ROLE_LABELS: Readonly<Record<string, string>> = {
+  about: 'About SeaShell',
+  quit: 'Exit',
+  togglefullscreen: 'Toggle Full Screen',
+  toggleDevTools: 'Toggle Developer Tools',
+  help: 'Help',
+  windowMenu: 'Window',
+  minimize: 'Minimize',
+  close: 'Close Window',
+  hide: 'Hide SeaShell',
+  hideOthers: 'Hide Others',
+  unhide: 'Show All',
+}
+
+/** An item's submenu items, whether the template held an array or a built menu. */
+function subItems(item: MenuItemShim): ReadonlyArray<MenuItemShim> | null {
+  const sub = item.submenu as unknown
+  if (Array.isArray(sub)) return sub as MenuItemShim[]
+  if (sub && typeof sub === 'object' && Array.isArray((sub as MenuShimInstance).items)) return (sub as MenuShimInstance).items
+  return null
+}
+
+/**
+ * [pure] A built menu as the shell takes it in `shell:cmd { op: 'menu' }`:
+ * labels, accelerators, roles and each item's path; clicks stay in the core.
+ */
+export function menuItemsForShell(items: ReadonlyArray<MenuItemShim>, parent: number[] = []): MenuItemModel[] {
+  return items.map((item, i) => {
+    const path = [...parent, i]
+    const role = typeof item.role === 'string' ? item.role : null
+    const sub = subItems(item)
+    const type: MenuItemModel['type'] = item.type === 'separator' ? 'separator' : sub ? 'submenu' : 'normal'
+    const label = typeof item.label === 'string' ? item.label : role ? (ROLE_LABELS[role] ?? role) : ''
+    return {
+      label,
+      accelerator: typeof item.accelerator === 'string' ? item.accelerator : null,
+      role,
+      type,
+      enabled: item.enabled !== false,
+      path,
+      submenu: sub ? menuItemsForShell(sub, path) : null,
+    }
+  })
+}
+
+/** [pure] The item at `path` in a built menu, or null when the path does not resolve. */
+export function menuItemAt(menu: MenuShimInstance | null, path: unknown): MenuItemShim | null {
+  if (!menu || !Array.isArray(path) || path.length === 0) return null
+  let items: ReadonlyArray<MenuItemShim> | null = menu.items
+  let item: MenuItemShim | null = null
+  for (const i of path) {
+    if (!items || typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i >= items.length) return null
+    item = items[i] ?? null
+    if (!item) return null
+    items = subItems(item)
+  }
+  return item
 }
 
 /**
@@ -330,8 +397,12 @@ export function createShim(opts: ShimOptions): Shim {
     show() {},
     maximize() {},
     unmaximize() {},
-    minimize() {},
-    close() {},
+    minimize() {
+      void invokeShell('window:minimize', {})
+    },
+    close() {
+      void invokeShell('window:close', {})
+    },
     loadURL: () => Promise.resolve(),
   }
   class BrowserWindowImpl {
@@ -414,6 +485,10 @@ export function createShim(opts: ShimOptions): Shim {
         app.quit()
         return
       }
+      if (e.ch === 'menu:click') {
+        clickMenu(e.p)
+        return
+      }
       const fns = listeners.get(e.ch)
       if (fns && fns.length) {
         for (const fn of fns) fn(event, e.p as never)
@@ -433,7 +508,20 @@ export function createShim(opts: ShimOptions): Shim {
   }
 
   // ---- Menu ----
+  // setApplicationMenu sends the shell the menu to pop (`shell:cmd { op: 'menu' }`);
+  // the shell's pick comes back as `menu:click { path }` and runs the item here.
   let appMenu: MenuShimInstance | null = null
+  function clickMenu(p: unknown): void {
+    const path = p && typeof p === 'object' ? (p as { path?: unknown }).path : undefined
+    const item = menuItemAt(appMenu, path)
+    if (!item || item.enabled === false || item.type === 'separator' || subItems(item)) return
+    try {
+      if (typeof item.click === 'function') item.click(item, win, {})
+      else if (item.role === 'quit') app.quit()
+    } catch (err) {
+      process.stderr.write(`[core] menu:click ${JSON.stringify(path)} failed: ${String(err)}\n`)
+    }
+  }
   function buildMenu(template: ReadonlyArray<Record<string, unknown>>): MenuShimInstance {
     const items = template.map((t) => {
       const item: MenuItemShim = { ...t }
@@ -447,6 +535,8 @@ export function createShim(opts: ShimOptions): Shim {
     buildFromTemplate: buildMenu,
     setApplicationMenu(m) {
       appMenu = m
+      const cmd: ShellCmd = { op: 'menu', items: m ? menuItemsForShell(m.items) : [] }
+      opts.write(encodeEnvelope({ k: 'on', ch: 'shell:cmd', p: cmd }))
     },
     getApplicationMenu: () => appMenu,
   }
