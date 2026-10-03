@@ -4,14 +4,18 @@
 // JSON line. Commands run on the UI thread: the connection thread posts
 // WM_APP_DRIVER with a DriverCall* and waits on its event. `wait` polls the
 // model from the connection thread; `quit` replies, then posts WM_CLOSE;
-// `pingCore` times core:ping round trips from the connection thread.
+// `pingCore` times core:ping round trips from the connection thread; `drag`
+// waits for each move's model on a condition variable that the UI thread
+// signals once Ui::setModel has applied it (noteModel).
 #pragma once
 #include <winsock2.h>
 #include <windows.h>
 #include <nlohmann/json.hpp>
 #include <atomic>
+#include <condition_variable>
 #include <deque>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -36,6 +40,7 @@ public:
   // Stats hooks, UI thread.
   void noteFrame(double ms);        // one body paint, BeginDraw to EndDraw
   void notePtyBytes(size_t n);      // decoded pty:data bytes for any pane
+  void noteModel(double seq);       // a ui:model has been applied (after Ui::setModel); wakes a drag step waiting for it
 
   // GetKeyState(vk) < 0, except while the driver dispatches a `key` chord:
   // then the chord's own Ctrl, Shift and Alt (Task 13's key path asks here).
@@ -67,4 +72,11 @@ private:
   int heldMods_ = -1;                      // -1, or the kMod* bits (driver.cpp) while dispatching a chord
   HWND dragWin_ = nullptr;                 // the window a driver drag pressed in, UI thread only
   float dragX_ = 0, dragY_ = 0;            // the press point, client pixels of the top-level window
+  // A drag step's wait: the UI thread arms it (dragStep move, before the
+  // WM_MOUSEMOVE) and stamps the first model past modelWaitSeq_ in noteModel;
+  // the connection thread sleeps on modelCv_ until then or the step timeout.
+  std::mutex modelMu_;
+  std::condition_variable modelCv_;
+  double modelWaitSeq_ = -1;               // the seq before the move; -1 while no step waits
+  LONGLONG modelAt_ = 0;                   // QPC ticks when that model had been applied; 0 until it has
 };

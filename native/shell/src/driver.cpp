@@ -8,8 +8,8 @@
 #include <ws2tcpip.h>
 #include <bcrypt.h>
 #include <psapi.h>
-#include <timeapi.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -18,7 +18,6 @@
 
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "psapi.lib")
-#pragma comment(lib, "winmm.lib")
 
 using nlohmann::json;
 
@@ -512,6 +511,12 @@ json Driver::click(const json& req, const char* type) {
 // target's hit rect, `steps` moves to dx, dy DIP away, each waited for the
 // ui:model it causes (up to stepTimeoutMs), then the release. ms is the wall
 // time of the whole drag, press to release (Task 18 divides it by steps).
+// moveMs is per move, from just before the move is posted to the UI thread to
+// the moment Ui::setModel has applied the first model after it (noteModel's
+// stamp): the event-to-model round trip of spec 10. The wait is a condition
+// variable the UI thread signals, never a poll, so no scheduler tick is in it.
+// The release is sent whatever a step did, so a failed step never leaves the
+// button pressed.
 json Driver::drag(const json& req) {
   auto num = [&](const char* k, double d) { return req.contains(k) && req[k].is_number() ? req[k].get<double>() : d; };
   double dx = num("dx", 0), dy = num("dy", 0);
@@ -520,35 +525,45 @@ json Driver::drag(const json& req) {
   LARGE_INTEGER t0, t1, freq;
   QueryPerformanceFrequency(&freq);
   QueryPerformanceCounter(&t0);
-  // The poll below sleeps 1 ms between looks at the model seq. Sleep(1) waits
-  // for the next scheduler tick, 15.6 ms by default, which would be read as
-  // the shell's own latency; the drag raises the timer resolution to 1 ms
-  // for its duration (test driver only, released on every return).
-  struct TimerPeriod {
-    TimerPeriod() { timeBeginPeriod(1); }
-    ~TimerPeriod() { timeEndPeriod(1); }
-  } period;
   json down = onUi({ { "cmd", "dragStep" }, { "phase", "down" }, { "target", strArg(req, "target") } });
   if (!down.value("ok", false)) return down;
   int models = 0, timeouts = 0;
+  std::vector<double> moveMs;
+  moveMs.reserve((size_t)steps);
+  json failed;
   for (int i = 1; i <= steps; i++) {
+    LARGE_INTEGER ts;
+    QueryPerformanceCounter(&ts);
     json mv = onUi({ { "cmd", "dragStep" }, { "phase", "move" }, { "dx", dx * i / steps }, { "dy", dy * i / steps } });
-    if (!mv.value("ok", false)) return mv;
-    double before = mv.value("seq", 0.0);
-    ULONGLONG end = GetTickCount64() + (ULONGLONG)stepTimeoutMs;
-    bool got = false;
-    while (!got && GetTickCount64() < end) {
-      json q = onUi({ { "cmd", "dragStep" }, { "phase", "seq" } });
-      if (q.value("seq", 0.0) > before) got = true;
-      else Sleep(1);
+    if (!mv.value("ok", false)) { failed = mv; failed["at"] = i; break; }
+    LONGLONG at = 0;
+    {
+      std::unique_lock<std::mutex> lock(modelMu_);
+      modelCv_.wait_for(lock, std::chrono::milliseconds(stepTimeoutMs), [this] { return modelAt_ != 0; });
+      at = modelAt_;
+      modelWaitSeq_ = -1;   // disarmed: a late model of this step stamps nothing
     }
-    if (got) models++; else timeouts++;
+    if (at) {
+      models++;
+      moveMs.push_back((at - ts.QuadPart) * 1000.0 / freq.QuadPart);
+    } else {
+      timeouts++;
+    }
   }
   json up = onUi({ { "cmd", "dragStep" }, { "phase", "up" }, { "dx", dx }, { "dy", dy } });
   QueryPerformanceCounter(&t1);
+  if (!failed.is_null()) {
+    failed["released"] = up.value("ok", false);
+    return failed;
+  }
   double ms = (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart;
+  auto r3 = [](double v) { return std::round(v * 1000) / 1000; };
+  json per = json::object();
+  if (!moveMs.empty())
+    per = { { "median", r3(percentile(moveMs, 0.5)) }, { "p95", r3(percentile(moveMs, 0.95)) },
+            { "max", r3(*std::max_element(moveMs.begin(), moveMs.end())) } };
   return { { "ok", up.value("ok", false) }, { "ms", std::round(ms * 10) / 10 }, { "steps", steps }, { "models", models },
-           { "timeouts", timeouts }, { "target", strArg(req, "target") }, { "x", down["x"] }, { "y", down["y"] } };
+           { "timeouts", timeouts }, { "moveMs", per }, { "target", strArg(req, "target") }, { "x", down["x"] }, { "y", down["y"] } };
 }
 
 // pingCore {n, timeoutMs}: n core:ping invokes, one after another (the next
@@ -605,13 +620,12 @@ json Driver::pingCore(const json& req) {
 }
 
 // One part of a drag, on the UI thread: the press at the target's centre, a
-// move to dx, dy DIP from it (replying with the model seq before the move), the
-// model seq now, or the release.
+// move to dx, dy DIP from it (arming the model wait with the seq before the
+// move), or the release.
 json Driver::dragStep(const json& req) {
   Window& win = Window::instance();
   std::string phase = strArg(req, "phase");
   double seq = App::instance().model().seq;
-  if (phase == "seq") return { { "ok", true }, { "seq", seq } };
   float scale = win.dpi().scale();
   float top = (float)win.bodyRect().top;
   auto at = [&](float cx, float cy, HWND* to) {
@@ -637,6 +651,13 @@ json Driver::dragStep(const json& req) {
   // The press's window keeps the gesture (it holds the capture), whatever is under the point.
   LPARAM pt = MAKELPARAM((int)std::lround(cx), (int)std::lround(dragWin_ == win.body() ? cy - top : cy));
   if (phase == "move") {
+    {
+      // Armed before the move: its model can only be applied after this
+      // returns (it comes back through WM_APP_CORE_LINE on this thread).
+      std::lock_guard<std::mutex> lock(modelMu_);
+      modelWaitSeq_ = seq;
+      modelAt_ = 0;
+    }
     SendMessageW(dragWin_, WM_MOUSEMOVE, MK_LBUTTON, pt);
     return { { "ok", true }, { "seq", seq } };
   }
@@ -653,6 +674,18 @@ void Driver::noteFrame(double ms) {
   ULONGLONG now = GetTickCount64();
   frames_.push_back({ now, ms });
   while (!frames_.empty() && now - frames_.front().at > kStatsWindowMs) frames_.pop_front();
+}
+
+void Driver::noteModel(double seq) {
+  if (!running_) return;
+  LARGE_INTEGER t;
+  QueryPerformanceCounter(&t);
+  {
+    std::lock_guard<std::mutex> lock(modelMu_);
+    if (modelWaitSeq_ < 0 || seq <= modelWaitSeq_ || modelAt_ != 0) return;
+    modelAt_ = t.QuadPart;
+  }
+  modelCv_.notify_all();
 }
 
 void Driver::notePtyBytes(size_t n) {

@@ -611,6 +611,7 @@ int App::main(HINSTANCE hinst) {
     if (m.window.tabStripH > 0 && m.window.tabStripH != oldStrip) Window::instance().onStripHeightChanged();
     Window::instance().invalidateStrip();
     Window::instance().invalidateBody();
+    Driver::instance().noteModel(m.seq);   // applied: a driver drag step waiting for it stops its clock here
     if (!firstModel_) {
       firstModel_ = true;
       wire_.sendGeometry();
