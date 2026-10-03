@@ -5,11 +5,12 @@
 import type { ControllerDeps } from '../../src/core/controller/controller.js'
 import type { GridCmd, UiModel } from '../../src/core/controller/model.js'
 
-export function fakeDeps() {
+/** `home` is what `app:getPaths` answers, which boot takes as home and the explorer's root. */
+export function fakeDeps(home = '/Users/joshwald') {
   const sent: Array<[string, unknown]> = []
   const shellOut: Array<[string, unknown]> = []
   const handlers: Record<string, (p: unknown) => unknown> = {
-    'app:getPaths': () => ({ home: '/Users/joshwald', hostname: 'jarvis', userData: '/mnt/c/scratch/ud', defaultShell: '/usr/bin/zsh', cwdOfLaunch: '/Users/joshwald', platform: 'win32', host: 'native' }),
+    'app:getPaths': () => ({ home, hostname: 'jarvis', userData: '/mnt/c/scratch/ud', defaultShell: '/usr/bin/zsh', cwdOfLaunch: home, platform: 'win32', host: 'native' }),
     'session:load': () => null,
     'pty:spawn': () => ({ ok: true, pid: 100 }),
     'pty:kill': () => ({ ok: true, survivors: 0 }),

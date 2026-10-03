@@ -66,3 +66,28 @@ function setGrid(out: LaidOut, paneId: string, rect: Rect, title: number, cell: 
   out.cols.set(paneId, Math.max(1, Math.floor(grid.w / cell.cellW)))
   out.rows.set(paneId, Math.max(1, Math.floor(grid.h / cell.cellH)))
 }
+
+/** The grip between the explorer column and the grid, DIP (`styles.css` `.sidebar__grip`). */
+export const SIDEBAR_GRIP_DIP = 6
+
+export interface BodySplit {
+  /** What the panes tile. */
+  grid: Rect
+  /** The explorer column, null while it is hidden. */
+  column: Rect | null
+  grip: Rect | null
+}
+
+/**
+ * The window body (below the tab strip, above the status bar) as
+ * `app.tsx:1562-1586` lays it out: the explorer column at the left edge, its
+ * grip, then the grid in what is left. `columnW` is the rendered width (the
+ * stored base width times uiScale, `layout/sidebar.ts`), null while hidden.
+ */
+export function splitBody(body: Rect, columnW: number | null): BodySplit {
+  if (columnW === null) return { grid: body, column: null, grip: null }
+  const column = { x: body.x, y: body.y, w: columnW, h: body.h }
+  const grip = { x: body.x + columnW, y: body.y, w: SIDEBAR_GRIP_DIP, h: body.h }
+  const gridX = grip.x + grip.w
+  return { grid: { x: gridX, y: body.y, w: Math.max(0, body.x + body.w - gridX), h: body.h }, column, grip }
+}

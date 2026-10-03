@@ -13,6 +13,14 @@
  * `find:query`, `find:case`, `find:regex`, `find:next`, `find:prev`,
  * `find:close`, `restore:yes`, `restore:fresh`, `zoom:badge`, `sleep`,
  * `settings`, `empty:newtab`, `web:new`, `pane:new`.
+ *
+ * The file explorer (Phase 2): `sidebar:row:<path>` (click selects, a right
+ * button click opens the menu at the event's point, dblclick toggles a
+ * directory or opens a file), `sidebar:twisty:<path>` (click toggles without
+ * selecting), `sidebar:grip` (down/move/up resize, dblclick resets),
+ * `sidebar:refresh`, `sidebar:strip` (click copies), `sidebar:menu:<id>` (a
+ * context menu item), `sidebar:menu` (the menu itself, for `key Escape`),
+ * `sidebar:empty`. The path is everything after the prefix, colons included.
  */
 
 export interface Rect {
@@ -80,6 +88,51 @@ export interface ChordModel {
   command: string
 }
 
+export interface SidebarRow {
+  /** 'row:' + path; the shell's target is 'sidebar:' + id. */
+  id: string
+  path: string
+  /** 'Home' for the root when it is home, else the entry's own name. */
+  name: string
+  depth: number
+  isDir: boolean
+  expanded: boolean
+  selected: boolean
+  /** Matched by .gitignore: drawn at 45 percent. */
+  ignored: boolean
+  /** The reveal flash, 2.5 s. */
+  flashing: boolean
+  /** '#rrggbb' for a file's extension chip, null for none and for directories. */
+  chip: string | null
+  /** '(ENOENT)' style text for an expanded directory that failed to list. */
+  error: string | null
+  /** This row is followed by the '… too many entries to list' line. */
+  truncatedAfter: boolean
+}
+
+export interface SidebarMenuItem {
+  id: 'open-outside' | 'reveal'
+  label: string
+  enabled: boolean
+}
+
+export interface SidebarModel {
+  visible: boolean
+  /** The column, DIP, including the path strip; all zero while hidden. */
+  rect: Rect
+  /** The 6 DIP grip between the column and the grid; all zero while hidden. */
+  gripRect: Rect
+  /** The stored base width, DIP at uiScale 1 (170 to 620); the column is this times uiScale. */
+  width: number
+  rows: SidebarRow[]
+  /** Bumps when the shell should scroll `revealRowId` to the centre. */
+  revealSeq: number
+  revealRowId: string | null
+  /** The selected path, or the root; the shell truncates it from the left. Empty while hidden. */
+  strip: string
+  menu: { rowId: string; x: number; y: number; items: SidebarMenuItem[] } | null
+}
+
 export interface UiModel {
   seq: number
   window: { title: string; uiScale: number; fontPx: number; tabStripH: number; statusH: number }
@@ -108,6 +161,7 @@ export interface UiModel {
   chords: ChordModel[]
   /** The Aero token table (colorization.ts) plus `composition`: '1' glass, '0' the opaque strip. */
   tokens: Record<string, string>
+  sidebar: SidebarModel
 }
 
 export interface Mods {

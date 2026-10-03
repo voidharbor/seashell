@@ -11,7 +11,7 @@
  * Handlers are ported from `app.tsx` and `PaneView.tsx`; each port names its
  * source. Behaviour that is not ported yet toasts "<name> arrives in phase 2".
  * The session snapshot and restore live in `session.ts`, the status bar's
- * strings in `status.ts`.
+ * strings in `status.ts`, the file explorer's tree in `explorer.ts`.
  */
 import path from 'node:path'
 import {
@@ -37,15 +37,20 @@ import { DONE_ATTENTION_MS } from '../../renderer/panes/attention.js'
 import { dropText } from '../../renderer/panes/drop.js'
 import { tokenizeLine } from '../../renderer/links/tokenizer.js'
 import { resolvePathClick } from '../../renderer/links/resolve.js'
+import { clampSidebar, SIDEBAR_DEFAULT, widthFromDrag } from '../../renderer/layout/sidebar.js'
+import { openPath as routeOpen, type OpenDeps } from '../../renderer/explorer/open.js'
 import { chordLabel } from '../../shared/keys.js'
 import type {
   AppPaths,
+  FsProbeResponse,
   LastSession,
   MetricsTickEvent,
+  OpenPathResponse,
   PtyKillResponse,
   PtySpawnResponse,
 } from '../../shared/ipc.js'
-import { layOut, layOutZoomed, type LaidOut } from './layout.js'
+import { layOut, layOutZoomed, splitBody, type BodySplit, type LaidOut } from './layout.js'
+import { ExplorerState, FLASH_MS, type Listing } from './explorer.js'
 import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-state.js'
 import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
 import { mem, statusModel } from './status.js'
@@ -57,6 +62,7 @@ import type {
   GridCmd,
   PaneModel,
   Rect,
+  SidebarModel,
   TermEvent,
   UiEvent,
   UiModel,
@@ -97,8 +103,6 @@ const STATUS_PX = 28
 /** Commands owned by Phase 2. Each toasts `<name> arrives in phase 2`. */
 const PHASE2_COMMANDS: Readonly<Record<string, string>> = {
   'drawer.toggle': 'The shell drawer',
-  'explorer.toggle': 'The file explorer',
-  'explorer.refresh': 'The file explorer',
   'help.tutorial': 'The tutorial',
   'app.projects': 'Projects',
   'app.saveProject': 'Save project',
@@ -177,6 +181,16 @@ export class Controller {
   private seq = 0
   /** The Aero tokens from the shell's `shell:colorization`; the 6.2 table until it reports. */
   private tokens: Record<string, string> = { ...colorizationToTokens(null), composition: '1' }
+  /** The file explorer while the sidebar shows; null while hidden, as the renderer unmounts it. */
+  private explorer: ExplorerState | null = null
+  /** The row context menu: the row it is for and where it opened. */
+  private sbMenu: { path: string; isDir: boolean; x: number; y: number } | null = null
+  private gripDrag = false
+  private revealSeq = 0
+  private revealRowId: string | null = null
+  /** Bumped by every reveal and by hiding, so an older reveal still reading stops. */
+  private revealToken = 0
+  private flashCancel: (() => void) | null = null
   private last: UiModel
 
   constructor(deps: ControllerDeps, opts: { home: string; version: string; chords: ChordModel[] }) {
@@ -295,6 +309,12 @@ export class Controller {
       case 'layout.rebalance':
         this.dispatch({ type: 'layout.rebalance' })
         break
+      case 'explorer.toggle':
+        this.toggleSidebar()
+        break
+      case 'explorer.refresh':
+        this.refreshExplorer()
+        break
       // The global zoom also clears per-pane overrides (app.tsx:977-990).
       case 'ui.zoomIn':
         this.setZoom(this.ui.zoomIndex + 1)
@@ -346,6 +366,17 @@ export class Controller {
 
   event(e: UiEvent): void {
     const t = e.target
+    // A press anywhere outside the explorer's menu closes it, and so does
+    // Escape from anywhere (Explorer.tsx:61-84, capture-phase listeners).
+    if (this.sbMenu && e.type === 'down' && t !== 'sidebar:menu' && !t.startsWith('sidebar:menu:')) this.closeMenu()
+    if (this.sbMenu && e.type === 'key' && e.key === 'Escape') {
+      this.closeMenu()
+      return
+    }
+    if (t.startsWith('sidebar:')) {
+      this.sidebarEvent(t.slice('sidebar:'.length), e)
+      return
+    }
     if (t.startsWith('divider:')) {
       if (e.type === 'down' || e.type === 'move' || e.type === 'up') this.dividerEvent(t.slice('divider:'.length), e)
       return
@@ -516,8 +547,22 @@ export class Controller {
         // The quit path: always answer, changed or not (app.tsx:629).
         void this.snapshot(true)
         break
+      case 'watch:changed': {
+        // A watched directory changed: re-list it in place while it is open (Explorer.tsx:188-202).
+        const dir = (p as { dir?: unknown } | null)?.dir
+        const x = this.sidebarOpen()
+        if (x && typeof dir === 'string' && x.expanded.has(dir)) void this.readDir(x, dir)
+        break
+      }
+      case 'watch:lost': {
+        // No UI and no resubscribe: the directory stops auto-refreshing until
+        // it is collapsed and re-expanded; the refresh button still reads it.
+        const dir = (p as { dir?: unknown } | null)?.dir
+        if (typeof dir === 'string') this.explorer?.markLost(dir)
+        break
+      }
       default:
-        // update:state and watch:* belong to Phase 2 (the update banner, the explorer).
+        // update:state belongs to Phase 2 (the update banner).
         break
     }
   }
@@ -903,6 +948,301 @@ export class Controller {
   }
 
   // ---------------------------------------------------------------------------
+  // The file explorer (Explorer.tsx; its tree lives in explorer.ts)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Shows `p` in the explorer (`app.tsx:820-830`, then `Explorer.tsx:220-266`).
+   * A path outside the root only toasts. Otherwise the sidebar opens, every
+   * directory on the chain is re-read (the path was just found to exist, so it
+   * is newer than any cached listing) and expanded, and the row is selected,
+   * scrolled to the centre (`revealSeq`) and flashed for 2.5 s. Resolves once
+   * the chain's reads have landed; a newer reveal, or hiding the sidebar,
+   * abandons this one.
+   */
+  async reveal(p: string, isDir: boolean): Promise<void> {
+    const root = this.s.explorerRoot
+    if (!root || typeof p !== 'string' || p === '') return
+    if (!(p === root || p.startsWith(root.endsWith('/') ? root : `${root}/`))) {
+      this.toast(`${p} is outside the file explorer`)
+      return
+    }
+    const token = ++this.revealToken
+    const shown = this.sidebarOpen()
+    const x = shown ?? this.showSidebar(false)
+    if (!x) return
+    const chain = x.revealChain(p, isDir, x.root)
+    if (!shown && !chain.includes(x.root)) void this.readDir(x, x.root)
+    for (const dir of chain) {
+      await this.readDir(x, dir)
+      if (token !== this.revealToken || this.explorer !== x) return
+    }
+    for (const dir of chain) x.expand(dir)
+    x.select(p)
+    this.revealRowId = `row:${p}`
+    this.revealSeq++
+    this.flashRow(x, p)
+    this.syncWatches()
+    this.emit()
+  }
+
+  /** `explorer.toggle` (`app.tsx:952-954`). */
+  private toggleSidebar(): void {
+    if (this.sidebarOpen()) this.hideSidebar()
+    else this.showSidebar(true)
+  }
+
+  private sidebarOpen(): ExplorerState | null {
+    return this.s.sidebarVisible ? this.explorer : null
+  }
+
+  /**
+   * Mounting `Explorer` (`app.tsx:1567-1580`, `Explorer.tsx:96-103`): a fresh
+   * tree at the root with the root open, read here unless the caller reads it.
+   */
+  private showSidebar(read: boolean): ExplorerState | null {
+    const root = this.s.explorerRoot
+    if (!root) return null
+    const x = new ExplorerState(root, this.home)
+    x.expand(root)
+    this.explorer = x
+    if (!this.s.sidebarVisible) {
+      this.dispatch({ type: 'explorer.toggle' })
+    } else {
+      this.sync()
+      this.emit()
+    }
+    if (read) void this.readDir(x, root)
+    this.syncWatches()
+    return x
+  }
+
+  /** Unmounting it: every watch goes with the tree (`Explorer.tsx:180-186`). */
+  private hideSidebar(): void {
+    const x = this.explorer
+    this.explorer = null
+    this.sbMenu = null
+    this.gripDrag = false
+    this.revealRowId = null
+    this.revealToken++
+    this.flashCancel?.()
+    this.flashCancel = null
+    if (x) for (const dir of [...x.subscribed]) this.deps.send('watch:unsubscribe', { dir })
+    if (this.s.sidebarVisible) this.dispatch({ type: 'explorer.toggle' })
+    else this.emit()
+  }
+
+  /** `Explorer.tsx:86-94`; `respectGitignore` so ignored entries come back flagged, to dim. */
+  private async readDir(x: ExplorerState, dir: string): Promise<void> {
+    const seq = x.nextRead()
+    let res: Listing
+    try {
+      res = await this.deps.invoke<Listing>('fs:readDir', { path: dir, respectGitignore: true })
+    } catch (err) {
+      this.deps.log?.(`readDir failed: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+    if (this.explorer !== x || !x.applyListing(dir, res, seq)) return
+    this.syncWatches()
+    this.emit()
+  }
+
+  /**
+   * Keeps main's watch pool on what is expanded (`Explorer.tsx:134-178`):
+   * subscribe what became watchable, unsubscribe what stopped being, and when
+   * the set changed touch the live ones so the pool evicts what nobody is
+   * looking at. A directory is marked before its send, so a `watch:lost`
+   * reported inside the send finds it subscribed and it is never asked twice.
+   */
+  private syncWatches(): void {
+    const x = this.explorer
+    if (!x) return
+    const { subscribe, unsubscribe } = x.watchDiff(x.subscribed)
+    if (subscribe.length === 0 && unsubscribe.length === 0) return
+    for (const dir of subscribe) {
+      x.subscribed.add(dir)
+      this.deps.send('watch:subscribe', { dir })
+    }
+    for (const dir of unsubscribe) {
+      x.subscribed.delete(dir)
+      x.lost.delete(dir)
+      this.deps.send('watch:unsubscribe', { dir })
+    }
+    for (const dir of [...x.subscribed]) if (!x.lost.has(dir)) this.deps.send('watch:touch', { dir })
+  }
+
+  /** The refresh command and the header's button: re-read every open directory (`Explorer.tsx:105-113`). */
+  private refreshExplorer(): void {
+    const x = this.sidebarOpen()
+    if (!x) return
+    for (const dir of [...x.expanded]) void this.readDir(x, dir)
+  }
+
+  /**
+   * `Explorer.tsx:204-218`, except that opening re-reads a directory even
+   * when a listing is cached: a shut directory is not watched, so the cache
+   * may be stale. The cached rows show until the new ones land.
+   */
+  private toggleDir(x: ExplorerState, dir: string): void {
+    if (x.toggle(dir)) void this.readDir(x, dir)
+    this.syncWatches()
+    this.emit()
+  }
+
+  /** The reveal highlight (`Explorer.tsx:259`); a newer reveal restarts it. */
+  private flashRow(x: ExplorerState, p: string): void {
+    this.flashCancel?.()
+    x.flash = { path: p, until: this.deps.now() + FLASH_MS }
+    this.flashCancel = this.deps.setTimer(() => {
+      this.flashCancel = null
+      if (this.explorer !== x || x.flash?.path !== p) return
+      x.flash = null
+      this.emit()
+    }, FLASH_MS)
+  }
+
+  private closeMenu(): void {
+    if (!this.sbMenu) return
+    this.sbMenu = null
+    this.emit()
+  }
+
+  private sidebarEvent(what: string, e: UiEvent): void {
+    const x = this.sidebarOpen()
+    if (!x) return
+    if (what === 'grip') {
+      this.gripEvent(e)
+      return
+    }
+    if (e.type !== 'click' && e.type !== 'dblclick') return
+    if (what.startsWith('row:')) {
+      this.rowEvent(x, what.slice('row:'.length), e)
+      return
+    }
+    if (e.type !== 'click' || e.button !== 0) return
+    if (what.startsWith('twisty:')) this.twistyClick(x, what.slice('twisty:'.length))
+    else if (what.startsWith('menu:')) this.menuItem(what.slice('menu:'.length))
+    else if (what === 'refresh') this.refreshExplorer()
+    else if (what === 'strip') this.copyStrip(x)
+    // `sidebar:empty` and `sidebar:menu` have no action; a press there already closed the menu.
+  }
+
+  /** `Explorer.tsx:311-343` for an entry, `:384-401` for the root row. */
+  private rowEvent(x: ExplorerState, p: string, e: Extract<UiEvent, { button: 0 | 1 | 2 }>): void {
+    const row = x.rows().find((r) => r.path === p)
+    if (!row) return
+    if (e.type === 'dblclick') {
+      if (e.button !== 0) return
+      if (row.isDir) this.toggleDir(x, p)
+      else this.openFile(p)
+      return
+    }
+    if (e.button === 2) {
+      // The root row binds no context menu (Explorer.tsx:384-401).
+      if (p === x.root) return
+      x.select(p)
+      this.sbMenu = { path: p, isDir: row.isDir, x: e.x, y: e.y }
+      this.emit()
+    } else if (e.button === 0) {
+      x.select(p)
+      this.emit()
+    }
+  }
+
+  /**
+   * Finder toggles from the triangle without selecting (`Explorer.tsx:330-340`);
+   * a file's empty twisty lets the click through to its row, which selects.
+   */
+  private twistyClick(x: ExplorerState, p: string): void {
+    const row = x.rows().find((r) => r.path === p)
+    if (!row) return
+    if (row.isDir) {
+      this.toggleDir(x, p)
+    } else {
+      x.select(p)
+      this.emit()
+    }
+  }
+
+  private menuItem(id: string): void {
+    const m = this.sbMenu
+    if (!m) return
+    if (id === 'reveal') {
+      this.closeMenu()
+      void this.deps.invoke('open:revealInFinder', { path: m.path }).catch(() => undefined)
+    } else if (id === 'open-outside' && !m.isDir) {
+      this.closeMenu()
+      void this.openPath(m.path, 'os')
+    }
+  }
+
+  /** The path strip (`Explorer.tsx:444-475`): a silent copy reads as a dead click, so it always says so. */
+  private copyStrip(x: ExplorerState): void {
+    const text = x.selected ?? x.root
+    void this.deps.invokeShell<{ ok?: unknown } | null>('clip:write', { text }).then(
+      (r) => this.toast(r?.ok === true ? 'Copied path' : 'Could not copy the path'),
+      () => this.toast('Could not copy the path')
+    )
+  }
+
+  /**
+   * The grip (`app.tsx:295-320`, `:1581-1590`): the pointer's x is the column's
+   * rendered width, stored as a base width; saved once on release, and a
+   * double-click resets it.
+   */
+  private gripEvent(e: UiEvent): void {
+    if (e.type === 'dblclick') {
+      this.setSidebarWidth(SIDEBAR_DEFAULT, true)
+    } else if (e.type === 'down') {
+      this.gripDrag = e.button === 0
+    } else if ((e.type === 'move' || e.type === 'up') && this.gripDrag) {
+      this.setSidebarWidth(widthFromDrag(e.x, this.uiScale()), e.type === 'up')
+      if (e.type === 'up') this.gripDrag = false
+    }
+  }
+
+  private setSidebarWidth(width: number, save: boolean): void {
+    const w = clampSidebar(width)
+    if (w !== this.ui.sidebarWidth) {
+      this.ui = { ...this.ui, sidebarWidth: w }
+      this.sync()
+      this.emit()
+    }
+    if (save) this.saveUi()
+  }
+
+  /**
+   * `Explorer.tsx:273-282`: what `explorer/open.ts` routes through. Until
+   * Task 7 opens file panes, `onOpenInViewer` toasts the path.
+   */
+  private openDeps(): OpenDeps {
+    return {
+      probe: (req) => this.deps.invoke<FsProbeResponse>('fs:probe', req),
+      withDefaultApp: (req) => this.deps.invoke<OpenPathResponse>('open:withDefaultApp', req),
+      revealInFinder: (req) => this.deps.invoke<OpenPathResponse>('open:revealInFinder', req),
+      onOpenInViewer: (p) => this.toast(p),
+      onToast: (m) => this.toast(m),
+    }
+  }
+
+  /** `open.ts` openPath; `force: 'os'` hands the file to its default app whatever the route. */
+  private async openPath(p: string, force?: 'os'): Promise<void> {
+    try {
+      await routeOpen(p, this.openDeps(), force)
+    } catch (err) {
+      this.deps.log?.(`open failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  /**
+   * The explorer's double-click on a file (`Explorer.tsx:284-293`). Task 7
+   * sends it through `openPath(p)`; until the file pane exists it toasts the path.
+   */
+  private openFile(p: string): void {
+    this.toast(p)
+  }
+
+  // ---------------------------------------------------------------------------
   // Restore card and the session snapshot
   // ---------------------------------------------------------------------------
 
@@ -1064,8 +1404,8 @@ export class Controller {
     return levelAt(this.ui.zoomIndex).ui
   }
 
-  /** The grid area in DIP: the client area below the tab strip and above the status bar. */
-  private area(): Rect | null {
+  /** The window body in DIP: the client area below the tab strip and above the status bar. */
+  private body(): Rect | null {
     const g = this.geo
     if (!g) return null
     const scale = g.dpi > 0 ? g.dpi / 96 : 1
@@ -1074,6 +1414,18 @@ export class Controller {
     const w = g.clientW / scale
     const h = g.clientH / scale - top - STATUS_PX * ui
     return { x: 0, y: top, w: Math.max(0, w), h: Math.max(0, h) }
+  }
+
+  /** The body split into the explorer column, its grip and the grid (`app.tsx:1562-1586`). */
+  private split(): BodySplit | null {
+    const body = this.body()
+    if (!body) return null
+    return splitBody(body, this.sidebarOpen() ? this.ui.sidebarWidth * this.uiScale() : null)
+  }
+
+  /** The grid area in DIP: the body less the explorer column and its grip while they show. */
+  private area(): Rect | null {
+    return this.split()?.grid ?? null
   }
 
   /** The cell at `fontPx`, scaled from the one the shell measured. */
@@ -1257,6 +1609,35 @@ export class Controller {
       status: statusModel(tab, this.s.system, this.deps.platform),
       chords: this.opts.chords,
       tokens: { ...this.tokens },
+      sidebar: this.sidebarModel(),
+    }
+  }
+
+  private sidebarModel(): SidebarModel {
+    const x = this.sidebarOpen()
+    const split = x ? this.split() : null
+    const m = x ? this.sbMenu : null
+    return {
+      visible: x !== null,
+      rect: split?.column ?? { x: 0, y: 0, w: 0, h: 0 },
+      gripRect: split?.grip ?? { x: 0, y: 0, w: 0, h: 0 },
+      width: this.ui.sidebarWidth,
+      rows: x ? x.rows() : [],
+      revealSeq: this.revealSeq,
+      revealRowId: x ? this.revealRowId : null,
+      strip: x ? (x.selected ?? x.root) : '',
+      menu: m
+        ? {
+            rowId: `row:${m.path}`,
+            x: m.x,
+            y: m.y,
+            // Two verbs (Explorer.tsx:405-442); a directory cannot be opened outside.
+            items: [
+              { id: 'open-outside', label: 'Open Outside SeaShell', enabled: !m.isDir },
+              { id: 'reveal', label: 'Reveal in Finder', enabled: true },
+            ],
+          }
+        : null,
     }
   }
 
