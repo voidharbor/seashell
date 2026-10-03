@@ -84,7 +84,7 @@ describe('controller: panes over time', () => {
     expect(c.model().find.open).toBe(false)
     expect(f.grid().at(-1)).toMatchObject({ op: 'findClear' })
   })
-  it('pathclick toasts the resolved path, the miss text, or nothing off a path', async () => {
+  it('pathclick reveals a hit (outside the explorer it says so), toasts the miss text, or nothing off a path', async () => {
     const f = fakeDeps()
     const stats: unknown[] = []
     f.handlers['fs:statBatch'] = (p) => {
@@ -100,7 +100,7 @@ describe('controller: panes over time', () => {
     c.term({ type: 'pathclick', paneId: id, line, index: line.indexOf('package'), mods })
     await flush()
     expect(stats).toHaveLength(1)
-    expect(c.model().toast).toBe('/repo/package.json')
+    expect(c.model().toast).toBe('/repo/package.json is outside the file explorer')
     c.term({ type: 'pathclick', paneId: id, line: 'cat /nope/x.txt', index: 6, mods })
     await flush()
     expect(c.model().toast).toMatch(/^No file at \/nope\/x\.txt from /)

@@ -91,11 +91,22 @@ json shellOpen(const wchar_t* file, const wchar_t* params) {
   return { { "ok", true } };
 }
 
+// Under the test driver an open reaches no app on the desktop: the converted
+// target is logged ("open:withDefaultApp C:\x") for the driver checks to read,
+// and the open answers ok without executing.
+bool loggedInstead(const char* ch, const std::wstring& target) {
+  if (!App::instance().testMode()) return false;
+  App::log("%s %s", ch, toUtf8(target).c_str());
+  return true;
+}
+
 json openExternal(const json& p) {
   std::string url = strArg(p, "url");
   auto starts = [&](const char* pre) { return _strnicmp(url.c_str(), pre, strlen(pre)) == 0; };
   if (!starts("http://") && !starts("https://")) return { { "ok", false }, { "error", "not http" } };
-  return shellOpen(fromUtf8(url).c_str(), nullptr);
+  std::wstring w = fromUtf8(url);
+  if (loggedInstead("open:externalHttp", w)) return { { "ok", true } };
+  return shellOpen(w.c_str(), nullptr);
 }
 
 json rectJson(const RECT& r, double scale) {
@@ -191,9 +202,15 @@ json HostApi::handle(const std::string& ch, const json& p) {
   if (ch == "app:pickFolder") return pickFolder();
   if (ch == "clip:read") return clipRead();
   if (ch == "clip:write") return clipWrite(p);
-  if (ch == "open:withDefaultApp") return shellOpen(winPath(strArg(p, "path")).c_str(), nullptr);
+  if (ch == "open:withDefaultApp") {
+    std::wstring path = winPath(strArg(p, "path"));
+    if (loggedInstead("open:withDefaultApp", path)) return { { "ok", true } };
+    return shellOpen(path.c_str(), nullptr);
+  }
   if (ch == "open:revealInFinder") {
-    std::wstring params = L"/select,\"" + winPath(strArg(p, "path")) + L"\"";
+    std::wstring path = winPath(strArg(p, "path"));
+    if (loggedInstead("open:revealInFinder", path)) return { { "ok", true } };
+    std::wstring params = L"/select,\"" + path + L"\"";
     return shellOpen(L"explorer.exe", params.c_str());
   }
   if (ch == "open:externalHttp") return openExternal(p);

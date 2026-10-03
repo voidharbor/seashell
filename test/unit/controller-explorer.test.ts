@@ -274,9 +274,10 @@ describe('explorer in the controller', () => {
     expect(c.model().sidebar.rows.map((r) => r.name)).toContain('new.ts')
     expect(c.model().sidebar.rows.map((r) => r.name)).not.toContain('old.ts')
   })
-  it('clicks select, a double-click on a file toasts its path until Task 7 opens it', async () => {
+  it('clicks select, a double-click on a file opens it in a file pane', async () => {
     const f = fakeDeps('/h')
     f.handlers['fs:readDir'] = () => ({ ok: true, entries: [entry('a.ts', false)], truncated: false })
+    f.handlers['fs:probe'] = () => ({ exists: true, isDir: false, size: 1, ext: 'ts', route: 'viewer' })
     const c = new Controller(f.deps, { home: '/h', version: '0', chords: [] })
     await c.boot(GEO)
     c.command('explorer.toggle')
@@ -285,7 +286,8 @@ describe('explorer in the controller', () => {
     expect(c.model().sidebar.rows.find((r) => r.path === '/h/a.ts')?.selected).toBe(true)
     expect(c.model().sidebar.strip).toBe('/h/a.ts')
     c.event({ type: 'dblclick', target: 'sidebar:row:/h/a.ts', x: 0, y: 0, button: 0, mods })
-    expect(c.model().toast).toBe('/h/a.ts')
+    await tick()
+    expect(c.model().panes.filter((p) => p.kind === 'file').map((p) => [p.label, p.focused])).toEqual([['a.ts', true]])
     expect(f.sent.some(([ch]) => ch.startsWith('open:'))).toBe(false)
     // The root row double-click collapses it.
     c.event({ type: 'dblclick', target: 'sidebar:row:/h', x: 0, y: 0, button: 0, mods })

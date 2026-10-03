@@ -379,7 +379,10 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
           isExecutable: target.isExecutable,
           isDir: target.isDir,
         }) ||
-        (process.platform === 'win32' && denyShellOpenOnWindows(target.real))
+        // The native shell runs main in WSL but opens with ShellExecute, so
+        // the Windows-only half applies there too.
+        ((process.platform === 'win32' || process.env.SEASHELL_HOST === 'native-win') &&
+          denyShellOpenOnWindows(target.real))
       ) {
         // Reveal the path the user actually clicked, not its target: that is
         // the row they can see.

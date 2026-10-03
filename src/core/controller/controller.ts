@@ -65,6 +65,7 @@ import type {
   FindModel,
   Geometry,
   GridCmd,
+  Mods,
   PaneModel,
   Rect,
   SidebarModel,
@@ -112,7 +113,6 @@ const PHASE2_COMMANDS: Readonly<Record<string, string>> = {
   'app.saveProject': 'Save project',
   'app.saveTab': 'Save tab as project',
   'app.settings': 'Settings',
-  'preview.file': 'File preview',
   'preview.web': 'Web preview',
   'pane.closeAll': 'Close all panes',
 }
@@ -339,6 +339,11 @@ export class Controller {
       case 'explorer.toggle':
         this.toggleSidebar()
         break
+      // app.tsx:935-937: the hint, and the explorer opened (left as it is when already open).
+      case 'preview.file':
+        this.toast('Double-click a path in a pane, or a file in the explorer, to preview it')
+        if (!this.sidebarOpen()) this.showSidebar(true)
+        break
       case 'explorer.refresh':
         this.refreshExplorer()
         break
@@ -491,7 +496,7 @@ export class Controller {
         if (!e.paneId.startsWith(DRAWER_PTY_PREFIX)) this.dispatch({ type: 'pane.bell', paneId: e.paneId, at: this.deps.now() })
         break
       case 'pathclick':
-        void this.pathClick(e.paneId, e.line, e.index)
+        void this.pathClick(e.paneId, e.line, e.index, e.mods)
         break
       default:
         // Selections are the shell's own business.
@@ -500,14 +505,16 @@ export class Controller {
   }
 
   /**
-   * `PaneView.tsx` onDoubleClick over the shell's logical line: the candidate
-   * under the clicked character, resolved against the pane's cwd. Revealing
-   * and previewing need the explorer and the preview panes (Phase 2), so a hit
-   * toasts the resolved path for now; a miss toasts its message as before. No
-   * candidate under the click stays silent, as it does in the renderer. A
-   * click in a drawer resolves against the drawer's own cwd.
+   * `PaneView.tsx:364-387` onDoubleClick over the shell's logical line: the
+   * candidate under the clicked character, resolved against the pane's cwd (a
+   * drawer's click against the drawer's own cwd). A hit is always revealed in
+   * the explorer, whatever the modifiers; a directory stops there (the reveal
+   * expands it). On a file, Ctrl opens it the way the explorer does (a file
+   * pane for what main routes to the viewer) and Ctrl+Alt hands it to its
+   * default app. A miss toasts its message; no candidate under the click
+   * stays silent, as it does in the renderer.
    */
-  private async pathClick(paneId: string, line: string, index: number): Promise<void> {
+  private async pathClick(paneId: string, line: string, index: number, mods?: Mods): Promise<void> {
     const cwd = this.clickCwd(paneId)
     if (cwd === null || typeof line !== 'string' || !Number.isInteger(index)) return
     const cand = tokenizeLine(line).find((c) => index >= c.start && index < c.end)
@@ -526,7 +533,14 @@ export class Controller {
           findBySuffix: (req) => this.deps.invoke('fs:findBySuffix', req),
         }
       )
-      this.toast(out.kind === 'hit' ? out.hit.resolved : out.message)
+      if (out.kind === 'miss') {
+        this.toast(out.message)
+        return
+      }
+      const { resolved, isDir } = out.hit
+      const shown = this.reveal(resolved, isDir)
+      if (!isDir && mods?.ctrl) await this.openPath(resolved, mods.alt ? 'os' : undefined)
+      await shown
     } catch (err) {
       this.deps.log?.(`pathclick failed: ${(err as Error).message}`)
     }
@@ -1195,7 +1209,7 @@ export class Controller {
     if (e.type === 'dblclick') {
       if (e.button !== 0) return
       if (row.isDir) this.toggleDir(x, p)
-      else this.openFile(p)
+      else void this.openPath(p)
       return
     }
     if (e.button === 2) {
@@ -1273,15 +1287,16 @@ export class Controller {
   }
 
   /**
-   * `Explorer.tsx:273-282`: what `explorer/open.ts` routes through. Until
-   * Task 7 opens file panes, `onOpenInViewer` toasts the path.
+   * `Explorer.tsx:273-282`, `app.tsx:1335-1349`: what `explorer/open.ts`
+   * routes through. The two `open:` channels go to main's handlers, which
+   * guard the target and reach the shell through the shim's `shell`.
    */
   private openDeps(): OpenDeps {
     return {
       probe: (req) => this.deps.invoke<FsProbeResponse>('fs:probe', req),
       withDefaultApp: (req) => this.deps.invoke<OpenPathResponse>('open:withDefaultApp', req),
       revealInFinder: (req) => this.deps.invoke<OpenPathResponse>('open:revealInFinder', req),
-      onOpenInViewer: (p) => this.toast(p),
+      onOpenInViewer: (p) => this.openInViewer(p),
       onToast: (m) => this.toast(m),
     }
   }
@@ -1296,11 +1311,21 @@ export class Controller {
   }
 
   /**
-   * The explorer's double-click on a file (`Explorer.tsx:284-293`). Task 7
-   * sends it through `openPath(p)`; until the file pane exists it toasts the path.
+   * `pane.newFile` in the active tab, focused: one file pane per tab,
+   * retargeted when another file opens (`store.ts:434-473`). The full-tab
+   * refusal is checked here so its toast uses this platform's chord.
    */
-  private openFile(p: string): void {
-    this.toast(p)
+  private openInViewer(p: string): void {
+    const tab = this.activeTab()
+    if (!tab) return
+    const existing = Object.values(tab.panes).some((q) => q.kind === 'file')
+    if (!existing && Object.keys(tab.panes).length >= MAX_PANES_PER_TAB) {
+      this.toast(`Tab is full (${MAX_PANES_PER_TAB} panes) - open a new tab (${chordLabel('Cmd+T', this.deps.platform)})`)
+      return
+    }
+    this.dispatch({ type: 'pane.newFile', path: p, autoColor: this.ui.settings.autoColorPanes })
+    const file = Object.values(this.activeTab()?.panes ?? {}).find((q) => q.kind === 'file')
+    if (file) this.dispatch({ type: 'pane.focus', paneId: file.id })
   }
 
   // ---------------------------------------------------------------------------
