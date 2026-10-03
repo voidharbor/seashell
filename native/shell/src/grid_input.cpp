@@ -207,6 +207,11 @@ bool GridInput::key(Grid* g, UINT msg, WPARAM w, LPARAM l) {
   if (!g) return false;
   if (alt && !ctrl && vk == VK_F4) return false;   // the system closes the window
 
+  // Escape closes the find bar from anywhere, a focused terminal included
+  // (app.tsx:1147-1158), and still reaches the program.
+  if (vk == VK_ESCAPE && !ctrl && !alt && !shift && App::instance().model().find.open)
+    App::instance().wire().sendEvent({ { "type", "click" }, { "target", "find:close" }, { "x", 0 }, { "y", 0 }, { "button", 0 }, { "mods", modsJson() } });
+
   // Shift+Enter: ESC CR, the newline agents and zsh's continuation read.
   if (vk == VK_RETURN && shift && !ctrl && !alt) {
     write(*g, "\x1b\r");
