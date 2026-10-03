@@ -87,6 +87,10 @@ git commit -m "Hand previews to the default app and drop the preview panes"
 
 Then Stage I (Tasks 12 to 17) and Stage J (18 to 20) as written, read with this amendment.
 
+## Amendment, 10/03 05:40 (Josh): a dark mode for the tabs
+
+Josh, 10/03 05:40, during Task 12: "make sure thers a dark mode for the tabs". Task 12b below adds it, after Task 12 and before Task 13. It darkens the tab strip only (tab faces, tab text, the strip's buttons and badge, the glass wash, and the opaque frame fallback); everything below the strip keeps the Win7 light chrome. The Settings sheet gains a `Tab strip` field with `System`, `Light` and `Dark`, default `System`, which follows Windows' app theme (`AppsUseLightTheme`) live. Task 20's screenshot list gains `P2-tabs-dark.png`.
+
 ## Global Constraints
 
 - Work only in the worktree `~/seashell-wt/redesign` on branch `redesign/1002`. Never commit on `main` (`~/Desktop/seashell` stays at `3746bfe`). Never push anything. Snapshot branches `snapshot/native-<stage>` with `git branch -f` after each stage gate; never pushed.
@@ -1233,6 +1237,70 @@ git commit -m "Open the settings sheet with accent and palette live"
 
 ---
 
+### Task 12b: Dark tab strip (amendment 10/03 05:40)
+
+**Files:**
+- Modify: `src/renderer/settings/settings.ts` (`tabStrip: 'system' | 'light' | 'dark'` on `Settings`, default `'system'`, coerced), `src/core/controller/colorization.ts` (`colorizationToTokens(argb, opaque?, darkStrip?)` and the dark strip values), `src/core/controller/controller.ts` (keeps the last `shell:colorization` payload, computes `darkStrip`, rebuilds the tokens on either change, the `tabStrip` setting action), `src/core/controller/sheets.ts` (the `Tab strip` field), `native/shell/src/app.cpp` (`appsDark` in `dwmColorization()`, `appsDarkForced_` override), `native/shell/src/window.cpp` (`WM_SETTINGCHANGE` with `ImmersiveColorSet` resends the colorization), `native/shell/src/driver.cpp` (`colorization { appsDark }`), `native/shell/src/ui/ui.cpp` and `native/shell/src/ui/tabs.cpp` (the wash and the opaque frame read `stripDark`), `test/unit/controller-settings.test.ts`, `test/unit/colorization.test.ts` (or the existing colorization test file, whatever its name), `test/unit/settings.test.ts` (or the file that tests `coerceSettings`)
+
+**Interfaces:**
+- Consumes: Task 12's Settings sheet (`settingsSheet`, the `sheet:settings:<field>:<option>` targets, the settings actions and persistence), `colorizationToTokens`, the shell's `shell:colorization` payload `{ argb, opaque, composition }`, the driver's `colorization { argb }` override, the `Tokens::fromModel` reader in `tokens.h` (unknown keys are ignored, so a new key is safe for old shells).
+- Produces: `Settings.tabStrip`, `DEFAULT_SETTINGS.tabStrip = 'system'`, `coerceSettings` keeps `'system' | 'light' | 'dark'` and maps anything else to `'system'`. The shell's payload gains `appsDark: boolean` (`HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize` `AppsUseLightTheme` equal to 0; a missing key reads as `false`), re-sent on `WM_SETTINGCHANGE` whose `lParam` string is `ImmersiveColorSet` and on `WM_DWMCOLORIZATIONCOLORCHANGED` as today. The driver's `colorization` command takes `appsDark: true | false | null` next to `argb` (null reads the registry again). `colorizationToTokens(argb, opaque, darkStrip)` with `darkStrip` true returns the same table with these replaced: `frame '#1F1F1F'`, `frameText '#F0F0F0'`, `tabActive '#2B2B2B'`, `tabInactive '#1A1A1A'`, `tabText '#F0F0F0'`, `badge '#3A3A3A'`, `badgeText '#D0D0D0'`, `glassTint '#8C000000'`, plus a non-colour key `stripDark: '1'` (`'0'` otherwise; the key rides next to `composition`). The controller computes `darkStrip = settings.tabStrip === 'dark' || (settings.tabStrip === 'system' && lastColorization.appsDark === true)` and rebuilds the tokens (then re-applies the accent override of Task 12) whenever the colorization payload or `settings.tabStrip` changes. The sheet's `Appearance` section gains, after `Accent`, the field `tabStrip` labelled `Tab strip` with options `system` `System`, `light` `Light`, `dark` `Dark`. The shell: when `tokens.stripDark` is `'1'`, the glass wash is black at 55 percent (`0x000000`, alpha 0.55) instead of the colorization at 10 percent, the no-composition frame uses `frame` as before (now dark), tabs draw with `tabActive`, `tabInactive` and `tabText` as before (now dark), the strip's `≡`, settings and sleep glyphs and the zoom badge use `frameText`, `badge` and `badgeText` as before (now dark). The active tab still merges into the body: its bottom edge keeps the 1 DIP `body`-coloured seam it has today, so the dark face meets the light body with a hard edge and no border. Nothing below the strip reads `stripDark`.
+
+- [ ] **Step 1: Failing tests**
+
+Add to `test/unit/controller-settings.test.ts`:
+
+```ts
+  it('the tab strip follows the Windows app theme by default and the setting overrides it', async () => {
+    const f = fakeDeps()
+    const c = new Controller(f.deps, { home: '/h', version: '0', chords: [] })
+    await c.boot(GEO)
+    c.colorization({ argb: '#FF881798', opaque: false, composition: true, appsDark: true })
+    expect(c.model().tokens.stripDark).toBe('1')
+    expect(c.model().tokens.tabActive).toBe('#2B2B2B')
+    expect(c.model().tokens.tabText).toBe('#F0F0F0')
+    expect(c.model().tokens.body).toBe('#ECE2F0')   // below the strip nothing changes
+    c.colorization({ argb: '#FF881798', opaque: false, composition: true, appsDark: false })
+    expect(c.model().tokens.stripDark).toBe('0')
+    expect(c.model().tokens.tabActive).toBe('#FFFFFF')
+    c.command('app.settings')
+    click(c, 'sheet:settings:tabStrip:dark')
+    expect(c.model().tokens.stripDark).toBe('1')
+    expect(c.uiState().settings.tabStrip).toBe('dark')
+    c.colorization({ argb: '#FF881798', opaque: false, composition: true, appsDark: true })
+    click(c, 'sheet:settings:tabStrip:light')
+    expect(c.model().tokens.stripDark).toBe('0')
+    expect(c.model().tokens.tabActive).toBe('#FFFFFF')
+    click(c, 'sheet:settings:accent:0a84ff')
+    expect(c.model().tokens.accent).toBe('#0a84ff')   // the accent override survives a token rebuild
+    click(c, 'sheet:settings:tabStrip:system')
+    expect(c.model().tokens.stripDark).toBe('1')
+    expect(c.model().tokens.accent).toBe('#0a84ff')
+  })
+```
+
+(`c.colorization(payload)` is whatever public method the controller already exposes for the `shell:colorization` route; use its real name.) Add to the colorization test file: `colorizationToTokens('#FF881798', false, true)` has `tabActive '#2B2B2B'`, `glassTint '#8C000000'`, `stripDark '1'` and the same `body`, `panel` and `accent` as without the flag; `colorizationToTokens('#FF881798', false)` has `stripDark '0'` and `tabActive '#FFFFFF'`. Add to the settings test: `coerceSettings({ tabStrip: 'purple' }).tabStrip` is `'system'`, `coerceSettings({ tabStrip: 'dark' }).tabStrip` is `'dark'`, `coerceSettings({}).tabStrip` is `'system'`.
+
+Run: `npx vitest run test/unit/controller-settings.test.ts --project unit` Expected: FAIL (no `stripDark`, no `tabStrip`).
+
+- [ ] **Step 2: Implement**
+
+Per Interfaces. Run: `npx vitest run test/unit/controller-settings.test.ts test/unit/colorization*.test.ts test/unit/settings*.test.ts --project unit && npm run typecheck` Expected: PASS, clean. Then the TypeScript test for the dom project still passes (`settings.ts` is shared with the renderer): `npx vitest run test/dom --project dom` or the full `npm test`.
+
+- [ ] **Step 3: Shell, driver checks**
+
+Rebuild (core, sync, shell, pack). Scratch `i12b`. `colorization { appsDark: true }` Expected: `model` shows `tokens.stripDark` `'1'`; `shot` to `bakeoff\P2-tabs-dark.png` (nine tabs if the W10 session is loaded, else the default one plus two `tab.new`). `colorization { appsDark: false }` Expected: `'0'`, `shot` to `bakeoff\P2-tabs-light.png`. Open Settings (`command app.settings`), `click sheet:settings:tabStrip:dark` Expected: `'1'` with `appsDark` false; `shot` to `bakeoff\P2-tabs-dark-setting.png`; `click sheet:settings:tabStrip:system` restores `'0'`. `composition { on: false }` (the Phase 1 driver command for the opaque strip) with the dark setting Expected: the strip paints `#1F1F1F`; `shot` to `bakeoff\P2-tabs-dark-opaque.png`; composition back on. Quit the scratch through the driver.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/renderer/settings/settings.ts src/core/controller/colorization.ts src/core/controller/controller.ts src/core/controller/sheets.ts native/shell/src/app.cpp native/shell/src/app.h native/shell/src/window.cpp native/shell/src/driver.cpp native/shell/src/ui/ui.cpp native/shell/src/ui/tabs.cpp test/unit/controller-settings.test.ts
+git add test/unit/colorization*.test.ts test/unit/settings*.test.ts
+git commit -m "Add a dark mode for the tab strip"
+```
+
+---
+
 ### Task 13: The Projects sheet
 
 **Files:**
@@ -1763,7 +1831,7 @@ On the final build (rebuild everything once more from the branch head):
 4. `node scripts/native-matrix.mjs` (Task 7b): four rows ok.
 5. `node scripts/native-inventory.mjs`: no `fail`.
 6. The W10 rows with `run-native-w10.ps1`, Edge closed, five samples each: (a) W10 as Phase 1 measured it (no sidebar, no drawer, no previews): the row against the 200 bar and against Phase 1's 110.8; (b) W10 with the sidebar open at home expanded two levels and the drawer open on one pane; (c) dropped by the amendment of 10/03: no web pane exists. The core RSS for each as its own column.
-7. The Aero screenshots at 1x: `P2-glass-strip.png` (the strip on glass with the menu button, 9 tabs and the overflow arrows), `P2-sidebar.png`, `P2-settings.png` (a sheet), `P2-color.png` (a popover), `P2-menu.png`, all already produced by the stages; re-shoot the strip on the final build.
+7. The Aero screenshots at 1x: `P2-glass-strip.png` (the strip on glass with the menu button, 9 tabs and the overflow arrows), `P2-tabs-dark.png` (the same strip with the dark tab mode, Task 12b), `P2-sidebar.png`, `P2-settings.png` (a sheet), `P2-color.png` (a popover), `P2-menu.png`, all already produced by the stages; re-shoot the strip on the final build.
 8. Every scratch closed through its driver; no `msedgewebview2.exe`, run-owned `wsl.exe`, core or scratch `SeaShell.exe` left; Josh's SeaShell pids untouched; `%APPDATA%\seashell` and `~/.config/seashell` untouched; nothing on main; nothing pushed.
 
 - [ ] **Step 2: Spec row, snapshot, commit**

@@ -155,6 +155,7 @@ The values are the redesign spec section 6 (colorization `#881798`, Win7 balance
 - **Colorization follows the desktop live** through `WM_DWMCOLORIZATIONCOLORCHANGED` and `DwmGetColorizationColor`, mapped by `colorizationToTokens` (moved to the core, same table, same tests). No registry polling.
 - **Without glass** (DWM composition off, or a remote session) the strip is painted with the Win7 opaque frame color from the same table. Nothing breaks.
 - Tabs in the strip are IE9 shaped: 100 to 220 px, the active one merges into the body, inactive ones sit on the glass with the Win7 tab gradient, names ellipsised, double-click to rename in place.
+- **Dark tab strip** (amendment 10/03 05:40, Josh): the Settings sheet's `Tab strip` field, `System` (follows `AppsUseLightTheme` live), `Light` or `Dark`. Dark replaces the strip tokens only (frame, frameText, tabActive, tabInactive, tabText, badge, badgeText, glassTint, plus `stripDark`), the wash becomes black at 55 percent, and the body below the strip keeps the Win7 light chrome.
 - **Not allowed** (redesign spec section 6.6): no msstyles, no Windhawk, nothing that touches other windows.
 
 ## 7. Everything else in the window
