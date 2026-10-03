@@ -734,7 +734,14 @@ json Driver::wheel(const json& req) {
   float cx, cy;
   if (!target.empty()) {
     D2D1_RECT_F r{};
-    if (!Ui::instance().targetRect(target, &r)) return fail("ENOTARGET");
+    if (!Ui::instance().targetRect(target, &r)) {
+      // A sidebar row scrolled out of view is not registered; the wheel goes
+      // to the column, which scrolls the same rows wherever it lands.
+      const SidebarModel& sm = App::instance().model().sidebar;
+      if (target.rfind("sidebar:", 0) != 0 || !sm.visible || sm.rect.w <= 0 || sm.rect.h <= 0) return fail("ENOTARGET");
+      r = D2D1::RectF((float)sm.rect.x * scale, (float)sm.rect.y * scale, (float)(sm.rect.x + sm.rect.w) * scale,
+                      (float)(sm.rect.y + sm.rect.h) * scale);
+    }
     cx = (r.left + r.right) / 2;
     cy = (r.top + r.bottom) / 2;
   } else if (req.contains("x") && req["x"].is_number() && req.contains("y") && req["y"].is_number()) {

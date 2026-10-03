@@ -22,7 +22,8 @@
 class Ui {
 public:
   static Ui& instance();
-  void setModel(const UiModel&);                 // relayout of chrome rects from the model's DIP rects
+  void setModel(UiModel&&);                      // relayout of chrome rects from the model's DIP rects; keeps the last rows for a model without them
+  const UiModel& model() const { return m_; }    // the applied model (App::model)
   bool stripChanged() const { return stripChanged_; }   // the last setModel changed what the strip draws (App repaints it only then)
   void relayout();                               // the window or the DPI changed: hit rects again
   void drawBackground(ID2D1RenderTarget* rt);    // the body's chrome color, under the grids
@@ -119,7 +120,8 @@ private:
   bool sidebarBarPress(UINT msg, POINT clientPx, const std::string& target);
   bool sidebarAnimating(ULONGLONG now) const;
   bool menuSendsOwnDown(const std::string& target, int button) const;
-  void closeMenuOnPress(const std::string& target, float xDip, float yDip, Mods m);
+  static std::string rightOnRow(const std::string& target, int button);   // sidebar:twisty:<p> under a right press is sidebar:row:<p>
+  void closeMenuOnPress(const std::string& target, float xDip, float yDip, int button, Mods m);
 
   UiModel m_;
   bool haveModel_ = false;
@@ -150,6 +152,8 @@ private:
   ScrollState sbScroll_;                         // the tree's scroll, DIP (shell view state)
   double sbRevealSeq_ = 0;                       // the last revealSeq centred
   std::map<std::string, ULONGLONG> flashSince_;  // when each flashing row's flash began, by path
+  struct NameLayout { Microsoft::WRL::ComPtr<IDWriteTextLayout> tl; bool used = false; };
+  std::map<std::string, NameLayout> sbNames_;    // the shown rows' name layouts by name, box and font size (viewSidebar)
   Popup menu_;                                   // the explorer's context menu
   int pressedButton_ = 0;                        // the button of the press in pressed_
 };

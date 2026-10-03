@@ -154,6 +154,12 @@ function emptyFind(): FindModel {
   return { open: false, paneId: null, query: '', caseSensitive: false, regex: false, count: null, miss: false }
 }
 
+/** The sidebar as the wire sends it when its rows are the ones the shell already has. */
+function withoutRows(sb: SidebarModel): Omit<SidebarModel, 'rows'> {
+  const { rows: _rows, ...rest } = sb
+  return rest
+}
+
 export class Controller {
   private readonly deps: ControllerDeps
   private readonly opts: { home: string; version: string; chords: ChordModel[] }
@@ -205,6 +211,11 @@ export class Controller {
   private gripDrag = false
   private revealSeq = 0
   private revealRowId: string | null = null
+  /** `SidebarModel.rowsSeq`, and the explorer and its `version` it last numbered. */
+  private rowsSeq = 0
+  private rowsOf: { x: ExplorerState | null; version: number } = { x: null, version: 0 }
+  /** The `rowsSeq` of the last `ui:model` sent; -1 so the first one carries its rows. */
+  private rowsSent = -1
   /** Bumped by every reveal and by hiding, so an older reveal still reading stops. */
   private revealToken = 0
   private flashCancel: (() => void) | null = null
@@ -412,8 +423,11 @@ export class Controller {
       this.sidebarEvent(t.slice('sidebar:'.length), e)
       return
     }
+    // A right or middle press reaches the core only to close the explorer's
+    // menu: it starts no drag, selects no tab and focuses no pane.
+    const sidePress = e.type === 'down' && e.button !== 0
     if (t.startsWith('divider:')) {
-      if (e.type === 'down' || e.type === 'move' || e.type === 'up') this.dividerEvent(t.slice('divider:'.length), e)
+      if ((e.type === 'down' && !sidePress) || e.type === 'move' || e.type === 'up') this.dividerEvent(t.slice('divider:'.length), e)
       return
     }
     if (t.startsWith('drawer:')) {
@@ -439,7 +453,7 @@ export class Controller {
       if (this.renamingTabId && t === `tab:${this.renamingTabId}:rename`) this.commitRename()
       return
     }
-    if (e.type === 'focus' || e.type === 'wheel' || e.type === 'drop' || e.type === 'up' || e.type === 'move') return
+    if (e.type === 'focus' || e.type === 'wheel' || e.type === 'drop' || e.type === 'up' || e.type === 'move' || sidePress) return
 
     const parts = t.split(':')
     const head = parts[0]
@@ -1266,6 +1280,7 @@ export class Controller {
    * double-click resets it.
    */
   private gripEvent(e: UiEvent): void {
+    if (e.type === 'down' && e.button !== 0) return
     if (e.type === 'dblclick') {
       this.setSidebarWidth(SIDEBAR_DEFAULT, true)
     } else if (e.type === 'down') {
@@ -1643,13 +1658,18 @@ export class Controller {
 
   /**
    * The pane the drawer belongs to: the focused pane, or when that is not a
-   * terminal (or none is focused, `app.tsx:1286-1300`) the tab's first one.
+   * terminal (or none is focused, `app.tsx:1286-1300`) the pane it already
+   * shows while that is still a terminal in this tab, so a file pane taking
+   * focus (a path click, an explorer double-click) leaves the shell and its
+   * keys where they were; failing both, the tab's first terminal.
    */
   private drawerPaneId(): string | null {
     const tab = this.activeTab()
     if (!tab) return null
     const focused = tab.focusedPaneId ? tab.panes[tab.focusedPaneId] : undefined
     if (focused && isTerm(focused)) return focused.id
+    const shown = this.drawerShown ? tab.panes[this.drawerShown] : undefined
+    if (shown && isTerm(shown)) return shown.id
     for (const id of dfsPaneOrder(tab.tree)) {
       const p = tab.panes[id]
       if (p && isTerm(p)) return id
@@ -1809,6 +1829,7 @@ export class Controller {
    * as a base height and saved once on release.
    */
   private drawerGripEvent(e: UiEvent): void {
+    if (e.type === 'down' && e.button !== 0) return
     if (e.type === 'down') {
       const area = this.area()
       this.drawerDrag = e.button === 0 && area ? { bottom: area.y + area.h } : null
@@ -1933,7 +1954,11 @@ export class Controller {
     queueMicrotask(() => {
       this.emitQueued = false
       this.last = this.build()
-      this.deps.toShell('ui:model', this.last)
+      // The rows go only when they changed; the shell keeps the ones it has (`SidebarModel.rowsSeq`).
+      const m = this.last
+      const same = m.sidebar.rowsSeq === this.rowsSent
+      this.rowsSent = m.sidebar.rowsSeq
+      this.deps.toShell('ui:model', same ? { ...m, sidebar: withoutRows(m.sidebar) } : m)
     })
   }
 
@@ -1992,12 +2017,18 @@ export class Controller {
     const x = this.sidebarOpen()
     const split = x ? this.split() : null
     const m = x ? this.sbMenu : null
+    const version = x ? x.version : 0
+    if (x !== this.rowsOf.x || version !== this.rowsOf.version) {
+      this.rowsOf = { x, version }
+      this.rowsSeq++
+    }
     return {
       visible: x !== null,
       rect: split?.column ?? { x: 0, y: 0, w: 0, h: 0 },
       gripRect: split?.grip ?? { x: 0, y: 0, w: 0, h: 0 },
       width: this.ui.sidebarWidth,
       rows: x ? x.rows() : [],
+      rowsSeq: this.rowsSeq,
       revealSeq: this.revealSeq,
       revealRowId: x ? this.revealRowId : null,
       strip: x ? (x.selected ?? x.root) : '',

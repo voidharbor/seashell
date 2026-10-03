@@ -121,6 +121,21 @@ void Wire::reset() {
   pending_.clear();
 }
 
+// A model without rows (its rowsSeq unchanged, SidebarModel.rowsSeq) takes
+// the last model's, so the driver's model still lists them. A move, not a copy.
+void Wire::keepRows(nlohmann::json& prev) {
+  auto sidebar = [](json& m) -> json* {
+    if (!m.is_object()) return nullptr;
+    auto it = m.find("sidebar");
+    return it != m.end() && it->is_object() ? &*it : nullptr;
+  };
+  json* now = sidebar(lastModel_);
+  json* was = sidebar(prev);
+  if (!now || !was || now->contains("rows") || !was->contains("rows")) return;
+  if (now->value("rowsSeq", -1.0) != was->value("rowsSeq", -2.0)) return;
+  (*now)["rows"] = std::move((*was)["rows"]);
+}
+
 void Wire::onCoreLine(std::string line) {
   LARGE_INTEGER t0, t1, t2;
   QueryPerformanceCounter(&t0);
@@ -144,9 +159,11 @@ void Wire::onCoreLine(std::string line) {
         // Kept for the driver's model reply. Moved, not copied: p is not read
         // again. App's apply clock (the driver's modelMs) counts this and the
         // log line from where build ends.
+        json prev = std::move(lastModel_);
         lastModel_ = e.contains("p") ? std::move(e["p"]) : json();
+        keepRows(prev);
         logModel(m);
-        if (onModel) onModel(m);
+        if (onModel) onModel(std::move(m));
       } else if (ch == "pty:data") {
         const json* batches = p.is_object() && p.contains("batches") ? &p["batches"] : nullptr;
         if (!batches || !batches->is_array()) { App::log("error: pty:data without batches"); return; }

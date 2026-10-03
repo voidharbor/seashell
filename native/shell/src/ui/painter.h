@@ -39,6 +39,11 @@ public:
   // color under it) with no bottom border, so it merges into the content.
   void win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor);
   void text(D2D1_RECT_F r, const std::wstring& s, UiFont f, uint32_t rgb, Align a = Align::Left, bool ellipsis = true, float alpha = 1);
+  // text() in two halves, so a caller can keep the layout across frames (the
+  // explorer's row names): build it for a w by h box, then draw it in r.
+  Microsoft::WRL::ComPtr<IDWriteTextLayout> textLayout(const std::wstring& s, UiFont f, float w, float h, Align a = Align::Left,
+                                                       bool ellipsis = true) const;
+  void drawLayout(D2D1_RECT_F r, IDWriteTextLayout* tl, uint32_t rgb, float alpha = 1);
   void glyph(D2D1_RECT_F r, uint32_t codepoint, uint32_t rgb, float dip = 12, float alpha = 1);
   // The explorer's row icons (src/renderer/explorer/icons.tsx, a 16 DIP box at
   // r's centre): the folder outline in its open or closed tint, and the page
@@ -60,6 +65,7 @@ public:
   void popClip();
 
   static IDWriteTextFormat* format(UiFont f, float px);    // cached per family, weight and size
+  static IDWriteInlineObject* ellipsisSign(UiFont f, float px);   // the trimming '…' for that format, made once with it
 
 private:
   ID2D1SolidColorBrush* brush(uint32_t rgb, float alpha);

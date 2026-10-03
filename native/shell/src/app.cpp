@@ -38,6 +38,7 @@ LONGLONG g_lineAt = 0;
 }
 
 App& App::instance() { static App a; return a; }
+const UiModel& App::model() const { return Ui::instance().model(); }
 
 void App::log(const char* fmt, ...) {
   va_list ap;
@@ -272,15 +273,15 @@ Grid* App::focusedGrid() {
 // The drawer has the keys while the model says so, and then never the pane
 // behind it, even before its grid exists.
 std::string App::focusedGridId() const {
-  const DrawerModel& d = model_.drawer;
+  const DrawerModel& d = model().drawer;
   if (d.open && d.focused) return d.ptyId ? *d.ptyId : std::string();
-  for (const PaneModel& p : model_.panes)
+  for (const PaneModel& p : model().panes)
     if (p.focused && p.kind == "term") return grids_.count(p.id) ? p.id : std::string();
   return std::string();
 }
 
 std::string App::defaultPaneId() const {
-  for (const PaneModel& p : model_.panes)
+  for (const PaneModel& p : model().panes)
     if (p.focused && grids_.count(p.id)) return p.id;
   return grids_.empty() ? std::string() : grids_.begin()->first;
 }
@@ -488,13 +489,13 @@ void App::paintBody() {
   // keyboard (and no edit widget does). A test run never activates its window
   // (SW_SHOWNOACTIVATE), so it counts as active.
   bool keys = (windowActive_ || testMode_) && !ui.wantsBlink();
-  const DrawerModel& dm = model_.drawer;
+  const DrawerModel& dm = model().drawer;
   bool drawerKeys = dm.open && dm.focused;   // the pane behind keeps its hollow cursor
   auto dev = [&](const Rect& r) {
     return D2D1::RectF((float)(r.x * scale), (float)(r.y * scale) - top, (float)((r.x + r.w) * scale), (float)((r.y + r.h) * scale) - top);
   };
-  for (const PaneModel& p : model_.panes) {
-    if (model_.zoomedPaneId && *model_.zoomedPaneId != p.id) continue;   // hidden behind the zoomed pane
+  for (const PaneModel& p : model().panes) {
+    if (model().zoomedPaneId && *model().zoomedPaneId != p.id) continue;   // hidden behind the zoomed pane
     if (p.kind != "term") continue;
     auto it = views_.find(p.id);
     if (it == views_.end()) continue;
@@ -557,14 +558,14 @@ void CALLBACK App::blinkTick(HWND, UINT, UINT_PTR, DWORD) {
     Window::instance().invalidateBody();
     return;
   }
-  const DrawerModel& d = a.model_.drawer;
+  const DrawerModel& d = a.model().drawer;
   bool drawerKeys = d.open && d.focused;
   if (drawerKeys && d.ptyId) {
     auto it = a.views_.find(*d.ptyId);
     if (it != a.views_.end() && it->second->wantsBlink(true)) Window::instance().invalidateBody();
     return;   // the pane behind does not blink
   }
-  for (const PaneModel& p : a.model_.panes) {
+  for (const PaneModel& p : a.model().panes) {
     auto it = a.views_.find(p.id);
     if (it != a.views_.end() && it->second->wantsBlink(p.focused)) { Window::instance().invalidateBody(); return; }
   }
@@ -647,19 +648,19 @@ int App::main(HINSTANCE hinst) {
   if (testMode_) Driver::instance().start();   // a failed listener is logged; the shell still runs
 
   wire_.write = [this](const std::string& line) { core_.send(line); };
-  wire_.onModel = [this](const UiModel& m) {
+  wire_.onModel = [this](UiModel&& in) {
     // apply runs from where build ends (the line taken plus parse and build),
     // so the model Wire keeps for the driver and its log line count in it and
     // queue + parse + build + apply is the post to the end of this.
     LARGE_INTEGER l0, l1, a1;
     LONGLONG a0 = g_lineAt + wire_.parseTicks + wire_.buildTicks;
-    double oldFont = model_.window.fontPx;
-    double oldStrip = model_.window.tabStripH;
-    model_ = m;
-    input_.setChords(m.chords);
+    double oldFont = model().window.fontPx;
+    double oldStrip = model().window.tabStripH;
+    input_.setChords(in.chords);
     QueryPerformanceCounter(&l0);
-    Ui::instance().setModel(m);
+    Ui::instance().setModel(std::move(in));   // the one copy: model() reads it there
     QueryPerformanceCounter(&l1);
+    const UiModel& m = model();
     if (m.window.tabStripH > 0 && m.window.tabStripH != oldStrip) Window::instance().onStripHeightChanged();
     bool strip = Ui::instance().stripChanged();
     if (strip) Window::instance().invalidateStrip();   // a divider move leaves the strip alone

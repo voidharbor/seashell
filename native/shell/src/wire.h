@@ -23,7 +23,7 @@ public:
   // The shell's own invokes (only test:* in Phase 1); cb gets the reply's p.
   void invoke(const std::string& ch, const nlohmann::json& p, std::function<void(const nlohmann::json&)> cb);
   void send(const std::string& ch, const nlohmann::json& p);   // any {k:'send'} envelope
-  std::function<void(const UiModel&)> onModel;
+  std::function<void(UiModel&&)> onModel;                   // takes the model; Ui::setModel moves it in
   std::function<void(const std::string& paneId, const std::string& bytes)> onPtyData;   // decoded from base64
   std::function<void(const nlohmann::json& cmd)> onGridCmd;
   std::function<void(const std::string& line)> write;       // CoreProc::send
@@ -34,6 +34,7 @@ public:
 
 private:
   void writeEnvelope(const nlohmann::json& e);
+  void keepRows(nlohmann::json& prev);                      // lastModel_ without rows takes prev's (same rowsSeq)
   std::map<int, std::function<void(const nlohmann::json&)>> pending_;
   int nextId_ = 1;
   nlohmann::json lastModel_;

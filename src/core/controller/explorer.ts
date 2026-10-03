@@ -74,6 +74,15 @@ export function childPath(dir: string, name: string): string {
   return dir === '/' ? `/${name}` : `${dir}/${name}`
 }
 
+/** Whether two listings draw the same rows: the names, kinds and ignore marks, the truncation and the error. */
+function sameRows(a: DirState | undefined, b: DirState): boolean {
+  if (!a || a.truncated !== b.truncated || a.error !== b.error || a.entries.length !== b.entries.length) return false
+  return a.entries.every((e, i) => {
+    const f = b.entries[i]!
+    return e.name === f.name && e.isDir === f.isDir && (e.ignored === true) === (f.ignored === true)
+  })
+}
+
 /** `Explorer.tsx:27-29`. */
 export function displayRoot(root: string, home: string): string {
   return root === home ? 'Home' : (root.split('/').filter(Boolean).pop() ?? root)
@@ -93,8 +102,8 @@ export class ExplorerState {
   readonly home: string
   /** Listings by directory; no prototype, so any path is a plain key. */
   readonly dirs: Record<string, DirState> = Object.create(null) as Record<string, DirState>
+  /** Change it through `toggle` and `expand`, which keep `rows()` current. */
   readonly expanded = new Set<string>()
-  selected: string | null = null
   /** Directories main has been asked to watch and not yet told to drop. */
   readonly subscribed = new Set<string>()
   /**
@@ -104,14 +113,37 @@ export class ExplorerState {
    * (`Explorer.tsx:188-202`). They are no longer touched.
    */
   readonly lost = new Set<string>()
-  flash: { path: string; until: number } | null = null
   private reads = 0
   /** The newest read applied per directory, so a slow stale read never overwrites a newer one. */
   private readonly applied = new Map<string, number>()
+  private selectedPath: string | null = null
+  private flashState: { path: string; until: number } | null = null
+  /** Bumped by every change that alters `rows()`; the walk is cached against it. */
+  private ver = 0
+  private cache: { ver: number; rows: SidebarRow[] } | null = null
 
   constructor(root: string, home: string = root) {
     this.root = root
     this.home = home
+  }
+
+  /** Changes whenever `rows()` would return different rows. */
+  get version(): number {
+    return this.ver
+  }
+
+  get selected(): string | null {
+    return this.selectedPath
+  }
+
+  /** The reveal flash; only a change of its path changes the rows. */
+  get flash(): { path: string; until: number } | null {
+    return this.flashState
+  }
+
+  set flash(v: { path: string; until: number } | null) {
+    if ((v?.path ?? null) !== (this.flashState?.path ?? null)) this.ver++
+    this.flashState = v
   }
 
   /** A ticket for a read about to start; pass it back to `applyListing`. */
@@ -126,27 +158,34 @@ export class ExplorerState {
   applyListing(path: string, res: Listing, seq: number = this.nextRead()): boolean {
     if (seq <= (this.applied.get(path) ?? 0)) return false
     this.applied.set(path, seq)
-    if (res && res.ok === true && Array.isArray(res.entries)) {
-      this.dirs[path] = { entries: res.entries, truncated: res.truncated === true }
-    } else {
-      this.dirs[path] = { entries: [], truncated: false, error: errorCode(res) }
-    }
+    const next: DirState =
+      res && res.ok === true && Array.isArray(res.entries)
+        ? { entries: res.entries, truncated: res.truncated === true }
+        : { entries: [], truncated: false, error: errorCode(res) }
+    // A re-read that lists the same entries (a watch event, a refresh) leaves the rows, and so the model's, alone.
+    if (!sameRows(this.dirs[path], next)) this.ver++
+    this.dirs[path] = next
     return true
   }
 
   /** Flips a directory open or shut; true when it is now open. */
   toggle(path: string): boolean {
+    this.ver++
     if (this.expanded.delete(path)) return false
     this.expanded.add(path)
     return true
   }
 
   expand(path: string): void {
+    if (this.expanded.has(path)) return
     this.expanded.add(path)
+    this.ver++
   }
 
   select(path: string): void {
-    this.selected = path
+    if (this.selectedPath === path) return
+    this.selectedPath = path
+    this.ver++
   }
 
   markLost(path: string): void {
@@ -183,13 +222,16 @@ export class ExplorerState {
    * walk of every expanded directory (`Explorer.tsx:295-403`). A directory
    * that failed to list carries its `(CODE)` on its own row while it is open;
    * a truncated listing flags the last row of its subtree, which the
-   * `… too many entries to list` line follows.
+   * `… too many entries to list` line follows. Cached until the next change,
+   * so the array is shared: read it, never change it.
    */
   rows(): SidebarRow[] {
+    if (this.cache?.ver === this.ver) return this.cache.rows
     const out: SidebarRow[] = []
     const open = this.expanded.has(this.root)
     out.push(this.row(this.root, displayRoot(this.root, this.home), 0, true, open, false))
     if (open) this.walk(this.root, 1, out)
+    this.cache = { ver: this.ver, rows: out }
     return out
   }
 
@@ -215,9 +257,9 @@ export class ExplorerState {
       depth,
       isDir,
       expanded,
-      selected: this.selected === path,
+      selected: this.selectedPath === path,
       ignored,
-      flashing: this.flash !== null && this.flash.path === path,
+      flashing: this.flashState !== null && this.flashState.path === path,
       chip: isDir ? null : (CHIP_BY_EXT.get(extOf(name)) ?? null),
       error: err !== undefined ? `(${err})` : null,
       truncatedAfter: false,

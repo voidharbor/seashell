@@ -105,6 +105,27 @@ describe('explorer in the controller', () => {
     c.push('watch:lost', { dir: '/Users/joshwald' })   // nothing happens, nothing throws
     expect(c.model().sidebar.rows).toHaveLength(2)
   })
+  it('sends the rows only when rowsSeq bumps; a status or divider model leaves them out', async () => {
+    const f = fakeDeps()
+    f.handlers['fs:readDir'] = (p) => ({ ok: true, entries: (p as { path: string }).path === '/Users/joshwald' ? [entry('src', true)] : [entry('a.ts', false)], truncated: false })
+    const c = new Controller(f.deps, { home: '/Users/joshwald', version: '0', chords: [] })
+    await c.boot(GEO)
+    c.command('explorer.toggle')
+    await new Promise((r) => setTimeout(r, 0))
+    const seq = c.model().sidebar.rowsSeq
+    const last = () => f.models().at(-1)!.sidebar
+    expect(last()).toMatchObject({ rowsSeq: seq, rows: [{ name: 'Home' }, { name: 'src' }] })
+    c.command('pane.new')
+    c.push('watch:changed', { dir: '/Users/joshwald' })   // the same listing again
+    await new Promise((r) => setTimeout(r, 0))
+    expect(last().rowsSeq).toBe(seq)
+    expect('rows' in last()).toBe(false)
+    expect(c.model().sidebar.rows).toHaveLength(2)   // the controller's own model keeps them
+    c.event({ type: 'click', target: 'sidebar:twisty:/Users/joshwald/src', x: 0, y: 0, button: 0, mods })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(last().rowsSeq).toBeGreaterThan(seq)
+    expect(last().rows?.map((r) => r.name)).toEqual(['Home', 'src', 'a.ts'])
+  })
   it('reveal opens the sidebar, expands the chain, selects and flashes the row, then toasts for a path outside the root', async () => {
     const f = fakeDeps()
     f.handlers['fs:readDir'] = (p) => {
@@ -404,7 +425,7 @@ describe('explorer in the controller', () => {
     await c.boot(GEO)
     expect(c.model().sidebar).toEqual({
       visible: false, rect: { x: 0, y: 0, w: 0, h: 0 }, gripRect: { x: 0, y: 0, w: 0, h: 0 }, width: 260,
-      rows: [], revealSeq: 0, revealRowId: null, strip: '', menu: null,
+      rows: [], rowsSeq: 0, revealSeq: 0, revealRowId: null, strip: '', menu: null,
     })
     c.command('explorer.refresh')
     expect(c.model().toast).toBeNull()

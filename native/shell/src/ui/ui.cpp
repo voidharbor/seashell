@@ -66,9 +66,11 @@ void Ui::hit(bool strip, D2D1_RECT_F r, const std::string& target) {
   (strip ? stripHits_ : bodyHits_).push_back(Hit{ r, target });
 }
 
-void Ui::setModel(const UiModel& m) {
+void Ui::setModel(UiModel&& m) {
   UiModel old = std::move(m_);
-  m_ = m;
+  m_ = std::move(m);
+  // The core leaves the rows out while rowsSeq stands (SidebarModel.rowsSeq): the ones drawn stay.
+  if (!m_.sidebar.hasRows && m_.sidebar.rowsSeq == old.sidebar.rowsSeq) m_.sidebar.rows = std::move(old.sidebar.rows);
   bool hadModel = haveModel_;
   haveModel_ = true;
   t_ = Tokens::fromModel(m_.tokens);
@@ -271,13 +273,14 @@ void Ui::mouseLeave(bool strip) {
 
 void Ui::captionPress() {
   if (EditWidget* e = focusedEdit()) { e->blur(); Window::instance().invalidateStrip(); Window::instance().invalidateBody(); }
-  closeMenuOnPress("strip:empty", 0, 0, Mods{});
+  closeMenuOnPress("strip:empty", 0, 0, 0, Mods{});
 }
 
 // Which left presses send a `down` of their own in Ui::mouse below (tabs,
 // panes' title parts, dividers, the grip). The rest send one here while the
 // explorer's menu is open: the core closes the menu on a `down` anywhere
-// outside it (Explorer.tsx's capture-phase listener).
+// outside it (Explorer.tsx's capture-phase listener). That `down` carries the
+// real button; the core acts on no right or middle `down` but the close.
 bool Ui::menuSendsOwnDown(const std::string& t, int button) const {
   if (button != 0) return false;
   if (isHandle(t)) return true;
@@ -285,9 +288,9 @@ bool Ui::menuSendsOwnDown(const std::string& t, int button) const {
   return !isGrid(t) && !endsWith(t, ":close") && !endsWith(t, ":restart") && !endsWith(t, ":rename");
 }
 
-void Ui::closeMenuOnPress(const std::string& target, float xDip, float yDip, Mods m) {
+void Ui::closeMenuOnPress(const std::string& target, float xDip, float yDip, int button, Mods m) {
   if (!m_.sidebar.menu || coreDead_ || menu_.owns(target)) return;
-  send("down", target, xDip, yDip, 0, m);
+  send("down", target, xDip, yDip, button, m);
 }
 
 void Ui::captionDblClick() {
@@ -329,16 +332,25 @@ void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
   send("click", target, xDip, yDip, 0, m);
 }
 
-void Ui::targetClick(const std::string& target, bool dbl, int button, Mods m) {
+// A right press on a folder's twisty is one on its row, so the row's menu
+// opens there too (the renderer binds the menu on the whole row).
+std::string Ui::rightOnRow(const std::string& target, int button) {
+  static const char kTwisty[] = "sidebar:twisty:";
+  if (button != 2 || !startsWith(target, kTwisty)) return target;
+  return "sidebar:row:" + target.substr(sizeof kTwisty - 1);
+}
+
+void Ui::targetClick(const std::string& clicked, bool dbl, int button, Mods m) {
   // The event's point is the target's centre (the explorer's menu opens there).
   D2D1_RECT_F r{};
   float xd = 0, yd = 0;
-  if (targetRect(target, &r)) {
+  if (targetRect(clicked, &r)) {
     xd = (r.left + r.right) / 2 / dpi();
     yd = (r.top + r.bottom) / 2 / dpi();
   }
+  const std::string target = rightOnRow(clicked, button);
   // A drag handle's `down` would start a drag in the core; its click leaves the menu be.
-  if (!isHandle(target)) closeMenuOnPress(target, xd, yd, m);
+  if (!isHandle(target)) closeMenuOnPress(target, xd, yd, button, m);
   if (startsWith(target, "sidebar:scroll:")) {
     POINT c{ (LONG)std::lround(xd * dpi()), (LONG)std::lround(yd * dpi()) };
     sidebarBarPress(WM_LBUTTONDOWN, c, target);
@@ -371,7 +383,7 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
     return sidebarWheel(pt, wheelDelta);   // the explorer's rows; elsewhere a grid's
   }
   bool inStrip = pt.y < win.stripHeightPx();
-  std::string target = inStrip ? stripTargetAt(pt) : bodyTargetAt(POINT{ pt.x, pt.y - (LONG)bodyTop() });
+  std::string target = rightOnRow(inStrip ? stripTargetAt(pt) : bodyTargetAt(POINT{ pt.x, pt.y - (LONG)bodyTop() }), button);
   float xd = pt.x / dpi(), yd = pt.y / dpi();
 
   // A scrollbar thumb drag owns the pointer until the button comes up.
@@ -433,7 +445,7 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
     pointer_ = pt;
     EditWidget* fe = focusedEdit();
     if (fe && fe->target() != target) { fe->blur(); win.invalidateStrip(); win.invalidateBody(); }
-    if (!menuSendsOwnDown(target, button)) closeMenuOnPress(target, xd, yd, mods);
+    if (!menuSendsOwnDown(target, button)) closeMenuOnPress(target, xd, yd, button, mods);
     if (target.empty() || isGrid(target)) return false;   // GridInput's
     if (button == 2 && startsWith(target, "sidebar:row:")) {
       // The explorer's context menu opens on the release, at its point.

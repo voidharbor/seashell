@@ -205,6 +205,8 @@ struct SidebarModel {
   Rect rect, gripRect;              // DIP; all zero while hidden
   double width = 260;               // the stored base width (uiScale 1)
   std::vector<SidebarRow> rows;
+  double rowsSeq = 0;               // bumps when the rows change; a model whose rowsSeq the core already sent leaves rows out
+  bool hasRows = false;             // this model carried rows (Ui::setModel keeps the last ones when it did not)
   double revealSeq = 0;
   std::optional<std::string> revealRowId;
   std::string strip;                // the selected path or the root
@@ -216,7 +218,11 @@ struct SidebarModel {
     if (const json* r = field(j, "rect")) s.rect = Rect::parse(*r);
     if (const json* r = field(j, "gripRect")) s.gripRect = Rect::parse(*r);
     s.width = num(j, "width", 260);
-    s.rows = list<SidebarRow>(j, "rows");
+    if (const json* r = field(j, "rows"); r && r->is_array()) {
+      s.hasRows = true;
+      s.rows = list<SidebarRow>(j, "rows");
+    }
+    s.rowsSeq = num(j, "rowsSeq");
     s.revealSeq = num(j, "revealSeq");
     s.revealRowId = optStr(j, "revealRowId");
     s.strip = str(j, "strip");

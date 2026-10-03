@@ -129,7 +129,17 @@ export interface SidebarModel {
   gripRect: Rect
   /** The stored base width, DIP at uiScale 1 (170 to 620); the column is this times uiScale. */
   width: number
+  /**
+   * The rows, as `rowsSeq` numbers them. A `ui:model` on the wire leaves this
+   * key out when `rowsSeq` is the one it sent last; the shell keeps the rows it has.
+   */
   rows: SidebarRow[]
+  /**
+   * Bumps whenever `rows` changes (an expand, a listing, the selection, the
+   * flash, showing or hiding), so a model that only moves a divider, retitles a
+   * pane or ticks the status does not carry every row again.
+   */
+  rowsSeq: number
   /** Bumps when the shell should scroll `revealRowId` to the centre. */
   revealSeq: number
   revealRowId: string | null

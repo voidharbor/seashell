@@ -144,12 +144,20 @@ ID2D1SolidColorBrush* Painter::brush(uint32_t rgb, float alpha) {
   return brush_.Get();
 }
 
-IDWriteTextFormat* Painter::format(UiFont f, float px) {
+namespace {
+// A text format and its ellipsis sign, made the first time either is asked for.
+struct FormatEntry {
+  ComPtr<IDWriteTextFormat> tf;
+  ComPtr<IDWriteInlineObject> sign;
+  bool signTried = false;
+};
+
+FormatEntry* formatEntry(UiFont f, float px) {
   using Key = std::tuple<bool, bool, int>;
-  static std::map<Key, ComPtr<IDWriteTextFormat>> cache;
+  static std::map<Key, FormatEntry> cache;
   Key k{ f.symbol, f.bold, (int)std::lround(px * 4) };
   auto it = cache.find(k);
-  if (it != cache.end()) return it->second.Get();
+  if (it != cache.end()) return &it->second;
   ComPtr<IDWriteTextFormat> tf;
   IDWriteFactory* dw = Gfx::instance().dwrite();
   if (!dw) return nullptr;
@@ -160,8 +168,25 @@ IDWriteTextFormat* Painter::format(UiFont f, float px) {
   tf->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
   tf->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
   if (cache.size() > 64) cache.clear();   // zoom levels times DPIs; never grows without bound
-  cache[k] = tf;
-  return tf.Get();
+  FormatEntry& e = cache[k];
+  e.tf = tf;
+  return &e;
+}
+}  // namespace
+
+IDWriteTextFormat* Painter::format(UiFont f, float px) {
+  FormatEntry* e = formatEntry(f, px);
+  return e ? e->tf.Get() : nullptr;
+}
+
+IDWriteInlineObject* Painter::ellipsisSign(UiFont f, float px) {
+  FormatEntry* e = formatEntry(f, px);
+  if (!e) return nullptr;
+  if (!e->signTried) {
+    e->signTried = true;
+    if (IDWriteFactory* dw = Gfx::instance().dwrite()) dw->CreateEllipsisTrimmingSign(e->tf.Get(), e->sign.GetAddressOf());
+  }
+  return e->sign.Get();
 }
 
 ComPtr<IDWriteTextLayout> Painter::layout(const std::wstring& s, UiFont f, float maxW, float maxH) const {
@@ -357,20 +382,28 @@ void Painter::win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFac
 
 void Painter::text(D2D1_RECT_F r, const std::wstring& s, UiFont f, uint32_t rgb, Align a, bool ellipsis, float alpha) {
   if (!rt_ || s.empty() || r.right <= r.left) return;
-  ComPtr<IDWriteTextLayout> tl = layout(s, f, r.right - r.left, r.bottom - r.top);
-  if (!tl) return;
+  ComPtr<IDWriteTextLayout> tl = textLayout(s, f, r.right - r.left, r.bottom - r.top, a, ellipsis);
+  drawLayout(r, tl.Get(), rgb, alpha);
+}
+
+ComPtr<IDWriteTextLayout> Painter::textLayout(const std::wstring& s, UiFont f, float w, float h, Align a, bool ellipsis) const {
+  ComPtr<IDWriteTextLayout> tl = layout(s, f, w, h);
+  if (!tl) return tl;
   tl->SetTextAlignment(a == Align::Center ? DWRITE_TEXT_ALIGNMENT_CENTER : a == Align::Right ? DWRITE_TEXT_ALIGNMENT_TRAILING
                                                                                            : DWRITE_TEXT_ALIGNMENT_LEADING);
   if (ellipsis) {
-    ComPtr<IDWriteInlineObject> sign;
-    IDWriteTextFormat* tf = format(f, f.dip * scale());
-    if (tf && SUCCEEDED(Gfx::instance().dwrite()->CreateEllipsisTrimmingSign(tf, sign.GetAddressOf()))) {
+    if (IDWriteInlineObject* sign = ellipsisSign(f, f.dip * scale())) {
       DWRITE_TRIMMING trim{ DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
-      tl->SetTrimming(&trim, sign.Get());
+      tl->SetTrimming(&trim, sign);
     }
   }
+  return tl;
+}
+
+void Painter::drawLayout(D2D1_RECT_F r, IDWriteTextLayout* tl, uint32_t rgb, float alpha) {
+  if (!rt_ || !tl || r.right <= r.left) return;
   rt_->PushAxisAlignedClip(r, D2D1_ANTIALIAS_MODE_ALIASED);
-  rt_->DrawTextLayout(D2D1::Point2F(r.left, r.top), tl.Get(), brush(rgb, alpha), D2D1_DRAW_TEXT_OPTIONS_NONE);
+  rt_->DrawTextLayout(D2D1::Point2F(r.left, r.top), tl, brush(rgb, alpha), D2D1_DRAW_TEXT_OPTIONS_NONE);
   rt_->PopAxisAlignedClip();
 }
 

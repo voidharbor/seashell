@@ -25,7 +25,7 @@ public:
   bool testMode() const { return testMode_; }      // SEASHELL_TEST_PORT is set: never take focus
   HINSTANCE hinst() const { return hinst_; }
   Wire& wire() { return wire_; }
-  const UiModel& model() const { return model_; }
+  const UiModel& model() const;                    // the applied model, which Ui holds (one copy, moved in)
   bool coreDead() const { return coreDead_; }        // every pane shows "core exited" (Ui::setCoreDead)
   void restartCore();                                // Restart on a dead core: a fresh core run, the grids dropped
   bool coreAlive() const { return core_.alive(); }
@@ -76,7 +76,6 @@ private:
   HANDLE handoff_ = nullptr;                       // file mapping holding this instance's HWND
   CoreProc core_;
   Wire wire_;
-  UiModel model_;
   bool coreDead_ = false;                          // died twice, or after its first 5 s: not restarted
   bool coreDied_ = false;                          // an unexpected exit happened (only the first may relaunch)
   bool windowActive_ = false;                      // the top-level window is the active one

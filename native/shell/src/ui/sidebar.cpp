@@ -10,6 +10,7 @@
 #include "window.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace {
@@ -92,18 +93,24 @@ float Ui::sidebarRowTop(size_t i) const {
 
 // The model's explorer state that is the shell's to follow: a fresh column
 // starts at the top, the menu becomes the popup, and each row's flash start
-// is kept for its fade.
+// is kept for its fade. A new revealSeq restarts its row's fade, as the core
+// restarted its 2.5 s, even when the row was still flashing from the last.
 void Ui::syncSidebar(const UiModel& old) {
-  if (m_.sidebar.visible && !old.sidebar.visible) sbScroll_.offset = 0;
+  const SidebarModel& sm = m_.sidebar;
+  if (sm.visible && !old.sidebar.visible) sbScroll_.offset = 0;
   ULONGLONG now = GetTickCount64();
+  const std::string* again = sm.revealSeq != old.sidebar.revealSeq && sm.revealRowId ? &*sm.revealRowId : nullptr;
   std::map<std::string, ULONGLONG> flash;
-  for (const SidebarRow& r : m_.sidebar.rows)
-    if (r.flashing) flash[r.path] = flashSince_.count(r.path) ? flashSince_[r.path] : now;
+  for (const SidebarRow& r : sm.rows) {
+    if (!r.flashing) continue;
+    auto it = flashSince_.find(r.path);
+    flash[r.path] = it == flashSince_.end() || (again && r.id == *again) ? now : it->second;
+  }
   flashSince_ = std::move(flash);
-  if (m_.sidebar.visible && m_.sidebar.menu) {
+  if (sm.visible && sm.menu) {
     std::vector<PopupItem> items;
-    for (const SidebarMenuItem& it : m_.sidebar.menu->items) items.push_back(PopupItem{ it.id, fromUtf8(it.label), it.enabled, false });
-    menu_.set("sidebar:menu:", items, (float)m_.sidebar.menu->x, (float)m_.sidebar.menu->y);
+    for (const SidebarMenuItem& it : sm.menu->items) items.push_back(PopupItem{ it.id, fromUtf8(it.label), it.enabled, false });
+    menu_.set("sidebar:menu:", items, (float)sm.menu->x, (float)sm.menu->y);
   } else {
     menu_.close();
   }
@@ -236,19 +243,32 @@ void Ui::viewSidebar(Painter& p) {
     if (r.isDir) p.folderGlyph(icon, r.expanded, alpha);
     else p.fileGlyph(icon, hexRgb(r.chip, &chip) ? &chip : nullptr, alpha);
     float nx = icon.right + 5 * s, nr = pill.right - 4 * s;
-    std::wstring name = fromUtf8(r.name);
     if (r.error) {
       // The listing's error after the name, in badgeText.
-      std::wstring err = fromUtf8(*r.error);
+      std::wstring name = fromUtf8(r.name), err = fromUtf8(*r.error);
       float ew = p.textWidth(err, f), nw = p.textWidth(name, f);
       float nameRight = std::max(nx, std::min(nx + nw + 1, nr - ew - 6 * s));
       p.text(D2D1::RectF(nx, top, nameRight, bottom), name, f, t_.titleText, Align::Left, true, alpha);
       p.text(D2D1::RectF(nameRight + 6 * s, top, nr, bottom), err, f, t_.badgeText, Align::Left, true, alpha);
-    } else {
-      p.text(D2D1::RectF(nx, top, nr, bottom), name, f, t_.titleText, Align::Left, true, alpha);
+    } else if (nr > nx) {
+      // The name's layout is kept while the row shows at this width and font,
+      // so a flash frame or a repaint for terminal output lays out nothing.
+      char box[48];
+      snprintf(box, sizeof box, "\x1f%ld\x1f%ld\x1f%ld", std::lround(nr - nx), std::lround(rowPx), std::lround(f.dip * s * 4));
+      NameLayout& nl = sbNames_[r.name + box];
+      if (!nl.tl) nl.tl = p.textLayout(fromUtf8(r.name), f, nr - nx, rowPx);
+      nl.used = true;
+      p.drawLayout(D2D1::RectF(nx, top, nr, bottom), nl.tl.Get(), t_.titleText, alpha);
     }
   }
-  if (p.live()) p.popClip();
+  if (p.live()) {
+    p.popClip();
+    // Only the rows just drawn keep their layouts.
+    for (auto it = sbNames_.begin(); it != sbNames_.end();) {
+      if (!it->second.used) it = sbNames_.erase(it);
+      else (it++)->second.used = false;
+    }
+  }
 
   // The scrollbar when the rows overflow.
   if (sb_.bar.right > sb_.bar.left) sbBar_.draw(p, sbScroll_, hover_, "sidebar:scroll");
