@@ -6,7 +6,10 @@
 // trailing ':') and `prefix + id` for each item, and takes Up, Down, Enter and
 // Escape while open (Escape sends `key <base> Escape`, Enter a click on the
 // highlighted item). The explorer's context menu uses it ("sidebar:menu:"),
-// as will the colour and link pickers and the menu button.
+// and so do the pane popovers ("popover:"): a header line, a 12 DIP colour
+// square in the icon gutter, the selected item framed there (a check when it
+// has no square), and a note right-aligned in `noteText`. The menu button
+// will too.
 #pragma once
 #include <windows.h>
 #include <d2d1_1.h>
@@ -22,7 +25,15 @@ struct PopupItem {
   std::wstring label;
   bool enabled = true;
   bool separator = false;   // a separator line; id and label unused
-  bool operator==(const PopupItem& o) const { return id == o.id && label == o.label && enabled == o.enabled && separator == o.separator; }
+  bool selected = false;    // framed in the gutter, as a checked Win7 menu item
+  bool hasSwatch = false;   // a 12 DIP square of `swatch` in the gutter
+  bool emptySwatch = false; // the square's outline only (No colour)
+  uint32_t swatch = 0;      // 0x00RRGGBB
+  std::wstring note;        // right-aligned in noteText ("no agent", "linked")
+  bool operator==(const PopupItem& o) const {
+    return id == o.id && label == o.label && enabled == o.enabled && separator == o.separator && selected == o.selected &&
+           hasSwatch == o.hasSwatch && emptySwatch == o.emptySwatch && swatch == o.swatch && note == o.note;
+  }
 };
 
 class Popup {
@@ -30,7 +41,8 @@ public:
   // Shows `items` with the top-left corner at a window client DIP point (moved
   // left and up as far as needed to stay inside the body). The same menu set
   // again keeps its keyboard highlight.
-  void set(const std::string& prefix, const std::vector<PopupItem>& items, float xDip, float yDip);
+  // `title`, when not empty, is a header line above the items (not an item).
+  void set(const std::string& prefix, const std::vector<PopupItem>& items, float xDip, float yDip, const std::wstring& title = L"");
   void close();
   bool isOpen() const { return !prefix_.empty(); }
   const std::string& prefix() const { return prefix_; }
@@ -45,12 +57,14 @@ public:
   bool key(UINT msg, WPARAM w, Mods m);
   std::function<void(D2D1_RECT_F, const std::string&)> hit;   // Ui::hit for the body
   std::function<void(const nlohmann::json&)> emit;             // Wire::sendEvent
+  uint32_t noteText = 0x6D6D6D;                                // the notes' and the title's colour (the tokens' badgeText)
 
 private:
   void step(int dir);
 
   std::string prefix_;
   std::vector<PopupItem> items_;
+  std::wstring title_;
   float xDip_ = 0, yDip_ = 0;
   int kb_ = -1;               // the keyboard's highlighted item, -1 for none
   bool swallowChar_ = false;  // the WM_CHAR of a key handled on WM_KEYDOWN

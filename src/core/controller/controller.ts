@@ -32,7 +32,8 @@ import { MAX_PANES_PER_TAB, type CellSize, type RowNode } from '../../renderer/l
 import { dfsPaneOrder } from '../../renderer/layout/tree.js'
 import { applyDividerDrag, type DividerSpec } from '../../renderer/layout/dividers.js'
 import { clampIndex, DEFAULT_ZOOM_INDEX, levelAt, zoomPercent } from '../../renderer/term/zoom.js'
-import { paneColorHex } from '../../renderer/panes/colors.js'
+import { isPaneColorKey, PANE_COLORS, paneColorHex } from '../../renderer/panes/colors.js'
+import { canBrief, linkBriefing, newLinkId } from '../../renderer/panes/link.js'
 import { shouldOfferRestore } from '../../renderer/session/offer.js'
 import { launchCommandText } from '../../renderer/projects/serialize.js'
 import { isLocalHost, parseOsc7 } from '../../renderer/term/osc7.js'
@@ -85,7 +86,10 @@ import type {
   GridCmd,
   Mods,
   PaneModel,
+  PopoverItem,
+  PopoverModel,
   Rect,
+  ShellCmd,
   SidebarModel,
   TermEvent,
   UiEvent,
@@ -99,7 +103,7 @@ export interface ControllerDeps {
   /** shim.sendLocal */
   send(ch: string, p: unknown): void
   /** Write an `on` envelope to the shell. */
-  toShell(ch: 'ui:model' | 'grid:cmd', p: unknown): void
+  toShell(ch: 'ui:model' | 'grid:cmd' | 'shell:cmd', p: unknown): void
   invokeShell<T = unknown>(ch: string, p: unknown): Promise<T>
   now(): number
   setTimer(fn: () => void, ms: number): () => void
@@ -128,10 +132,19 @@ const STATUS_PX = 28
 /** Commands owned by Phase 2. Each toasts `<name> arrives in phase 2`; none is left. */
 const PHASE2_COMMANDS: Readonly<Record<string, string>> = {}
 
-/** Pane title-bar controls owned by Phase 2, keyed by the target's last part. */
-const PHASE2_TARGETS: Readonly<Record<string, string>> = {
-  color: 'Pane colors',
-  link: 'Pane links',
+/**
+ * The attention ping's rate limit, copied from `src/renderer/panes/ping.ts:15-28`
+ * (`PING_MIN_GAP_MS`, `shouldPing`), which is not imported: it holds the
+ * renderer's `AudioContext` and `window` code. The shell synthesises the sound
+ * (`native/shell/src/audio.cpp`); the core only decides when.
+ */
+const PING_MIN_GAP_MS = 1800
+
+function shouldPing(now: number, lastAt: number | null, minGapMs = PING_MIN_GAP_MS): boolean {
+  if (lastAt === null) return true
+  // A clock that jumped backwards must not silence the ping until it catches up.
+  if (now < lastAt) return true
+  return now - lastAt >= minGapMs
 }
 
 interface GridInfo {
@@ -256,6 +269,12 @@ export class Controller {
   private updateDismissed: string | null = null
   /** The Projects sheet's state and actions (projects.ts). */
   private readonly projects: Projects
+  /** The open pane popover (`ColorPicker.tsx`, `LinkPicker.tsx`); its items are rebuilt from state on every model. */
+  private popover: { kind: 'color' | 'link'; paneId: string } | null = null
+  /** Each pane's attention as the last model saw it, for the ping on the way in (`app.tsx:216-233`). */
+  private prevAttention = new Map<string, string>()
+  private attentionTabs: AppState['tabs'] | null = null
+  private lastPingAt: number | null = null
   private last: UiModel
 
   constructor(deps: ControllerDeps, opts: { home: string; version: string; chords: ChordModel[] }) {
@@ -486,6 +505,17 @@ export class Controller {
 
   event(e: UiEvent): void {
     const t = e.target
+    // The pane popovers close on a press anywhere outside them, and on Escape
+    // from anywhere (ColorPicker.tsx, LinkPicker.tsx: capture-phase listeners).
+    if (this.popover && e.type === 'down' && t !== 'popover' && !t.startsWith('popover:')) this.closePopover()
+    if (this.popover && e.type === 'key' && e.key === 'Escape') {
+      this.closePopover()
+      return
+    }
+    if (t === 'popover' || t.startsWith('popover:')) {
+      if (e.type === 'click' && e.button === 0 && t.startsWith('popover:')) this.popoverPick(t.slice('popover:'.length))
+      return
+    }
     // A press anywhere outside the explorer's menu closes it, and so does
     // Escape from anywhere (Explorer.tsx:61-84, capture-phase listeners).
     if (this.sbMenu && e.type === 'down' && t !== 'sidebar:menu' && !t.startsWith('sidebar:menu:')) this.closeMenu()
@@ -1046,10 +1076,9 @@ export class Controller {
       if (type === 'click') void this.closePane(id)
       return
     }
-    if (sub && PHASE2_TARGETS[sub]) {
-      if (type === 'click') this.toast(`${PHASE2_TARGETS[sub]} arrives in phase 2`)
-      return
-    }
+    // The colour dot and the link toggle open their popover on click; the
+    // press focuses the pane like any other part of it (PaneView.tsx onMouseDown).
+    if ((sub === 'color' || sub === 'link') && type === 'click') this.openPopover(sub, id)
     if (sub === 'restart') {
       if (type === 'click') this.restartPane(id)
       return
@@ -1547,6 +1576,8 @@ export class Controller {
     const prevToast = this.s.toast
     this.s = reducer(this.s, action)
     if (this.s.toast !== prevToast) this.armToast()
+    // A popover whose pane closed or left the active tab goes with it.
+    if (this.popover && !this.activeTab()?.panes[this.popover.paneId]) this.popover = null
     this.sync()
     this.emit()
   }
@@ -2041,6 +2072,185 @@ export class Controller {
   }
 
   // ---------------------------------------------------------------------------
+  // Pane popovers (ColorPicker.tsx, LinkPicker.tsx, app.tsx:766-801) and the
+  // attention ping (app.tsx:216-233)
+  // ---------------------------------------------------------------------------
+
+  /** The dot or the link toggle: the popover opens (again) for that pane, never over a modal. */
+  private openPopover(kind: 'color' | 'link', paneId: string): void {
+    if (this.restoreCandidate || this.sheetKind !== null) return
+    const pane = this.activeTab()?.panes[paneId]
+    if (!pane || (kind === 'link' && !isTerm(pane))) return
+    this.sbMenu = null
+    this.popover = { kind, paneId }
+    this.emit()
+  }
+
+  private closePopover(): void {
+    if (this.popover === null) return
+    this.popover = null
+    this.emit()
+  }
+
+  /**
+   * `popover:<id>`. A colour key tags the pane, the current one clears it,
+   * `none` clears it (ColorPicker.tsx). Another pane's id links the two,
+   * `unlink` takes this pane out of its group (LinkPicker.tsx, store.ts
+   * `pane.unlink`). A disabled item does nothing and leaves the popover open,
+   * as a disabled button does.
+   */
+  private popoverPick(id: string): void {
+    const pop = this.popover
+    const pane = pop ? this.activeTab()?.panes[pop.paneId] : undefined
+    if (!pop || !pane) return
+    const item = this.popoverItems(pop.kind, pane).find((x) => x.id === id)
+    if (!item || item.disabled) return
+    this.popover = null
+    if (pop.kind === 'color') {
+      const color = id === 'none' || !isPaneColorKey(id) || pane.color === id ? null : id
+      this.dispatch({ type: 'pane.setColor', paneId: pane.id, color })
+    } else if (id === 'unlink') {
+      this.dispatch({ type: 'pane.unlink', paneId: pane.id })
+    } else {
+      this.emit()
+      void this.linkPanes(pane.id, id)
+    }
+  }
+
+  /**
+   * `app.tsx:766-801`: two panes on one shared notes file. main creates the
+   * notes, and each pane not already on that file gets the briefing typed
+   * after a Ctrl+U and submitted. Refused for a pane not running an agent: an
+   * English sentence at a shell prompt is a command line.
+   */
+  private async linkPanes(paneId: string, otherPaneId: string): Promise<void> {
+    const a = paneById(this.s, paneId)
+    const b = paneById(this.s, otherPaneId)
+    if (!a || !b) return
+    if (!canBrief(a.metrics?.foregroundProcess) || !canBrief(b.metrics?.foregroundProcess)) {
+      this.toast('Both panes need to be running an agent to link')
+      return
+    }
+    // Joining an existing group keeps its notes; otherwise mint one.
+    const linkId = a.linkId ?? b.linkId ?? newLinkId(() => uid('link'))
+    let notes: string | null = null
+    try {
+      const res = await this.deps.invoke<{ path?: unknown }>('links:ensure', { linkId })
+      notes = typeof res?.path === 'string' ? res.path : null
+    } catch (err) {
+      this.deps.log?.(`links:ensure failed: ${(err as Error).message}`)
+    }
+    if (!notes) {
+      this.toast('Could not create the shared notes file')
+      return
+    }
+    const briefing = linkBriefing(notes)
+    if (!briefing) {
+      this.toast('That notes path cannot be typed safely')
+      return
+    }
+    for (const id of [paneId, otherPaneId]) {
+      const pane = paneById(this.s, id)
+      if (!pane || pane.linkId === linkId) continue // gone, or already briefed on this file
+      this.dispatch({ type: 'pane.link', paneId: id, linkId })
+      // Ctrl+U first, as the drawer's cd does: the prompt may hold half-typed input.
+      this.deps.send('pty:write', { paneId: id, data: `\x15${briefing.text}\r` })
+    }
+    this.toast('Panes are sharing notes')
+  }
+
+  /**
+   * The rows, rebuilt from state every time so a metrics tick that starts or
+   * stops an agent updates `no agent` while the popover is open. The link
+   * list is the other terminal panes of the tab in on-screen order, numbered
+   * as their title bars are (app.tsx:1404-1416, LinkPicker.tsx).
+   */
+  private popoverItems(kind: 'color' | 'link', pane: PaneState): PopoverItem[] {
+    if (kind === 'color') {
+      const current = isPaneColorKey(pane.color) ? pane.color : null
+      return [
+        ...PANE_COLORS.map((c) => ({ id: c.key, label: c.label, swatch: c.hex, selected: current === c.key, disabled: false, note: null })),
+        { id: 'none', label: 'No colour', swatch: null, selected: current === null, disabled: false, note: null },
+      ]
+    }
+    const tab = this.activeTab()
+    const items: PopoverItem[] = []
+    if (tab) {
+      dfsPaneOrder(tab.tree).forEach((id, i) => {
+        const other = tab.panes[id]
+        if (!other || id === pane.id || !isTerm(other)) return
+        const already = pane.linkId !== undefined && other.linkId === pane.linkId
+        const agents = canBrief(pane.metrics?.foregroundProcess) && canBrief(other.metrics?.foregroundProcess)
+        items.push({
+          id,
+          label: `${i + 1} ${other.label}`,
+          swatch: null,
+          selected: already,
+          disabled: already || !agents,
+          note: already ? 'linked' : agents ? null : 'no agent',
+        })
+      })
+    }
+    if (items.length === 0) {
+      items.push({ id: 'empty', label: 'No other terminal pane in this tab.', swatch: null, selected: false, disabled: true, note: null })
+    }
+    if (pane.linkId !== undefined) items.push({ id: 'unlink', label: 'Stop sharing', swatch: null, selected: false, disabled: false, note: null })
+    return items
+  }
+
+  /** The open popover against the panes just laid out; null when its pane is not on screen. */
+  private popoverModel(panes: PaneModel[], ui: number): PopoverModel | null {
+    const pop = this.popover
+    if (!pop || this.sheetKind !== null || this.restoreCandidate) return null
+    const tab = this.activeTab()
+    const pane = tab?.panes[pop.paneId]
+    const pm = panes.find((p) => p.id === pop.paneId)
+    if (!tab || !pane || !pm || (tab.zoomedPaneId && tab.zoomedPaneId !== pane.id)) return null
+    const titleH = Math.max(0, pm.gridRect.y - pm.rect.y)
+    // The dot sits after the 6 DIP inset, the 10 DIP index and a 4 DIP gap (panes.cpp); the link list
+    // opens at the title bar's left, 8 DIP in, as `.linkpick` does.
+    const anchor: Rect =
+      pop.kind === 'color'
+        ? { x: pm.rect.x + 20 * ui, y: pm.rect.y, w: 16 * ui, h: titleH }
+        : { x: pm.rect.x + 8 * ui, y: pm.rect.y, w: 0, h: titleH }
+    return {
+      kind: pop.kind,
+      paneId: pop.paneId,
+      anchor,
+      title: pop.kind === 'link' ? 'Share notes with' : null,
+      items: this.popoverItems(pop.kind, pane),
+    }
+  }
+
+  /**
+   * `app.tsx:216-233`: a ping on the transition into attention, never on the
+   * state, so a pane left waiting does not re-ping every tick. Glow gates the
+   * sound as well as the border (the moon), and one ping per 1.8 s covers six
+   * panes finishing together. Runs on every model, before it is built.
+   */
+  private attentionPing(): void {
+    if (this.s.tabs === this.attentionTabs) return
+    this.attentionTabs = this.s.tabs
+    const seen = new Map<string, string>()
+    let started = false
+    for (const tab of this.s.tabs) {
+      for (const p of Object.values(tab.panes)) {
+        const now = p.attention ?? ''
+        seen.set(p.id, now)
+        if (now !== '' && (this.prevAttention.get(p.id) ?? '') === '') started = true
+      }
+    }
+    this.prevAttention = seen
+    const { attentionGlow, attentionSound } = this.ui.settings
+    if (!started || !attentionGlow || !attentionSound) return
+    const now = this.deps.now()
+    if (!shouldPing(now, this.lastPingAt)) return
+    this.lastPingAt = now
+    const cmd: ShellCmd = { op: 'ping' }
+    this.deps.toShell('shell:cmd', cmd)
+  }
+
+  // ---------------------------------------------------------------------------
   // Sheets (sheets.ts; SettingsPanel.tsx for Settings)
   // ---------------------------------------------------------------------------
 
@@ -2048,6 +2258,7 @@ export class Controller {
   private openSheet(kind: 'settings' | 'projects' | 'tutorial'): boolean {
     if (this.restoreCandidate) return false
     if (this.sbMenu) this.sbMenu = null
+    this.popover = null
     this.sheetKind = kind
     this.emit()
     return true
@@ -2321,6 +2532,7 @@ export class Controller {
 
   /** One `ui:model` per macrotask, however many mutations ran in it. */
   private emit(): void {
+    this.attentionPing()
     if (this.emitQueued) {
       this.last = this.build()
       return
@@ -2402,6 +2614,7 @@ export class Controller {
               ? tutorialSheet(this.steps, this.tutorialStep, this.tutorialDontShow, ui)
               : null,
       update: this.updateModel(),
+      popover: this.popoverModel(panes, ui),
     }
   }
 

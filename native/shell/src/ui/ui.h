@@ -101,6 +101,8 @@ private:
   void viewOverlays(Painter& p);                 // overlays.cpp: toast, empty state, splash, restore card, tooltip
   void viewSidebar(Painter& p);                  // sidebar.cpp: the explorer column, its scrollbar, the strip and the grip
   void viewMenu(Painter& p);                     // sidebar.cpp: the context menu popup over the body
+  void viewPopover(Painter& p);                  // ui.cpp: a pane's colour or link popover over the body
+  void syncPopover();                            // ui.cpp: the model's popover becomes popover_
   void viewDrawer(Painter& p);                   // drawer.cpp: the shell drawer's panel, grip and header; App draws its grid
   void viewSheet(Painter& p);                    // sheet.cpp: the dim and the sheet's card (from viewOverlays)
   bool sheetKey(UINT msg, WPARAM, LPARAM, Mods); // sheet.cpp: the sheet takes the keyboard
@@ -164,6 +166,7 @@ private:
   struct NameLayout { Microsoft::WRL::ComPtr<IDWriteTextLayout> tl; bool used = false; };
   std::map<std::string, NameLayout> sbNames_;    // the shown rows' name layouts by name, box and font size (viewSidebar)
   Popup menu_;                                   // the explorer's context menu
+  Popup popover_;                                // a pane's colour or link popover ("popover:")
   EditWidget sheetEdit_;                         // the sheet's text field
   ScrollBar sheetBar_;
   ScrollState sheetScroll_;                      // the sheet's body scroll, DIP (shell view state)

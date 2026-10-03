@@ -1,4 +1,5 @@
 #include "app.h"
+#include "audio.h"
 #include "driver.h"
 #include "gfx.h"
 #include "log.h"
@@ -303,6 +304,15 @@ std::string App::defaultPaneId() const {
   for (const PaneModel& p : model().panes)
     if (p.focused && grids_.count(p.id)) return p.id;
   return grids_.empty() ? std::string() : grids_.begin()->first;
+}
+
+// The core's one-off orders outside the model (ShellCmd in model.ts). XAudio2
+// starts on the first ping, not at launch, so a window that never pings never
+// loads the audio engine.
+void App::onShellCmd(const nlohmann::json& cmd) {
+  std::string op = cmd.is_object() && cmd.contains("op") && cmd["op"].is_string() ? cmd["op"].get<std::string>() : std::string();
+  if (op == "ping") Audio::ping();
+  else log("shell:cmd %s ignored", op.c_str());
 }
 
 void App::onGridCmd(const nlohmann::json& cmd) {
@@ -706,6 +716,7 @@ int App::main(HINSTANCE hinst) {
   };
   wire_.onPtyData = [this](const std::string& paneId, const std::string& bytes) { onPtyData(paneId, bytes); };
   wire_.onGridCmd = [this](const nlohmann::json& cmd) { onGridCmd(cmd); };
+  wire_.onShellCmd = [this](const nlohmann::json& cmd) { onShellCmd(cmd); };
   startCore();
   SetTimer(nullptr, 0, kBlinkMs, blinkTick);
 
@@ -716,6 +727,7 @@ int App::main(HINSTANCE hinst) {
   }
   Driver::instance().stop();
   core_.stop(2000);   // a no-op once the drain above let it exit
+  Audio::shutdown();
   log("shell exit %d", exitCode_);
   CoUninitialize();
   CloseHandle(mutex_);

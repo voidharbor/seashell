@@ -3,6 +3,7 @@
 #include "window.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace {
 const UINT kAnimMs = 16;          // the attention border's 60 fps
@@ -14,6 +15,15 @@ bool startsWith(const std::string& s, const char* p) { return s.rfind(p, 0) == 0
 bool endsWith(const std::string& s, const char* p) {
   size_t n = strlen(p);
   return s.size() >= n && s.compare(s.size() - n, n, p) == 0;
+}
+// '#rrggbb' as 0x00RRGGBB; false for anything else.
+bool parseHex(const std::string& s, uint32_t* out) {
+  if (s.size() != 7 || s[0] != '#') return false;
+  char* end = nullptr;
+  unsigned long v = strtoul(s.c_str() + 1, &end, 16);
+  if (!end || *end != 0) return false;
+  *out = (uint32_t)v;
+  return true;
 }
 bool isGrid(const std::string& t) { return (startsWith(t, "pane:") && endsWith(t, ":grid")) || t == "drawer:grid"; }
 // The handles a press drags: the core takes their down, move and up.
@@ -42,6 +52,8 @@ Ui::Ui() {
   menu_.hit = [this](D2D1_RECT_F r, const std::string& t) { hit(false, r, t); };
   sbBar_.hit = [this](D2D1_RECT_F r, const std::string& t) { hit(false, r, t); };
   menu_.emit = [](const nlohmann::json& e) { App::instance().wire().sendEvent(e); };
+  popover_.hit = [this](D2D1_RECT_F r, const std::string& t) { hit(false, r, t); };
+  popover_.emit = [](const nlohmann::json& e) { App::instance().wire().sendEvent(e); };
 }
 
 float Ui::dpi() const { return Window::instance().dpi().scale(); }
@@ -90,6 +102,7 @@ void Ui::setModel(UiModel&& m) {
   syncEdits(old);
   syncSheet(old);
   syncSidebar(old);
+  syncPopover();
   stripChanged_ = !hadModel || !sameStrip(old, m_) || rename_.isOpen() != renameOpen || rename_.focused() != renameFocused;
   layout();
   sidebarReveal();
@@ -159,6 +172,7 @@ void Ui::layout() {
   viewDrawer(none);
   viewFindBar(none);
   viewMenu(none);
+  viewPopover(none);
   viewOverlays(none);
   registering_ = false;
 }
@@ -285,6 +299,38 @@ void Ui::captionPress() {
 // explorer's menu is open: the core closes the menu on a `down` anywhere
 // outside it (Explorer.tsx's capture-phase listener). That `down` carries the
 // real button; the core acts on no right or middle `down` but the close.
+// The model's popover as a Popup: the colour squares, the selection, the
+// notes in badgeText, the header; its top-left at the anchor's bottom-left.
+void Ui::syncPopover() {
+  if (!m_.popover) {
+    popover_.close();
+    return;
+  }
+  const PopoverModel& pm = *m_.popover;
+  std::vector<PopupItem> items;
+  for (const PopoverItem& it : pm.items) {
+    PopupItem pi;
+    pi.id = it.id;
+    pi.label = fromUtf8(it.label);
+    pi.enabled = !it.disabled;
+    pi.selected = it.selected;
+    pi.hasSwatch = it.swatch && parseHex(*it.swatch, &pi.swatch);
+    pi.emptySwatch = pm.kind == "color" && !pi.hasSwatch;   // No colour
+    if (it.note) pi.note = fromUtf8(*it.note);
+    items.push_back(std::move(pi));
+  }
+  popover_.noteText = t_.badgeText;
+  popover_.set("popover:", items, (float)pm.anchor.x, (float)(pm.anchor.y + pm.anchor.h), pm.title ? fromUtf8(*pm.title) : std::wstring());
+}
+
+void Ui::viewPopover(Painter& p) {
+  if (!popover_.isOpen() || modal()) return;
+  Window& win = Window::instance();
+  RECT rc{};
+  if (win.body()) GetClientRect(win.body(), &rc);
+  popover_.draw(p, D2D1::RectF(0, 0, (float)rc.right, (float)rc.bottom), bodyTop(), hover_);
+}
+
 bool Ui::menuSendsOwnDown(const std::string& t, int button) const {
   if (button != 0) return false;
   if (isHandle(t)) return true;
@@ -292,8 +338,9 @@ bool Ui::menuSendsOwnDown(const std::string& t, int button) const {
   return !isGrid(t) && !endsWith(t, ":close") && !endsWith(t, ":restart") && !endsWith(t, ":rename");
 }
 
+// The same `down` closes a pane's popover (ColorPicker.tsx's capture-phase listener).
 void Ui::closeMenuOnPress(const std::string& target, float xDip, float yDip, int button, Mods m) {
-  if (!m_.sidebar.menu || coreDead_ || menu_.owns(target)) return;
+  if ((!m_.sidebar.menu && !m_.popover) || coreDead_ || menu_.owns(target) || popover_.owns(target)) return;
   send("down", target, xDip, yDip, button, m);
 }
 
@@ -325,6 +372,7 @@ void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
   if (target == "web:new" && m_.tabFull) return;   // dimmed: the tab already holds six panes
   if (startsWith(target, "sidebar:scroll:")) return;   // the scrollbar is the shell's own
   if (menu_.owns(target) && target != menu_.base() && !menu_.enabled(target)) return;   // a greyed menu item
+  if (popover_.owns(target) && !popover_.enabled(target)) return;   // the popover's face, its header, a greyed row
   if (startsWith(target, "sheet:")) {
     // The dim, the card and the scrollbar are the shell's; a greyed option does nothing.
     if (!m_.sheet || startsWith(target, "sheet:scroll:") || endsWith(target, ":card") || target == "sheet:" + m_.sheet->kind ||
@@ -583,8 +631,8 @@ bool Ui::key(UINT msg, WPARAM w, LPARAM l, Mods m) {
     }
     return true;
   }
-  // The open context menu takes Up, Down, Enter and Escape first.
-  if (menu_.key(msg, w, m)) {
+  // The open context menu or popover takes Up, Down, Enter and Escape first.
+  if (menu_.key(msg, w, m) || popover_.key(msg, w, m)) {
     win.invalidateBody();
     return true;
   }
@@ -700,5 +748,6 @@ void Ui::drawOverlays(ID2D1RenderTarget* rt) {
   if (!p.live()) return;
   viewFindBar(p);
   viewMenu(p);
+  viewPopover(p);
   viewOverlays(p);
 }

@@ -388,6 +388,42 @@ struct UpdateBannerModel {
   }
 };
 
+// A pane's colour or link popover (Phase 2 Task 15), drawn through Popup with
+// its top-left at the anchor's bottom-left. Targets: popover:<item id>, and
+// popover itself for key Escape.
+struct PopoverItem {
+  std::string id, label;
+  std::optional<std::string> swatch;   // '#rrggbb'
+  bool selected = false, disabled = false;
+  std::optional<std::string> note;     // 'no agent' | 'linked'
+  static PopoverItem parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    PopoverItem i;
+    i.id = str(j, "id"); i.label = str(j, "label");
+    i.swatch = optStr(j, "swatch");
+    i.selected = flag(j, "selected"); i.disabled = flag(j, "disabled");
+    i.note = optStr(j, "note");
+    return i;
+  }
+};
+
+struct PopoverModel {
+  std::string kind;                    // 'color' | 'link'
+  std::string paneId;
+  Rect anchor;                         // DIP, client coordinates
+  std::optional<std::string> title;    // 'Share notes with'
+  std::vector<PopoverItem> items;
+  static PopoverModel parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    PopoverModel m;
+    m.kind = str(j, "kind"); m.paneId = str(j, "paneId");
+    if (const json* a = field(j, "anchor")) m.anchor = Rect::parse(*a);
+    m.title = optStr(j, "title");
+    m.items = list<PopoverItem>(j, "items");
+    return m;
+  }
+};
+
 struct WindowModel {
   std::string title;
   double uiScale = 1, fontPx = 0, tabStripH = 0, statusH = 0;
@@ -424,6 +460,7 @@ struct UiModel {
   DrawerModel drawer;
   std::optional<SheetModel> sheet;
   std::optional<UpdateBannerModel> update;
+  std::optional<PopoverModel> popover;
 
   static UiModel parse(const nlohmann::json& j) {
     using namespace model_detail;
@@ -464,6 +501,7 @@ struct UiModel {
     if (const json* d = field(j, "drawer")) m.drawer = DrawerModel::parse(*d);
     if (const json* sh = field(j, "sheet"); sh && sh->is_object()) m.sheet = SheetModel::parse(*sh);
     if (const json* u = field(j, "update"); u && u->is_object()) m.update = UpdateBannerModel::parse(*u);
+    if (const json* po = field(j, "popover"); po && po->is_object()) m.popover = PopoverModel::parse(*po);
     return m;
   }
 };

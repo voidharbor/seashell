@@ -62,6 +62,7 @@ private:
   void onCoreExit(DWORD code, LPARAM gen);
   static void CALLBACK quitTimeout(HWND, UINT, UINT_PTR, DWORD);
   void onGridCmd(const nlohmann::json& cmd);
+  void onShellCmd(const nlohmann::json& cmd);      // shell:cmd: { op: 'ping' } plays the attention ping (Audio)
   void onPtyData(const std::string& paneId, const std::string& bytes);
   void drainFeed();                                // WM_APP_PTY_FEED
   static void CALLBACK blinkTick(HWND, UINT, UINT_PTR, DWORD);

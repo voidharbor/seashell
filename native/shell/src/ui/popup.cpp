@@ -4,16 +4,18 @@
 
 namespace {
 const float kItemDip = 22, kSepDip = 7, kPadDip = 3, kGutterDip = 28, kTextDip = 33, kRightDip = 24, kMinWidthDip = 180;
+const float kTitleDip = 22, kSwatchDip = 12, kNoteGapDip = 16, kNoteFontDip = 11;
 const uint32_t kFace = 0xF0F0F0, kBorder = 0x979797, kHi = 0xDCEBFC, kHiBorder = 0x7DA2CE, kSep = 0xE0E0E0;
 const uint32_t kText = 0x1E1E1E, kGray = 0x6D6D6D;   // Win7 menu text and GrayText
 
 nlohmann::json modsJson(Mods m) { return { { "ctrl", m.ctrl }, { "alt", m.alt }, { "shift", m.shift } }; }
 }  // namespace
 
-void Popup::set(const std::string& prefix, const std::vector<PopupItem>& items, float xDip, float yDip) {
-  bool same = prefix == prefix_ && items == items_ && xDip == xDip_ && yDip == yDip_;
+void Popup::set(const std::string& prefix, const std::vector<PopupItem>& items, float xDip, float yDip, const std::wstring& title) {
+  bool same = prefix == prefix_ && items == items_ && xDip == xDip_ && yDip == yDip_ && title == title_;
   prefix_ = prefix;
   items_ = items;
+  title_ = title;
   xDip_ = xDip;
   yDip_ = yDip;
   if (!same) kb_ = -1;
@@ -22,6 +24,7 @@ void Popup::set(const std::string& prefix, const std::vector<PopupItem>& items, 
 void Popup::close() {
   prefix_.clear();
   items_.clear();
+  title_.clear();
   kb_ = -1;
   // swallowChar_ stays: the model that closes the menu after Escape can land
   // before that key's WM_CHAR does.
@@ -44,12 +47,18 @@ void Popup::draw(Painter& p, D2D1_RECT_F body, float bodyTop, const std::string&
   if (prefix_.empty() || items_.empty()) return;
   float s = p.scale(), d = p.dpiScale();
   float one = std::max(1.f, std::round(d));
-  UiFont f{ 12 };
+  UiFont f{ 12 }, nf{ kNoteFontDip };
   float labelW = 0;
-  for (const PopupItem& it : items_)
-    if (!it.separator) labelW = std::max(labelW, p.textWidth(it.label, f));
-  float w = std::ceil(std::max(kMinWidthDip * s, kTextDip * s + labelW + kRightDip * s));
-  float h = 2 * kPadDip * s;
+  for (const PopupItem& it : items_) {
+    if (it.separator) continue;
+    float lw = p.textWidth(it.label, f);
+    if (!it.note.empty()) lw += kNoteGapDip * s + p.textWidth(it.note, nf);
+    labelW = std::max(labelW, lw);
+  }
+  float titleH = title_.empty() ? 0 : kTitleDip * s;
+  float titleW = title_.empty() ? 0 : 8 * s + p.textWidth(title_, nf) + kRightDip * s;
+  float w = std::ceil(std::max({ kMinWidthDip * s, kTextDip * s + labelW + kRightDip * s, titleW }));
+  float h = 2 * kPadDip * s + titleH;
   for (const PopupItem& it : items_) h += (it.separator ? kSepDip : kItemDip) * s;
   h = std::ceil(h);
   float x = std::round(xDip_ * d), y = std::round(yDip_ * d - bodyTop);
@@ -62,11 +71,18 @@ void Popup::draw(Painter& p, D2D1_RECT_F body, float bodyTop, const std::string&
   p.fillRect(D2D1::RectF(r.left + one, r.top + one, r.right + one, r.bottom + one), 0x000000, 0.14f);
   p.fillRect(r, kFace);
   p.strokeRect(r, kBorder);
+  // The header line, above the gutter.
+  float gTop = r.top + one;
+  if (!title_.empty()) {
+    D2D1_RECT_F tr = D2D1::RectF(r.left + 8 * s, std::round(r.top + kPadDip * s), r.right - 8 * s, std::round(r.top + kPadDip * s + titleH));
+    p.text(tr, title_, nf, noteText, Align::Left, true);
+    gTop = tr.bottom;
+  }
   // The icon gutter's edge, as Win7 menus draw it.
   float gx = std::round(r.left + kPadDip * s + kGutterDip * s);
-  p.fillRect(D2D1::RectF(gx, r.top + one, gx + one, r.bottom - one), kSep);
-  p.fillRect(D2D1::RectF(gx + one, r.top + one, gx + 2 * one, r.bottom - one), 0xFFFFFF);
-  float iy = r.top + kPadDip * s;
+  p.fillRect(D2D1::RectF(gx, gTop, gx + one, r.bottom - one), kSep);
+  p.fillRect(D2D1::RectF(gx + one, gTop, gx + 2 * one, r.bottom - one), 0xFFFFFF);
+  float iy = r.top + kPadDip * s + titleH;
   for (size_t i = 0; i < items_.size(); i++) {
     const PopupItem& it = items_[i];
     float ih = (it.separator ? kSepDip : kItemDip) * s;
@@ -82,7 +98,29 @@ void Popup::draw(Painter& p, D2D1_RECT_F body, float bodyTop, const std::string&
     if (hit) hit(ir, target);
     bool hot = it.enabled && (hoverTarget == target || (hoverTarget.rfind(prefix_, 0) != 0 && kb_ == (int)i));
     if (hot) p.roundedRect(ir, 3, kHi, 1, kHiBorder, 1);
-    p.text(D2D1::RectF(r.left + kTextDip * s, ir.top, ir.right - 4 * s, ir.bottom), it.label, f, it.enabled ? kText : kGray, Align::Left, true);
+    // The gutter: a selected item's frame, then its colour square or, with none, a check.
+    float gl = r.left + kPadDip * s, cx = (gl + gx) / 2, cy = (ir.top + ir.bottom) / 2;
+    if (it.selected) {
+      float half = std::round((ir.bottom - ir.top) / 2 - 2 * s);
+      p.roundedRect(D2D1::RectF(std::round(cx - half), std::round(cy - half), std::round(cx + half), std::round(cy + half)), 3, kHi, 1, kHiBorder, 1);
+    }
+    float sh = std::round(kSwatchDip * s / 2);
+    D2D1_RECT_F sq = D2D1::RectF(std::round(cx) - sh, std::round(cy) - sh, std::round(cx) + sh, std::round(cy) + sh);
+    if (it.hasSwatch) {
+      p.fillRect(sq, it.swatch, it.enabled ? 1.f : 0.45f);
+      p.strokeRect(sq, mixRgb(it.swatch, 0x000000, 0.6f), 1, it.enabled ? 1.f : 0.45f);
+    } else if (it.emptySwatch) {
+      p.strokeRect(sq, kGray, 1);
+    } else if (it.selected) {
+      p.glyph(sq, 0x2713, kText, 11);
+    }
+    // The note ends 8 DIP in from the item's right (no submenu arrow takes that room here).
+    float noteW = it.note.empty() ? 0 : std::ceil(p.textWidth(it.note, nf));
+    float noteRight = ir.right - 8 * s, noteLeft = noteRight - noteW;
+    float textRight = noteW > 0 ? noteLeft - kNoteGapDip * s : ir.right - 4 * s;
+    p.text(D2D1::RectF(r.left + kTextDip * s, ir.top, std::max(r.left + kTextDip * s, textRight), ir.bottom), it.label, f,
+           it.enabled ? kText : kGray, Align::Left, true);
+    if (noteW > 0) p.text(D2D1::RectF(noteLeft, ir.top, noteRight + 1, ir.bottom), it.note, nf, noteText, Align::Right, false);
   }
 }
 

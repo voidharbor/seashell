@@ -37,6 +37,11 @@
  * `sheet:tutorial:btn:skip|back|next`.
  *
  * The update banner (Phase 2): `update:download|page|later|install|retry|dismiss`.
+ *
+ * The pane popovers (Phase 2): `pane:<id>:color` and `pane:<id>:link` open
+ * them, `popover:<itemId>` picks an item (a colour key or `none`; another
+ * pane's id or `unlink`), and `popover` itself takes `key Escape`. Any `down`
+ * outside the popover closes it.
  */
 
 export interface Rect {
@@ -264,6 +269,38 @@ export interface UpdateBannerModel {
   rect: Rect
 }
 
+/** One row of a pane popover (`ColorPicker.tsx`, `LinkPicker.tsx`). */
+export interface PopoverItem {
+  /** The target is `popover:<id>`: a colour key or `none`, another pane's id, `unlink`, or `empty` for the no-panes line. */
+  id: string
+  label: string
+  /** '#rrggbb' for a colour, else null. */
+  swatch: string | null
+  selected: boolean
+  disabled: boolean
+  /** Right-aligned in `badgeText`: `no agent`, `linked`. */
+  note: string | null
+}
+
+/**
+ * The colour or link popover of one pane, drawn by the shell's `Popup` with
+ * its top-left corner at the anchor's bottom-left: the colour dot for the
+ * colour popover, the title bar's left edge for the link popover (where the
+ * renderer's `.swatches` and `.linkpick` sit).
+ */
+export interface PopoverModel {
+  kind: 'color' | 'link'
+  paneId: string
+  /** Window client DIP, like every other rect in the model. */
+  anchor: Rect
+  /** A header line above the items (`Share notes with`), or null. */
+  title: string | null
+  items: PopoverItem[]
+}
+
+/** A one-off order to the shell (`shell:cmd`), outside the model. Task 16 adds the menu. */
+export type ShellCmd = { op: 'ping' }
+
 export interface UiModel {
   seq: number
   window: {
@@ -304,6 +341,7 @@ export interface UiModel {
   drawer: DrawerModel
   sheet: SheetModel | null
   update: UpdateBannerModel | null
+  popover: PopoverModel | null
 }
 
 export interface Mods {

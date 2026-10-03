@@ -12,7 +12,7 @@ export const SHELL_CHANNELS: readonly string[] = [
 ]
 
 /** The only `on` channels the core writes to the pipe. Every other push is for the controller. */
-export const CORE_PUSH_TO_SHELL: readonly string[] = ['pty:data', 'ui:model', 'grid:cmd']
+export const CORE_PUSH_TO_SHELL: readonly string[] = ['pty:data', 'ui:model', 'grid:cmd', 'shell:cmd']
 
 export function encodeEnvelope(e: Envelope): string {
   // JSON.stringify escapes every newline inside strings, so one envelope is one line.

@@ -21,7 +21,15 @@ describe('core envelope', () => {
   it('names the shell-owned and shell-bound channels', () => {
     expect(SHELL_CHANNELS).toContain('clip:write')
     expect(SHELL_CHANNELS).not.toContain('pty:spawn')
-    expect(CORE_PUSH_TO_SHELL).toEqual(['pty:data', 'ui:model', 'grid:cmd'])
+    expect(CORE_PUSH_TO_SHELL).toEqual(['pty:data', 'ui:model', 'grid:cmd', 'shell:cmd'])
+  })
+  it('matches the C++ shell: CORE_PUSH_TO_SHELL in wire.cpp is the same set as the TypeScript list', () => {
+    const src = readFileSync(new URL('../../native/shell/src/wire.cpp', import.meta.url), 'utf8')
+    const start = src.indexOf('CORE_PUSH_TO_SHELL = {')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const body = src.slice(start + 'CORE_PUSH_TO_SHELL = {'.length, src.indexOf('}', start))
+    const cpp = [...body.matchAll(/"([^"]*)"/g)].map((m) => m[1])
+    expect([...cpp].sort()).toEqual([...CORE_PUSH_TO_SHELL].sort())
   })
   it('matches the C++ shell: SHELL_CHANNELS in wire.cpp is the same set as the TypeScript list', () => {
     const src = readFileSync(new URL('../../native/shell/src/wire.cpp', import.meta.url), 'utf8')

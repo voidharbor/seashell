@@ -14,7 +14,7 @@ static const std::set<std::string> SHELL_CHANNELS = {
   "open:withDefaultApp", "open:revealInFinder", "open:externalHttp",
   "display:list", "display:colorization", "grid:cmd", "test:screenshot",
 };
-static const std::set<std::string> CORE_PUSH_TO_SHELL = { "pty:data", "ui:model", "grid:cmd" };
+static const std::set<std::string> CORE_PUSH_TO_SHELL = { "pty:data", "ui:model", "grid:cmd", "shell:cmd" };
 // clang-format on
 
 using nlohmann::json;
@@ -174,6 +174,8 @@ void Wire::onCoreLine(std::string line) {
         }
       } else if (ch == "grid:cmd") {
         if (onGridCmd) onGridCmd(p);
+      } else if (ch == "shell:cmd") {
+        if (onShellCmd) onShellCmd(p);
       } else {
         App::log("on %s ignored: not a core push the shell takes", ch.c_str());
       }
