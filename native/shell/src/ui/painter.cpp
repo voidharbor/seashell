@@ -334,8 +334,8 @@ void Painter::win7Button(D2D1_RECT_F r, BtnState state, const std::wstring& labe
     rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, one * 1.5f, one * 1.5f), rad, rad), brush(0x000000, 0.18f), one);
   else if (state != BtnState::Disabled)
     rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, one * 1.5f, one * 1.5f), rad, rad), brush(0xFFFFFF, 0.8f), one);
-  uint32_t border = state == BtnState::Default ? 0x3C7FB1 : f.border;
-  rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, one / 2, one / 2), rad, rad), brush(border, 1), one);
+  // 6.3: the default button keeps the 1 px #707070 border; only the glow ring marks it.
+  rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, one / 2, one / 2), rad, rad), brush(f.border, 1), one);
   if (!label.empty())
     text(r, label, UiFont{ labelDip }, state == BtnState::Disabled ? 0x838383 : 0x1E1E1E, Align::Center, true);
 }
