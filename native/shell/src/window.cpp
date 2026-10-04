@@ -364,7 +364,12 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       break;
     case WM_SETTINGCHANGE:
       // The Windows app theme changed: the tab strip's System mode follows it (Task 12b).
-      if (l && lstrcmpiW(reinterpret_cast<LPCWSTR>(l), L"ImmersiveColorSet") == 0) App::instance().sendColorization();
+      // lParam is read only when non-null (SPI changes may send 0), and only
+      // "ImmersiveColorSet" re-reads it; "Policy", "intl" and the rest do nothing
+      // here (Phase 3 Review Focus 5). An ordinal compare: the area name is an
+      // identifier, not text in the user's locale.
+      if (l && CompareStringOrdinal(reinterpret_cast<LPCWSTR>(l), -1, L"ImmersiveColorSet", -1, TRUE) == CSTR_EQUAL)
+        App::instance().sendColorization();
       break;
     case WM_NCLBUTTONDOWN:
       altTap_ = false;

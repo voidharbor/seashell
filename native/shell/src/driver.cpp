@@ -173,6 +173,23 @@ const json* resolve(const json& doc, const std::string& ptr) {
     return nullptr;
   }
 }
+
+// settingChange (Phase 3 Task 5, Review Focus 5): WM_SETTINGCHANGE to this
+// shell's own top-level window only, never HWND_BROADCAST and never another
+// window, with wParam 0 and lParam the area's wide string, or 0 for
+// {lparam:null}. Sent from the driver's connection thread, not posted:
+// SendMessageW returns only after the window procedure has handled it, so the
+// string on this stack outlives the handler. No system setting is changed.
+json settingChange(const json& req) {
+  auto it = req.find("lparam");
+  if (it == req.end() || !(it->is_null() || it->is_string())) return fail("ELPARAM");
+  HWND h = Window::instance().hwnd();
+  if (!h || !IsWindow(h)) return fail("ENOWINDOW");
+  std::wstring area = it->is_string() ? fromUtf8(it->get<std::string>()) : std::wstring();
+  LPARAM l = it->is_string() ? reinterpret_cast<LPARAM>(area.c_str()) : 0;
+  SendMessageW(h, WM_SETTINGCHANGE, 0, l);
+  return { { "ok", true }, { "lparam", *it } };
+}
 }  // namespace
 
 Driver& Driver::instance() { static Driver d; return d; }
@@ -336,6 +353,7 @@ json Driver::handle(const json& req) {
       Sleep(50);
     }
   }
+  if (cmd == "settingChange") return settingChange(req);   // sent from this thread; the UI thread runs the handler
   return onUi(req);
 }
 
@@ -398,12 +416,16 @@ json Driver::execute(const json& req) {
     // reads DWM again. {appsDark:true|false} stands in for Windows' app theme
     // and {appsDark:null} reads the registry again; a request with appsDark
     // and no argb leaves the argb override alone, one without appsDark is the
-    // argb override as before.
+    // argb override as before. {appsDark, send:false} (no argb) only arms the
+    // override: the next WM_SETTINGCHANGE "ImmersiveColorSet" (settingChange)
+    // or DWM change carries it, so a test sees the message path re-read it.
     App& app = App::instance();
     bool hasDark = req.contains("appsDark");
+    bool send = !(req.contains("send") && req["send"].is_boolean() && !req["send"].get<bool>());
+    if (!send && (!hasDark || req.contains("argb"))) return fail("ESEND");
     if (hasDark) app.overrideAppsDark(req["appsDark"], false);
     if (req.contains("argb") || !hasDark) app.overrideColorization(req.contains("argb") ? req["argb"] : json(nullptr));
-    else app.sendColorization();
+    else if (send) app.sendColorization();
     return { { "ok", true }, { "dwm", App::dwmColorization() } };
   }
   if (cmd == "composition") {
