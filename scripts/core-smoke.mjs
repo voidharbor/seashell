@@ -6,7 +6,8 @@ const ud = process.argv[2] ?? '/tmp/seashell-core-smoke'
 mkdirSync(ud, { recursive: true })
 // wsl.exe sets SHELL to the login shell; the caller's own $SHELL may be something else.
 const shell = userInfo().shell || process.env.SHELL
-const core = spawn('/usr/bin/node', ['out/core/index.cjs'], { env: { ...process.env, SHELL: shell, SEASHELL_HOST: 'native-win', SEASHELL_HOST_PID: String(process.pid), SEASHELL_USER_DATA: ud }, stdio: ['pipe', 'pipe', 'inherit'] })
+// Host pid 1: Windows pids are multiples of 4, so its pid folder is never a live shell's.
+const core = spawn('/usr/bin/node', ['out/core/index.cjs'], { env: { ...process.env, SHELL: shell, SEASHELL_HOST: 'native-win', SEASHELL_HOST_PID: '1', SEASHELL_USER_DATA: ud }, stdio: ['pipe', 'pipe', 'inherit'] })
 const send = (e) => core.stdin.write(JSON.stringify(e) + '\n')
 let buf = '', model = null, prompt = false
 core.stdout.on('data', (d) => {
