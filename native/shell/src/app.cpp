@@ -673,6 +673,13 @@ int App::main(HINSTANCE hinst) {
   hinst_ = hinst;
   logOpen(envW(L"SEASHELL_SHELL_LOG"));
   testMode_ = !envW(L"SEASHELL_TEST_PORT").empty();
+  // A test run writes window-bounds.json and test.json under userData, which
+  // without its own folder is the real %APPDATA%\seashell: refuse before any
+  // mutex, window, file or core (and no MessageBox, test mode never takes focus).
+  if (testMode_ && envW(L"SEASHELL_USER_DATA").empty()) {
+    log("error: SEASHELL_TEST_PORT is set without SEASHELL_USER_DATA; refusing to start");
+    return 3;
+  }
   std::wstring inst = instanceName();
   log("shell %s start pid %lu instance %s userData %s%s", SEASHELL_VERSION_STR, GetCurrentProcessId(),
       toUtf8(inst).c_str(), toUtf8(userDataWin()).c_str(), testMode_ ? " test" : "");
