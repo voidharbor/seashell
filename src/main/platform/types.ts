@@ -91,6 +91,9 @@ export interface Platform {
   /** Extra pane environment, applied after buildEnv. The wslhost platform stamps the Windows pane identity here. */
   paneEnvExtras?(paneId: string): Array<[string, string]>
 
+  /** A pane's shell was spawned with this pid (wslhost: its pid file is removed at quit only while it records this pid). */
+  paneSpawned?(paneId: string, pid: number): void
+
   /** The SEASHELL_APP_ID this platform stamps on its panes itself, so session lookup matches the registry entries they write (wslhost). */
   readonly paneAppId?: string
 

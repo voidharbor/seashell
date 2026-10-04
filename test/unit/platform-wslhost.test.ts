@@ -17,6 +17,9 @@ function io(over: Partial<Parameters<typeof createWslhost>[0]> = {}) {
       writeFileAtomic: (f: string, c: string) => { writes[f] = c },
       readdir: () => ['777', '31337', 'junk'],
       rmrf: (d: string) => { removed.push(d) },
+      readFile: (): string => { throw new Error('ENOENT') },
+      unlink: () => {},
+      rmdirIfEmpty: () => {},
       windowsPidAlive: (pid: number) => pid === 777,
       onExit: () => {},
       ...over,
@@ -38,23 +41,41 @@ describe('wslhost platform', () => {
     createWslhost(i).installShellIntegration()
     expect(removed).toEqual(['/Users/joshwald/.cache/seashell-win/pids/31337'])
   })
-  it('removes only its own pid dir at quit, in a temp home', () => {
+  it('removes only its own panes\' pid files at quit, and the folder once empty, in a temp home', () => {
     const home = mkdtempSync(join(tmpdir(), 'ss-wslhost-home-'))
     onTestFinished(() => rmSync(home, { recursive: true, force: true }))
     const pids = join(home, '.cache/seashell-win/pids')
+    const mine = join(pids, '777')
     // Another live shell's folder, with its pane pid file, and a stray file.
     mkdirSync(join(pids, '31337'), { recursive: true })
     writeFileSync(join(pids, '31337', 'pane-pane-1.pid'), '4242\n')
     writeFileSync(join(pids, 'note'), 'x')
-    const exits: Array<() => void> = []
-    const p = createWslhost({ ...nodeWslhostIo(777, home), windowsPidAlive: () => true, onExit: (fn) => exits.push(fn) })
-    p.installShellIntegration()
-    p.installShellIntegration()   // a retry arms no second removal
-    expect(exits).toHaveLength(1)
-    // A pane's shell writes its pid file into this host's folder.
-    writeFileSync(join(pids, '777', 'pane-pane-9.pid'), '5151\n')
-    exits[0]!()
-    expect(existsSync(join(pids, '777'))).toBe(false)
+    const firstExit: Array<() => void> = []
+    const first = createWslhost({ ...nodeWslhostIo(777, home), windowsPidAlive: () => true, onExit: (fn) => firstExit.push(fn) })
+    first.installShellIntegration()
+    first.installShellIntegration()   // a retry arms no second removal
+    expect(firstExit).toHaveLength(1)
+    // The first core's panes write their pid files into this host's folder.
+    first.paneSpawned!('pane-9', 5151)
+    first.paneSpawned!('pane-1-400', 5152)
+    writeFileSync(join(mine, 'pane-pane-9.pid'), '5151 pts/3\n')
+    writeFileSync(join(mine, 'pane-pane-1-400.pid'), '5152 pts/4\n')
+    // The shell restarts the core at once (wsl.exe died first): the second core
+    // shares the folder, spawns pane-2 and mints pane-1-400 again, whose shell
+    // overwrites that pid file, all before the first core's exit runs.
+    const secondExit: Array<() => void> = []
+    const second = createWslhost({ ...nodeWslhostIo(777, home), windowsPidAlive: () => true, onExit: (fn) => secondExit.push(fn) })
+    second.installShellIntegration()
+    second.paneSpawned!('pane-2', 6161)
+    second.paneSpawned!('pane-1-400', 6162)
+    writeFileSync(join(mine, 'pane-pane-2.pid'), '6161 pts/5\n')
+    writeFileSync(join(mine, 'pane-pane-1-400.pid'), '6162 pts/6\n')
+    firstExit[0]!()
+    // The second core's files survive, so the folder stays.
+    expect(readdirSync(mine).sort()).toEqual(['pane-pane-1-400.pid', 'pane-pane-2.pid'])
+    secondExit[0]!()
+    // Empty now: the second core's exit removes it, and nothing else.
+    expect(existsSync(mine)).toBe(false)
     expect(readdirSync(pids).sort()).toEqual(['31337', 'note'])
     expect(readdirSync(join(pids, '31337'))).toEqual(['pane-pane-1.pid'])
     expect(existsSync(join(home, '.cache/seashell-win/zdotdir/.zshenv'))).toBe(true)

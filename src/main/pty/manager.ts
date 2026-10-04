@@ -238,6 +238,7 @@ export class PtyManager {
       tail: '',
     }
     this.panes.set(req.paneId, rec)
+    platform.paneSpawned?.(req.paneId, proc.pid)
     if (this.gate.held) proc.pause()
     if (platform.paneShell) this.resolvePaneShell(rec)
     this.batcher.setPaneActive(req.paneId, true)

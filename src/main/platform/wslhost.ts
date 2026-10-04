@@ -26,6 +26,11 @@ export interface WslhostIo {
   writeFileAtomic(file: string, contents: string): void
   readdir(dir: string): string[]
   rmrf(dir: string): void
+  /** Throws when the file cannot be read. */
+  readFile(file: string): string
+  unlink(file: string): void
+  /** Removes an empty folder; a folder that is not empty, or is gone, is left as it is. */
+  rmdirIfEmpty(dir: string): void
   /** tasklist.exe through /mnt/c; true on any error, so a live run is never swept. */
   windowsPidAlive(pid: number): boolean
   /**
@@ -43,6 +48,8 @@ const EXTRA_KEYS = new Set(['SEASHELL_PIDFILE', 'SEASHELL_APP_ID', 'TERM_PROGRAM
 export function createWslhost(io: WslhostIo): Platform {
   let shimDir: string | null = null
   let exitArmed = false
+  /** Pane id to the pid of the shell this core spawned for it (the `$$` its pid file records). */
+  const spawned = new Map<string, number>()
   const home = io.home.replace(/\/+$/, '')
   const appId = appInstanceId('win32', io.hostPid)
   return {
@@ -70,15 +77,24 @@ export function createWslhost(io: WslhostIo): Platform {
           if (other !== io.hostPid && !io.windowsPidAlive(other)) io.rmrf(`${pidsRoot}/${name}`)
         }
         io.mkdirp(pidDirFor(home, io.hostPid))
-        // At quit this host's own pid directory goes, and nothing else: not a
-        // sibling (another shell's, swept above only when Windows says it is
-        // dead) and never the pids root. The panes are reaped by then.
+        // At quit this core removes its own panes' pid files and then the host
+        // folder only if that leaves it empty. A core the shell restarted at
+        // once shares the folder and can mint the same pane ids, so a file goes
+        // only when it still records the shell this core spawned for that pane.
         if (!exitArmed && Number.isInteger(io.hostPid) && io.hostPid > 0) {
           exitArmed = true
           const mine = pidDirFor(home, io.hostPid)
           io.onExit(() => {
+            for (const [paneId, pid] of spawned) {
+              const file = pidFileFor(home, io.hostPid, paneId)
+              try {
+                if (io.readFile(file).trim().split(/\s+/)[0] === String(pid)) io.unlink(file)
+              } catch {
+                /* gone already, or unreadable: left as it is */
+              }
+            }
             try {
-              io.rmrf(mine)
+              io.rmdirIfEmpty(mine)
             } catch {
               /* the next start's sweep removes it */
             }
@@ -108,6 +124,10 @@ export function createWslhost(io: WslhostIo): Platform {
       const out = vars.filter(([k]) => EXTRA_KEYS.has(k))
       if (shimDir !== null) out.unshift(['SEASHELL_PIDFILE', pidFileFor(home, io.hostPid, paneId)])
       return out
+    },
+
+    paneSpawned(paneId: string, pid: number): void {
+      spawned.set(paneId, pid)
     },
   }
 }
@@ -145,6 +165,16 @@ export function nodeWslhostIo(hostPid: number, home: string): WslhostIo {
       }
     },
     rmrf: (d) => fs.rmSync(d, { recursive: true, force: true }),
+    readFile: (f) => fs.readFileSync(f, 'utf8'),
+    unlink: (f) => fs.unlinkSync(f),
+    rmdirIfEmpty: (d) => {
+      try {
+        fs.rmdirSync(d)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code !== 'ENOTEMPTY' && code !== 'ENOENT') throw err
+      }
+    },
     windowsPidAlive,
     installed: process.env.SEASHELL_INSTALLED === '1',
     onExit: (fn) => {
