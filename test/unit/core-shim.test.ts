@@ -91,6 +91,23 @@ describe('electron shim', () => {
       vi.useRealTimers()
     }
   })
+  it('a Reveal the shell does not answer rejects for main\'s handler, and stays quiet for a caller that drops it', async () => {
+    vi.useFakeTimers()
+    try {
+      const shim = createShim({ write: () => {}, hostPid: 4242, userData: '/u', version: '0.6.0', onPush: () => {}, log: () => {} })
+      // main's open:revealInFinder handler awaits it; the refused-executable branch drops it.
+      shim.ipcMain.handle('open:revealInFinder', async (_e, p: { path: string }) => {
+        await shim.shell.showItemInFolder(p.path)
+        return { ok: true }
+      })
+      const caught = shim.invokeLocal('open:revealInFinder', { path: '/w/a.txt' }).catch((e: unknown) => e)
+      shim.shell.showItemInFolder('/w/run.exe')
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(((await caught) as { code?: string }).code).toBe('ETIMEOUT')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('the folder picker waits on the user and never times out', async () => {
     vi.useFakeTimers()
     try {

@@ -107,7 +107,7 @@ export interface ScreenShim {
 export interface ShellShim {
   openPath(p: string): Promise<string>
   openExternal(url: string): Promise<void>
-  showItemInFolder(p: string): void
+  showItemInFolder(p: string): Promise<void>
 }
 export interface ClipboardShim {
   readText(): Promise<string>
@@ -600,8 +600,12 @@ export function createShim(opts: ShimOptions): Shim {
       const r = await invokeShell('open:externalHttp', { url })
       if (!isOk(r)) throw new Error(errorText(r, 'openExternal failed'))
     },
+    // Electron's returns nothing. This one returns the invoke, so main's Reveal
+    // handler can await a timeout; a caller that drops it stays quiet.
     showItemInFolder(p) {
-      quiet(invokeShell('open:revealInFinder', { path: p }))
+      const done = invokeShell('open:revealInFinder', { path: p }).then(() => undefined)
+      quiet(done)
+      return done
     },
   }
   const clipboard: ClipboardShim = {

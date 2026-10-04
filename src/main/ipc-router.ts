@@ -401,7 +401,9 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
   ipcMain.handle(CH.openRevealInFinder, async (_e, raw): Promise<OpenPathResponse> => {
     const parsed = OpenReq.safeParse(raw)
     if (!parsed.success) return { ok: false, error: 'invalid path' }
-    shell.showItemInFolder(path.resolve(toHostPath(parsed.data.path)))
+    // Electron's returns nothing; the core's shim returns the invoke, so a
+    // shell that never answers reaches the caller's toast.
+    await shell.showItemInFolder(path.resolve(toHostPath(parsed.data.path)))
     return { ok: true }
   })
 
