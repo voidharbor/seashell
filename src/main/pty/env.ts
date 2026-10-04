@@ -135,6 +135,11 @@ export function buildEnv(options: BuildEnvOptions): NodeJS.ProcessEnv {
   delete env.NODE_OPTIONS
   delete env.CLAUDECODE
   delete env.AI_AGENT
+  // The installed Windows build's own flags (core_proc.cpp, the updater): a
+  // dev core started from a pane would otherwise take itself for the install.
+  delete env.SEASHELL_INSTALLED
+  delete env.SEASHELL_UPDATE_API
+  delete env.SEASHELL_UPDATE_ORIGIN
   for (const key of Object.keys(env)) {
     if (key.startsWith('ELECTRON_') || key.startsWith('npm_') || key.startsWith('CLAUDE_')) {
       delete env[key]

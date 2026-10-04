@@ -80,6 +80,21 @@ describe('buildEnv nesting safety', () => {
     expect(env.COLORTERM).toBeUndefined()
   })
 
+  it('keeps the installed build and updater flags out of the pane', () => {
+    const env = buildEnv({
+      ...opts,
+      baseEnv: base({
+        SEASHELL_INSTALLED: '1',
+        SEASHELL_UPDATE_API: 'http://127.0.0.1:9/latest',
+        SEASHELL_UPDATE_ORIGIN: 'http://127.0.0.1:9',
+      }),
+    })
+    expect(env.SEASHELL_INSTALLED).toBeUndefined()
+    expect(env.SEASHELL_UPDATE_API).toBeUndefined()
+    expect(env.SEASHELL_UPDATE_ORIGIN).toBeUndefined()
+    expect(env.SEASHELL_PANE_ID).toBe('pane-9')
+  })
+
   it('does not mutate the environment it was given', () => {
     const original = base({ ZDOTDIR: SHIM })
     const snapshot = { ...original }
