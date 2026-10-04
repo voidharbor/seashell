@@ -963,6 +963,7 @@ json Driver::rows() {
 
 void Driver::noteFrame(double ms) {
   if (!running_) return;
+  ++bodyFrames_;
   ULONGLONG now = GetTickCount64();
   frames_.push_back({ now, ms });
   while (!frames_.empty() && now - frames_.front().at > kStatsWindowMs) frames_.pop_front();
@@ -1048,11 +1049,22 @@ json Driver::stats() {
   std::vector<double> q, pa, b, l, ap;
   for (const ModelPath& m : modelPaths_) { q.push_back(m.queue); pa.push_back(m.parse); b.push_back(m.build); l.push_back(m.layout); ap.push_back(m.apply); }
   auto vec = [](const std::deque<double>& d) { return std::vector<double>(d.begin(), d.end()); };
+  // The paint cap (Phase 3 Task 4): body paints in each whole second of the
+  // last 5 s (seconds of GetTickCount64), the busiest of them; every body
+  // paint since the driver started; the refresh rate invalidateBody caps at.
+  int perSecondMax = 0, inSecond = 0;
+  ULONGLONG second = ~0ULL;
+  for (const Sample& f : frames_) {
+    if (now - f.at > kStatsWindowMs) continue;
+    if (f.at / 1000 != second) { second = f.at / 1000; inSecond = 0; }
+    perSecondMax = std::max(perSecondMax, ++inSecond);
+  }
+  json paint = { { "perSecondMax", perSecondMax }, { "frames", bodyFrames_ }, { "refreshHz", Window::instance().refreshHz() } };
   json modelMs = { { "n", modelPaths_.size() }, { "queue", med(q) }, { "parse", med(pa) }, { "build", med(b) }, { "layout", med(l) },
                    { "apply", med(ap) }, { "bodyN", paintGap_[0].size() }, { "paint", med(vec(paintGap_[0])) },
                    { "bodyDraw", med(vec(paintDraw_[0])) }, { "stripN", paintGap_[1].size() }, { "strip", med(vec(paintGap_[1])) },
                    { "stripDraw", med(vec(paintDraw_[1])) } };
-  return { { "frameMs", { { "p50", percentile(ms, 0.5) }, { "p95", percentile(ms, 0.95) } } }, { "modelMs", modelMs },
+  return { { "frameMs", { { "p50", percentile(ms, 0.5) }, { "p95", percentile(ms, 0.95) } } }, { "modelMs", modelMs }, { "paint", paint },
            { "framesLast5s", ms.size() }, { "ptyBytesLast5s", (long long)bytes }, { "shellWsMB", std::round(wsMB * 10) / 10 },
            { "paneId", id }, { "mouseMode", g ? g->mouseMode() : 0 }, { "selection", a.input().selectionText(id) },
            { "focusedGrid", a.focusedGridId() },

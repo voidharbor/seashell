@@ -25,12 +25,16 @@ ID2D1HwndRenderTarget* Gfx::bodyTarget() {
   D2D1_SIZE_U size = D2D1::SizeU((UINT32)(rc.right - rc.left), (UINT32)(rc.bottom - rc.top));
   auto props = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_HARDWARE,
                                             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.f, 96.f);
-  HRESULT hr = d2d_->CreateHwndRenderTarget(props, D2D1::HwndRenderTargetProperties(h, size), body_.GetAddressOf());
+  // EndDraw returns without waiting for the refresh, so a model line is never
+  // queued behind a vblank wait (Phase 2 follow-up 1). Window::invalidateBody
+  // caps the paint rate at the refresh rate instead.
+  const D2D1_PRESENT_OPTIONS kPresent = D2D1_PRESENT_OPTIONS_IMMEDIATELY;
+  HRESULT hr = d2d_->CreateHwndRenderTarget(props, D2D1::HwndRenderTargetProperties(h, size, kPresent), body_.GetAddressOf());
   if (FAILED(hr)) {
     // No hardware device (a remote session, a broken driver): WARP still draws.
     App::log("error: hardware body target 0x%08lx, falling back to default", (unsigned long)hr);
     props.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
-    hr = d2d_->CreateHwndRenderTarget(props, D2D1::HwndRenderTargetProperties(h, size), body_.GetAddressOf());
+    hr = d2d_->CreateHwndRenderTarget(props, D2D1::HwndRenderTargetProperties(h, size, kPresent), body_.GetAddressOf());
     if (FAILED(hr)) { App::log("error: CreateHwndRenderTarget 0x%08lx", (unsigned long)hr); return nullptr; }
   }
   return body_.Get();

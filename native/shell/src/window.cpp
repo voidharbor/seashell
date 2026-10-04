@@ -41,7 +41,71 @@ void Window::invalidateStrip() {
   InvalidateRect(hwnd_, &rc, FALSE);
 }
 
-void Window::invalidateBody(const RECT* r) { if (body_) InvalidateRect(body_, r, FALSE); }
+// A frame is 1000 / refreshHz ms. An invalidate a frame or more after the
+// last body paint ended goes to InvalidateRect at once, so a single event (one
+// divider move, one keystroke's echo) paints on the next WM_PAINT. One sooner,
+// or during a paint, joins the pending region, and one timer armed for the
+// rest of the frame invalidates it: a flood paints at most once per frame.
+void Window::invalidateBody(const RECT* r) {
+  if (!body_) return;
+  addBodyPending(r);
+  double frameMs = 1000.0 / refreshHz_;
+  double sinceMs = frameMs;
+  if (bodyPainting_) {
+    sinceMs = 0;
+  } else if (bodyPaintEnd_) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    sinceMs = Driver::ticksMs(now.QuadPart - bodyPaintEnd_);
+  }
+  if (sinceMs >= frameMs) { flushBody(); return; }
+  if (!bodyTimer_) bodyTimer_ = SetTimer(nullptr, 0, (UINT)std::ceil(frameMs - sinceMs), bodyFrameTick);
+  if (!bodyTimer_) flushBody();   // no timer to wait on: paint now rather than never
+}
+
+void Window::addBodyPending(const RECT* r) {
+  if (!r) bodyPendingAll_ = true;
+  else if (!bodyPendingAll_) {
+    if (bodyPendingAny_) UnionRect(&bodyPending_, &bodyPending_, r);
+    else bodyPending_ = *r;
+  }
+  bodyPendingAny_ = true;
+}
+
+void Window::flushBody() {
+  if (bodyTimer_) { KillTimer(nullptr, bodyTimer_); bodyTimer_ = 0; }
+  if (!bodyPendingAny_ || !body_) return;
+  InvalidateRect(body_, bodyPendingAll_ ? nullptr : &bodyPending_, FALSE);
+  bodyPendingAny_ = bodyPendingAll_ = false;
+}
+
+// The frame is up. The tick paints too (UpdateWindow): WM_TIMER and WM_PAINT
+// each wait for an empty queue, and under a flood a second wait would cost
+// another frame or more.
+void CALLBACK Window::bodyFrameTick(HWND, UINT, UINT_PTR id, DWORD) {
+  Window& w = instance();
+  KillTimer(nullptr, id);
+  if (id != w.bodyTimer_) return;   // a tick already queued when flushBody disarmed it
+  w.bodyTimer_ = 0;
+  w.flushBody();
+  if (w.body_) UpdateWindow(w.body_);
+}
+
+// The window's monitor, EnumDisplaySettingsW's current mode; 60 when the
+// driver reports 0 or 1 (the hardware default) or a call fails.
+void Window::readRefreshHz() {
+  double hz = 0;
+  MONITORINFOEXW mi{};
+  mi.cbSize = sizeof mi;
+  HMONITOR mon = hwnd_ ? MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) : nullptr;
+  if (mon && GetMonitorInfoW(mon, &mi)) {
+    DEVMODEW dm{};
+    dm.dmSize = sizeof dm;
+    if (EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1) hz = dm.dmDisplayFrequency;
+  }
+  refreshHz_ = hz > 0 ? hz : 60;
+  App::log("refresh %.0f Hz%s on %ls", refreshHz_, hz > 0 ? "" : " (unknown, assumed)", mi.szDevice);
+}
 void Window::setTitle(const std::wstring& s) { if (hwnd_) SetWindowTextW(hwnd_, s.c_str()); }
 void Window::post(UINT msg, WPARAM w, LPARAM l) { if (hwnd_) PostMessageW(hwnd_, msg, w, l); }
 
@@ -96,6 +160,7 @@ bool Window::create(HINSTANCE hinst, bool noActivate) {
                           b.x, b.y, b.width, b.height, nullptr, nullptr, hinst, nullptr);
   if (!hwnd_) { App::log("error: CreateWindowEx host %lu", GetLastError()); return false; }
   dpi_ = GetDpiForWindow(hwnd_);
+  readRefreshHz();
   RECT br = bodyRect();
   body_ = CreateWindowExW(0, kBodyClass, nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
                           br.left, br.top, br.right - br.left, br.bottom - br.top, hwnd_, nullptr, hinst, nullptr);
@@ -200,11 +265,20 @@ void Window::paintStrip() {
   Driver::instance().notePaint(true, t0.QuadPart, t1.QuadPart);   // the driver's modelMs
 }
 
+// Every paint draws the whole body, so it also answers whatever was pending
+// (an invalidate during it pends again); its end starts the next frame.
 void Window::paintBody() {
   PAINTSTRUCT ps;
   BeginPaint(body_, &ps);
+  if (bodyTimer_) { KillTimer(nullptr, bodyTimer_); bodyTimer_ = 0; }
+  bodyPendingAny_ = bodyPendingAll_ = false;
+  bodyPainting_ = true;
   App::instance().paintBody();   // the panes (Task 12), then the chrome (Task 15)
+  bodyPainting_ = false;
   EndPaint(body_, &ps);
+  LARGE_INTEGER t;
+  QueryPerformanceCounter(&t);
+  bodyPaintEnd_ = t.QuadPart;
 }
 
 bool Window::menuKeys(UINT msg, WPARAM w, LPARAM l) {
@@ -312,9 +386,13 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       auto* r = reinterpret_cast<RECT*>(l);
       extendFrame();
       SetWindowPos(h, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+      readRefreshHz();   // a new monitor, perhaps at another rate
       relayout();
       return 0;
     }
+    case WM_DISPLAYCHANGE:
+      readRefreshHz();
+      break;
     case WM_WINDOWPOSCHANGED:
       if (!IsZoomed(h) && !IsIconic(h)) GetWindowRect(h, &normal_);
       break;   // DefWindowProc turns it into WM_SIZE and WM_MOVE
@@ -336,6 +414,7 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       App::instance().requestQuit();   // the core's quit drain runs first (Task 8)
       return 0;
     case WM_DESTROY:
+      if (bodyTimer_) { KillTimer(nullptr, bodyTimer_); bodyTimer_ = 0; }
       freeStripDib();
       App::instance().onWindowDestroyed();
       return 0;

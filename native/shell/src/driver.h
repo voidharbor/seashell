@@ -93,6 +93,7 @@ private:
   std::atomic<bool> running_{ false };
   struct Sample { ULONGLONG at; double v; };
   std::deque<Sample> frames_, ptyBytes_;   // the last 5 s, UI thread only
+  long long bodyFrames_ = 0;               // every body paint since the driver started (stats.paint.frames)
   int heldMods_ = -1;                      // -1, or the kMod* bits (driver.cpp) while dispatching a chord
   HWND dragWin_ = nullptr;                 // the window a driver drag pressed in, UI thread only
   float dragX_ = 0, dragY_ = 0;            // the press point, client pixels of the top-level window

@@ -18,7 +18,13 @@ public:
   void onStripHeightChanged();  // the model's tabStripH changed: the glass and the body follow
   RECT bodyRect() const;        // client rect minus the strip
   void invalidateStrip();
+  // Paints the body at once when a frame (1000 / refreshHz() ms) has passed
+  // since its last paint ended; otherwise one timer coalesces every call until
+  // the frame is up. A single event paints at once, a flood once per frame.
   void invalidateBody(const RECT* r = nullptr);
+  // The window's monitor's refresh rate (EnumDisplaySettingsW), re-read on
+  // WM_DISPLAYCHANGE and WM_DPICHANGED; 60 when unknown.
+  double refreshHz() const { return refreshHz_; }
   void setTitle(const std::wstring& s);
   void post(UINT msg, WPARAM w = 0, LPARAM l = 0);   // PostMessage to hwnd()
   SavedBounds bounds() const;   // the last normal rect plus the maximized flag, for saveBounds
@@ -41,6 +47,10 @@ private:
   void relayout();
   void paintStrip();
   void paintBody();
+  void readRefreshHz();
+  void addBodyPending(const RECT* r);   // into the region the next body invalidate covers
+  void flushBody();                     // InvalidateRect the pending region now; disarms the timer
+  static void CALLBACK bodyFrameTick(HWND, UINT, UINT_PTR id, DWORD);
   void freeStripDib();
   // The Alt tap (Phase 2 Task 16, Review Focus 5): WM_SYSKEYUP for VK_MENU
   // with no other key and no press since its WM_SYSKEYDOWN, and neither Ctrl
@@ -57,4 +67,10 @@ private:
   HDC stripDc_ = nullptr; HBITMAP stripBmp_ = nullptr; HGDIOBJ stripOld_ = nullptr;
   int stripW_ = 0, stripH_ = 0;
   bool altTap_ = false;         // Alt went down alone and nothing else happened since
+  double refreshHz_ = 60;
+  LONGLONG bodyPaintEnd_ = 0;   // QPC at the end of the last body paint; 0 before the first
+  bool bodyPainting_ = false;   // between the body's BeginPaint and EndPaint
+  UINT_PTR bodyTimer_ = 0;      // the coalescing one-shot; 0 while unarmed
+  RECT bodyPending_{};          // the region waiting for it, unless bodyPendingAll_
+  bool bodyPendingAny_ = false, bodyPendingAll_ = false;
 };

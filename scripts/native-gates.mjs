@@ -382,6 +382,10 @@ async function gateThroughput(ud) {
   const start = { shellWsMB: s0.shellWsMB, coreRssMB: coreRssMB(corePid) }
   const peak = { p95: 0, shellWsMB: start.shellWsMB, coreRssMB: start.coreRssMB, ptyBytesLast5s: 0 }
   let floodFrames = 0   // frames painted in the 5 s windows sampled during the flood
+  // stats.paint (Phase 3 Task 4): the busiest second of body paints in any
+  // window sampled up to DONE, and the refresh rate the shell caps them at.
+  let paintMax = null
+  let refreshHz = null
   const samples = []
   const t0 = now()
   await run(ud, `head -c 50000000 /dev/urandom | base64 | head -c 50000000; echo; echo ${marker('FLOOD-DONE')}`)
@@ -391,10 +395,14 @@ async function gateThroughput(ud) {
     done = !!r.ok
     const s = await stats(ud)
     const rss = coreRssMB(corePid)
-    samples.push({ t: r1((now() - t0) / 1000), p95: s.frameMs.p95, frames5s: s.framesLast5s, shellWsMB: s.shellWsMB, coreRssMB: rss, ptyBytesLast5s: s.ptyBytesLast5s })
+    samples.push({ t: r1((now() - t0) / 1000), p95: s.frameMs.p95, frames5s: s.framesLast5s, shellWsMB: s.shellWsMB, coreRssMB: rss, ptyBytesLast5s: s.ptyBytesLast5s, paintMax5s: s.paint?.perSecondMax ?? null })
     // p95 is 0 when no frame landed in the window, which is not a fast frame.
     if (s.framesLast5s > 0) peak.p95 = Math.max(peak.p95, s.frameMs.p95)
     if (!done) floodFrames += s.framesLast5s
+    if (s.paint) {
+      paintMax = Math.max(paintMax ?? 0, s.paint.perSecondMax)
+      refreshHz = s.paint.refreshHz
+    }
     peak.shellWsMB = Math.max(peak.shellWsMB, s.shellWsMB)
     peak.coreRssMB = Math.max(peak.coreRssMB, rss)
     peak.ptyBytesLast5s = Math.max(peak.ptyBytesLast5s, s.ptyBytesLast5s)
@@ -421,10 +429,12 @@ async function gateThroughput(ud) {
   if (!(peak.shellWsMB < SHELL_BUDGET_MB + 40)) bad.push(`shell peak ${peak.shellWsMB} MB is not under ${SHELL_BUDGET_MB + 40}`)
   if (!(after.shellWsMB <= start.shellWsMB + 20)) bad.push(`shell ${after.shellWsMB} MB 30 s after DONE is not within 20 MB of the start ${start.shellWsMB}`)
   if (!(after.coreRssMB <= start.coreRssMB + 30)) bad.push(`core RSS ${after.coreRssMB} MB 30 s after DONE is not within 30 MB of the start ${start.coreRssMB}`)
+  if (paintMax !== null && !(paintMax <= refreshHz + 5)) bad.push(`paintMax ${paintMax}/s is over the refresh rate ${refreshHz} plus 5`)
   const numbers = `p95=${peak.p95}ms shellWs start=${start.shellWsMB} peak=${peak.shellWsMB} after30s=${after.shellWsMB} ` +
     `coreRss start=${start.coreRssMB} peak=${peak.coreRssMB} after30s=${after.coreRssMB} after120s=${settle[settle.length - 1].coreRssMB} ` +
-    `(${settled ? `within 30 MB of the start at ${settled.t} s` : 'not within 30 MB of the start by 120 s'}) flood=${floodS}s peakPty5s=${r1(peak.ptyBytesLast5s / 1048576)}MB floodFrames=${floodFrames}`
-  const values = { start, peak, after, settle, floodS, samples }
+    `(${settled ? `within 30 MB of the start at ${settled.t} s` : 'not within 30 MB of the start by 120 s'}) flood=${floodS}s peakPty5s=${r1(peak.ptyBytesLast5s / 1048576)}MB floodFrames=${floodFrames} ` +
+    `paintMax=${paintMax ?? 'n/a'}/s refreshHz=${refreshHz ?? 'n/a'}`
+  const values = { start, peak, after, settle, floodS, samples, paintMax, refreshHz }
   if (bad.length) return { line: `throughput: fail ${numbers} (${bad.join('; ')})`, ok: false, values }
   return { line: `throughput: ok ${numbers}`, ok: true, values }
 }
@@ -450,7 +460,10 @@ async function gateLatency(ud) {
     ? `latency: ${median} ms median per move (${average} ms average, ${counts})`
     : `latency: ${average} ms average per move (no moveMs from the driver, ${counts})`
   const ok = perMove < 2 && r.timeouts === 0
-  return { line: ok ? line : `${line}; the bar is under 2`, ok, values: { perMove, median, average, ...r, orientation: d.orientation } }
+  // The model path and the paint block after the drag, for the json only.
+  const st = await stats(ud)
+  const after = { modelMs: st.modelMs ?? null, paint: st.paint ?? null }
+  return { line: ok ? line : `${line}; the bar is under 2`, ok, values: { perMove, median, average, ...r, orientation: d.orientation, after } }
 }
 
 // Phase 2 Task 1: a bare core round trip, 200 in a row, timed by the driver
