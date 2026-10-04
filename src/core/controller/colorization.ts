@@ -10,7 +10,8 @@
  * colorization over the Win7 base grey `#D9D9D9`; the tinted surfaces are the
  * colorization at a small weight over a light grey; the Win7 control faces of
  * 6.3 (tabs, status bar, cards) stay as they are; text is `#1E1E1E` or white,
- * whichever reads better on its background.
+ * whichever reads better on its background, or pure black or white where
+ * neither reaches the WCAG 4.5 contrast ratio (a mid-grey frame).
  */
 
 const TOKEN_KEYS = [
@@ -72,6 +73,8 @@ export type ChromeTokens = TokenTable & { stripDark: '0' | '1' }
 
 const DARK_TEXT = 0x1e1e1e
 const LIGHT_TEXT = 0xffffff
+const BLACK_TEXT = 0x000000
+const MIN_CONTRAST = 4.5 // WCAG 2.x AA for text
 const GLASS_ALPHA = 0x38 // --barBg's .22
 
 /** `#RRGGBB` or `#AARRGGBB` to `0xRRGGBB`; null for anything else. */
@@ -103,12 +106,24 @@ function luminance(rgb: number): number {
   return 0.2126 * lin(ch(rgb, 16)) + 0.7152 * lin(ch(rgb, 8)) + 0.0722 * lin(ch(rgb, 0))
 }
 
-/** Whichever of the dark text and white has the higher contrast on `bg`. */
+/** The WCAG contrast ratio of two colours. */
+function contrast(a: number, b: number): number {
+  const x = luminance(a)
+  const y = luminance(b)
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
+}
+
+/**
+ * Whichever of the dark text and white has the higher contrast on `bg`. On a
+ * mid-tone where neither reaches WCAG 4.5 (a black colorization's `#7B7B7B`
+ * frame: 3.94 and 4.23), pure black or white, whichever reads better; one of
+ * those two always reaches at least 4.58.
+ */
 function textOn(bg: number): number {
-  const l = luminance(bg)
-  const dark = (l + 0.05) / (luminance(DARK_TEXT) + 0.05)
-  const light = (luminance(LIGHT_TEXT) + 0.05) / (l + 0.05)
-  return dark >= light ? DARK_TEXT : LIGHT_TEXT
+  const dark = contrast(bg, DARK_TEXT)
+  const light = contrast(bg, LIGHT_TEXT)
+  if (Math.max(dark, light) >= MIN_CONTRAST) return dark >= light ? DARK_TEXT : LIGHT_TEXT
+  return contrast(bg, BLACK_TEXT) >= light ? BLACK_TEXT : LIGHT_TEXT
 }
 
 const hex6 = (rgb: number): string => `#${(rgb & 0xffffff).toString(16).padStart(6, '0').toUpperCase()}`

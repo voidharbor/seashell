@@ -16,6 +16,27 @@ describe('colorizationToTokens (Review Focus 5)', () => {
     const t = colorizationToTokens('#C8F0F0F0')
     expect(t.frameText).toBe('#1E1E1E')
   })
+  it('keeps every text token at WCAG 4.5 on its background for a black colorization', () => {
+    const lum = (hex: string): number => {
+      const n = Number.parseInt(hex.slice(-6), 16)
+      const lin = (v: number): number => (v / 255 <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4)
+      return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255)
+    }
+    const ratio = (a: string, b: string): number => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05)
+    const t = colorizationToTokens('#FF000000')
+    // The frame is mid-grey: #1E1E1E reads 3.94 on it and white 4.23, so the text is pure black (4.96).
+    expect(t.frame).toBe('#7B7B7B')
+    expect(t.frameText).toBe('#000000')
+    const pairs: Array<[keyof typeof t, keyof typeof t]> = [
+      ['frameText', 'frame'], ['tabText', 'tabActive'], ['tabText', 'tabInactive'], ['titleText', 'titleBar'],
+      ['titleText', 'panel'], ['titleText', 'body'], ['badgeText', 'badge'], ['badgeText', 'titleBar'],
+      ['badgeText', 'panel'], ['badgeText', 'toastBg'], ['statusText', 'statusBg'], ['toastText', 'toastBg'],
+      ['accentText', 'accent'],
+    ]
+    for (const [fg, bg] of pairs) expect(ratio(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
+    // Where the dark text already reads, it stays.
+    expect(colorizationToTokens('#FF0078D7').frameText).toBe('#1E1E1E')
+  })
   it('darkens only the strip tokens when darkStrip is set', () => {
     const light = colorizationToTokens('#FF881798', false)
     expect(light.stripDark).toBe('0')
