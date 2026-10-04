@@ -1026,8 +1026,22 @@ void Driver::noteModelInvalidated(bool strip) {
   if (strip && !paintPending_[1]) paintPending_[1] = t.QuadPart;
 }
 
+namespace {
+// stats.paint.echoMs: pty data reaching the UI thread to the end of the next
+// body paint, the median of the last 50 (echoLast the newest 10; UI thread
+// only). The first data since the last body paint stamps it; a typed key's
+// echo in a one-pane scratch is that data.
+LONGLONG gEchoAt = 0;
+std::deque<double> gEchoMs;
+}
+
 void Driver::notePaint(bool strip, LONGLONG t0, LONGLONG t1) {
   if (!running_) return;
+  if (!strip && gEchoAt) {
+    gEchoMs.push_back(ticksMs(t1 - gEchoAt));
+    while (gEchoMs.size() > 50) gEchoMs.pop_front();
+    gEchoAt = 0;
+  }
   LONGLONG& pending = paintPending_[strip ? 1 : 0];
   if (!pending) return;   // a paint no model asked for (output, the caret, a resize)
   auto push = [](std::deque<double>& d, double v) { d.push_back(v); while (d.size() > kModelSamples) d.pop_front(); };
@@ -1038,6 +1052,7 @@ void Driver::notePaint(bool strip, LONGLONG t0, LONGLONG t1) {
 
 void Driver::notePtyBytes(size_t n) {
   if (!running_) return;
+  if (!gEchoAt) { LARGE_INTEGER t; QueryPerformanceCounter(&t); gEchoAt = t.QuadPart; }
   ULONGLONG now = GetTickCount64();
   ptyBytes_.push_back({ now, (double)n });
   while (!ptyBytes_.empty() && now - ptyBytes_.front().at > kStatsWindowMs) ptyBytes_.pop_front();
@@ -1081,7 +1096,9 @@ json Driver::stats() {
     if (f.at / 1000 != second) { second = f.at / 1000; inSecond = 0; }
     perSecondMax = std::max(perSecondMax, ++inSecond);
   }
-  json paint = { { "perSecondMax", perSecondMax }, { "frames", bodyFrames_ }, { "refreshHz", Window::instance().refreshHz() } };
+  json paint = { { "perSecondMax", perSecondMax }, { "frames", bodyFrames_ }, { "refreshHz", Window::instance().refreshHz() },
+                 { "echoN", gEchoMs.size() }, { "echoMs", med(vec(gEchoMs)) }, { "echoLast", json::array() } };
+  for (size_t i = gEchoMs.size() > 10 ? gEchoMs.size() - 10 : 0; i < gEchoMs.size(); i++) paint["echoLast"].push_back(std::round(gEchoMs[i] * 10) / 10);
   json modelMs = { { "n", modelPaths_.size() }, { "queue", med(q) }, { "parse", med(pa) }, { "build", med(b) }, { "layout", med(l) },
                    { "apply", med(ap) }, { "bodyN", paintGap_[0].size() }, { "paint", med(vec(paintGap_[0])) },
                    { "bodyDraw", med(vec(paintDraw_[0])) }, { "stripN", paintGap_[1].size() }, { "strip", med(vec(paintGap_[1])) },

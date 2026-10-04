@@ -43,9 +43,11 @@ void Window::invalidateStrip() {
 
 // A frame is 1000 / refreshHz ms. An invalidate a frame or more after the
 // last body paint ended goes to InvalidateRect at once, so a single event (one
-// divider move, one keystroke's echo) paints on the next WM_PAINT. One sooner,
-// or during a paint, joins the pending region, and one timer armed for the
-// rest of the frame invalidates it: a flood paints at most once per frame.
+// divider move, one keystroke's echo) paints on the next WM_PAINT; the key
+// itself paints nothing unless it scrolled the view or cleared a selection
+// (GridInput::afterTyped), so its echo finds the frame free. One sooner, or
+// during a paint, joins the pending region, and one timer armed for the rest
+// of the frame invalidates it: a flood paints at most once per frame.
 void Window::invalidateBody(const RECT* r) {
   if (!body_) return;
   addBodyPending(r);

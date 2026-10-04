@@ -122,18 +122,26 @@ void GridInput::write(Grid& g, const std::string& bytes) {
   App::instance().wire().ptyWrite(g.paneId(), bytes);
 }
 
+// Repaints only when this changed what is drawn. The key itself draws
+// nothing: its echo's pty data invalidates, and a paint here would take the
+// frame and leave that echo on the coalescing timer (Window::invalidateBody).
 void GridInput::afterTyped(Grid& g, bool submit) {
+  bool changed = g.viewTop() != 0;
   g.scrollToBottom();   // xterm.js scrollOnUserInput
   auto it = sel_.find(g.paneId());
-  if (it != sel_.end() && it->second.active) it->second.clear();
+  if (it != sel_.end() && it->second.active) {
+    it->second.clear();
+    changed = true;
+  }
   if (submit) {
     // A submitted line puts a program's own scrollback back at its bottom.
     if (GridView* v = App::instance().view(g.paneId()); v && v->appOffset() > 0) {
       v->setAppScrollbar(false);
       v->setAppScrollbar(true);
+      changed = true;
     }
   }
-  invalidate();
+  if (changed) invalidate();
 }
 
 void GridInput::selectInputLine(Grid& g) {
