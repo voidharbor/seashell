@@ -22,7 +22,8 @@ void Ui::viewStatus(Painter& p) {
   hit(false, bar, "status");
   if (!p.live()) return;
   auto c = [](uint32_t v) { return D2D1::ColorF(((v >> 16) & 0xFF) / 255.f, ((v >> 8) & 0xFF) / 255.f, (v & 0xFF) / 255.f, 1.f); };
-  D2D1_GRADIENT_STOP stops[] = { { 0.f, c(mixRgb(0xFFFFFF, t_.statusBg, 0.45f)) }, { 1.f, c(t_.statusBg) } };
+  // 6.3: #f7f7f7 to #ececec; 58 percent white over statusBg #ececec is #f7f7f7.
+  D2D1_GRADIENT_STOP stops[] = { { 0.f, c(mixRgb(0xFFFFFF, t_.statusBg, 0.58f)) }, { 1.f, c(t_.statusBg) } };
   p.gradientV(bar, stops, 2);
   p.fillRect(D2D1::RectF(bar.left, bar.top, bar.right, bar.top + std::max(1.f, std::round(d))), 0xA0A0A0);
   UiFont f{ 12 };
