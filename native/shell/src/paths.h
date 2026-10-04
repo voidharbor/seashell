@@ -13,9 +13,12 @@ std::string toLinuxPath(const std::wstring& winPath);  // C:\x to /mnt/c/x, \\ws
 std::wstring toWindowsPath(const std::string& linuxPath);   // /mnt/c/x to C:\x, else \\wsl.localhost\Ubuntu-24.04\x
 std::wstring instanceName();                          // SEASHELL_INSTANCE, default "default"
 
-// Saved bounds are physical pixels (the shell is PerMonitorV2), the window's
-// last normal (unmaximized) rect plus whether it was maximized.
+// The window's last normal (unmaximized) rect plus whether it was maximized.
+// On disk it is DIPs with Electron's keys (x, y, width, height, maximized), so
+// the file Electron left in %APPDATA%\seashell reads back the same; Window
+// converts with its DPI scale (window.cpp), and clampBounds works in pixels.
 struct SavedBounds { int x = 0, y = 0, width = 0, height = 0; bool maximized = false; };
 std::wstring boundsFile();                            // <userData>\window-bounds.json
-bool loadBounds(SavedBounds& out);                    // false when missing or unusable; clamped to a work area
-void saveBounds(const SavedBounds& b);                // never throws, creates userData if needed
+bool loadBounds(SavedBounds& out);                    // the file's DIPs; false when missing or unusable
+bool clampBounds(SavedBounds& b);                     // pixels, into the work area of the nearest monitor
+void saveBounds(const SavedBounds& b);                // DIPs; never throws, creates userData if needed

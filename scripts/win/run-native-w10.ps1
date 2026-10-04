@@ -71,11 +71,9 @@ New-Item -ItemType Directory -Force -Path $ud | Out-Null
 $udLinux = '/mnt/c/' + $ud.Substring(3).Replace('\', '/')
 & wsl.exe -d Ubuntu-24.04 -e /usr/bin/node /mnt/c/seashell-build/redesign/scripts/bakeoff/make-session.mjs $udLinux $homeDir
 if ($LASTEXITCODE -ne 0) { throw "make-session failed ($LASTEXITCODE)" }
-# W10: 1440x900 on the main display, not maximized. The native shell saves
-# physical pixels (PerMonitorV2), so the size is scaled by the system DPI.
-$dpi = (Get-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name AppliedDPI -ErrorAction SilentlyContinue).AppliedDPI
-if (-not $dpi) { $dpi = 96 }
-$w = [int][math]::Round(1440 * $dpi / 96); $h = [int][math]::Round(900 * $dpi / 96)
+# W10: 1440x900 on the main display, not maximized. The native shell reads
+# DIPs with Electron's keys, as Electron writes them, and scales them itself.
+$w = 1440; $h = 900
 Set-Content -Path "$ud\window-bounds.json" -Value "{`"x`":100,`"y`":100,`"width`":$w,`"height`":$h,`"maximized`":false}" -Encoding Ascii
 
 # Release layout: no SEASHELL_CORE_DIR, so the shell stages resources\core.

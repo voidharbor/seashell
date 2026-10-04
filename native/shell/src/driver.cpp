@@ -526,6 +526,37 @@ json Driver::execute(const json& req) {
     return out;
   }
   if (cmd == "dragStep") return dragStep(req);
+  if (cmd == "bounds") {
+    // The scratch's own top-level window in DIPs at its DPI scale. With x, y,
+    // w and h it is moved there first (SetWindowPos with SWP_NOACTIVATE and
+    // SWP_NOZORDER: no activation, no z-order change); without them it only
+    // reports. A maximized or minimized window is not moved.
+    HWND hw = Window::instance().hwnd();
+    if (!hw || !IsWindow(hw)) return fail("ENOWINDOW");
+    const char* keys[] = { "x", "y", "w", "h" };
+    int given = 0;
+    for (const char* k : keys) {
+      if (!req.contains(k)) continue;
+      if (!req[k].is_number() || !std::isfinite(req[k].get<double>())) return fail("EBADBOUNDS");
+      given++;
+    }
+    if (given != 0 && given != 4) return fail("EBADBOUNDS");
+    if (given == 4) {
+      double s = Window::instance().dpi().scale();
+      double x = req["x"].get<double>(), y = req["y"].get<double>(), w = req["w"].get<double>(), h = req["h"].get<double>();
+      if (w <= 0 || h <= 0) return fail("EBADBOUNDS");
+      if (IsZoomed(hw) || IsIconic(hw)) return fail("ENOTNORMAL");
+      if (!SetWindowPos(hw, nullptr, (int)std::lround(x * s), (int)std::lround(y * s), (int)std::lround(w * s), (int)std::lround(h * s),
+                        SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER))
+        return { { "ok", false }, { "code", "EMOVE" }, { "error", (int)GetLastError() } };
+    }
+    RECT r{};
+    GetWindowRect(hw, &r);
+    double s = Window::instance().dpi().scale();   // after any WM_DPICHANGED the move caused
+    return { { "ok", true }, { "x", (int)std::lround(r.left / s) }, { "y", (int)std::lround(r.top / s) },
+             { "w", (int)std::lround((r.right - r.left) / s) }, { "h", (int)std::lround((r.bottom - r.top) / s) },
+             { "dpi", Window::instance().dpi().dpi }, { "maximized", IsZoomed(hw) != FALSE } };
+  }
   if (cmd == "rect") {
     // A target's hit rect in client DIPs, as the views registered it.
     D2D1_RECT_F r{};

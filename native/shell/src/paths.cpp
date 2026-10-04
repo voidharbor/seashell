@@ -125,10 +125,14 @@ bool loadBounds(SavedBounds& out) {
   out.x = (int)std::lround(x); out.y = (int)std::lround(y);
   out.width = (int)std::lround(w); out.height = (int)std::lround(h);
   out.maximized = mx != j.end() && mx->is_boolean() && mx->get<bool>();
-  RECT r{ out.x, out.y, out.x + out.width, out.y + out.height };
+  return true;
+}
+
+bool clampBounds(SavedBounds& b) {
+  RECT r{ b.x, b.y, b.x + b.width, b.y + b.height };
   MONITORINFO mi{ sizeof mi };
   if (!GetMonitorInfoW(MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST), &mi)) return false;
-  clampTo(out, mi.rcWork);
+  clampTo(b, mi.rcWork);
   return true;
 }
 

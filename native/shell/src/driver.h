@@ -14,7 +14,9 @@
 // `wheel {paneId, row?, col?, dy, gapsMs?}` wheels over a grid cell (gapsMs
 // sends one notch after each gap, timed on this side), `dragSelect` presses,
 // moves and releases from one cell to another, `selection {paneId}` reads the
-// selection's text, `appBar {paneId}` the app scrollbar's state.
+// selection's text, `appBar {paneId}` the app scrollbar's state. `bounds {x, y,
+// w, h}` moves the shell's own top-level window to that DIP rect without
+// activating it; plain `bounds` reports the window rect in DIPs.
 #pragma once
 #include <winsock2.h>
 #include <windows.h>

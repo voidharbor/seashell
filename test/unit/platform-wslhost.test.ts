@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { createWslhost } from '../../src/main/platform/wslhost.js'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, onTestFinished } from 'vitest'
+import { createWslhost, nodeWslhostIo } from '../../src/main/platform/wslhost.js'
 import { buildEnv } from '../../src/main/pty/env.js'
 
 function io(over: Partial<Parameters<typeof createWslhost>[0]> = {}) {
@@ -15,6 +18,7 @@ function io(over: Partial<Parameters<typeof createWslhost>[0]> = {}) {
       readdir: () => ['777', '31337', 'junk'],
       rmrf: (d: string) => { removed.push(d) },
       windowsPidAlive: (pid: number) => pid === 777,
+      onExit: () => {},
       ...over,
     },
   }
@@ -33,6 +37,33 @@ describe('wslhost platform', () => {
     const { io: i, removed } = io()
     createWslhost(i).installShellIntegration()
     expect(removed).toEqual(['/Users/joshwald/.cache/seashell-win/pids/31337'])
+  })
+  it('removes only its own pid dir at quit, in a temp home', () => {
+    const home = mkdtempSync(join(tmpdir(), 'ss-wslhost-home-'))
+    onTestFinished(() => rmSync(home, { recursive: true, force: true }))
+    const pids = join(home, '.cache/seashell-win/pids')
+    // Another live shell's folder, with its pane pid file, and a stray file.
+    mkdirSync(join(pids, '31337'), { recursive: true })
+    writeFileSync(join(pids, '31337', 'pane-pane-1.pid'), '4242\n')
+    writeFileSync(join(pids, 'note'), 'x')
+    const exits: Array<() => void> = []
+    const p = createWslhost({ ...nodeWslhostIo(777, home), windowsPidAlive: () => true, onExit: (fn) => exits.push(fn) })
+    p.installShellIntegration()
+    p.installShellIntegration()   // a retry arms no second removal
+    expect(exits).toHaveLength(1)
+    // A pane's shell writes its pid file into this host's folder.
+    writeFileSync(join(pids, '777', 'pane-pane-9.pid'), '5151\n')
+    exits[0]!()
+    expect(existsSync(join(pids, '777'))).toBe(false)
+    expect(readdirSync(pids).sort()).toEqual(['31337', 'note'])
+    expect(readdirSync(join(pids, '31337'))).toEqual(['pane-pane-1.pid'])
+    expect(existsSync(join(home, '.cache/seashell-win/zdotdir/.zshenv'))).toBe(true)
+  })
+  it('arms no removal when the shim could not be written', () => {
+    const exits: Array<() => void> = []
+    const { io: i } = io({ mkdirp: () => { throw new Error('EACCES') }, onExit: (fn: () => void) => exits.push(fn) })
+    expect(createWslhost(i).installShellIntegration()).toBeNull()
+    expect(exits).toHaveLength(0)
   })
   it('pane env extras carry the win32 identity and the pid file', () => {
     const p = createWslhost(io().io)

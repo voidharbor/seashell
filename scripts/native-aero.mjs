@@ -51,6 +51,7 @@ import {
   PIDS,
   SCRATCH_WIN,
   drive,
+  guardKeys,
   launchShell,
   model,
   must,
@@ -129,7 +130,13 @@ async function until(what, timeoutMs, pred) {
   }
 }
 const click = (target, extra = {}) => must(UD, { cmd: 'click', target, ...extra }, `click ${target}`)
-const key = (chord) => must(UD, { cmd: 'key', chord }, `key ${chord}`)
+// Every key goes through the fail-closed tty check of whatever grid could
+// take it (native-gates.mjs guardKeys), though each is meant for the shell.
+let shellPid = 0
+const key = async (chord) => {
+  await guardKeys(UD, shellPid)
+  return must(UD, { cmd: 'key', chord }, `key ${chord}`)
+}
 const rect = (target) => must(UD, { cmd: 'rect', target }, `rect ${target}`)
 async function tryRect(target) {
   const r = await drive(UD, { cmd: 'rect', target })
@@ -492,6 +499,7 @@ async function main() {
     mkdirSync(UD_LINUX, { recursive: true })
     writeBounds(UD_LINUX, { x: 1028, y: -979 }) // the second display, as the matrix
     pid = launchShell(NAME)
+    shellPid = pid
     console.log(`launched scratch ${NAME} (pid ${pid})`)
     if (!(await waitFile(`${UD_LINUX}/test.json`, 30000))) throw new Error('no test.json in 30 s')
     await must(UD, { cmd: 'wait', path: '/panes/0/status', equals: 'live', timeoutMs: 60000 }, 'first pane live')

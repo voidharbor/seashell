@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Controller, webUrlAt } from '../../src/core/controller/controller.js'
 import { fakeDeps, GEO } from './controller-fakes.js'
+import { shellTimeoutError } from '../../src/core/protocol.js'
 
 function setup() {
   const f = fakeDeps('/w')
@@ -29,6 +30,27 @@ describe('url click', () => {
     expect(opens).toEqual(['https://example.com/a/b'])
     expect(webUrlAt(l, l.indexOf('done'))).toBeNull()
     expect(webUrlAt('x file:///etc/passwd', 4)).toBeNull()
+  })
+  it('a URL the shell never opens toasts that the shell did not answer; any other failure stays quiet', async () => {
+    const f = setup()
+    f.handlers['open:externalHttp'] = () => {
+      throw shellTimeoutError('open:externalHttp', 10_000)
+    }
+    const c = new Controller(f.deps, { home: '/w', version: '0', chords: [] })
+    await c.boot(GEO)
+    const paneId = c.model().panes[0]!.id
+    const l = 'docs at https://example.com/a/b. done'
+    c.term({ type: 'urlclick', paneId, line: l, index: l.indexOf('example') })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(c.model().toast).toBe('The shell did not answer')
+    f.advance(3200)
+    expect(c.model().toast).toBeNull()
+    f.handlers['open:externalHttp'] = () => {
+      throw new Error('scheme not allowed')
+    }
+    c.term({ type: 'urlclick', paneId, line: l, index: l.indexOf('example') })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(c.model().toast).toBeNull()
   })
 })
 

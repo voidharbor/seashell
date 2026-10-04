@@ -173,19 +173,28 @@ async function focusedPane(ud) {
   return p.id
 }
 
-// Types a command line and presses Enter through the shell's own key path.
-// In the main scratch (or any shell whose pid is given) it refuses while a
-// claude process is on the focused pane's tty, since the line would land in
-// claude's input box and the Enter would submit it as a prompt.
-async function run(ud, cmdline, pid) {
-  const checkPid = pid || (ud === udWin ? shellPid : 0)
-  if (checkPid) {
-    const paneId = await focusedPane(ud)
-    let tty = ''
-    try { tty = paneTty(paneId, checkPid) } catch {}
-    if (tty && claudeOn(tty)) throw new Error(`refusing to type into ${paneId}: claude is running on ${tty}`)
+// The shell pid behind `ud`: the one given, the main scratch's, or the pid
+// its control.json records; 0 when none is known (the tty check then refuses).
+function shellPidOf(ud, pid) {
+  if (pid) return pid
+  if (ud === udWin && shellPid) return shellPid
+  try {
+    return Number(JSON.parse(readFileSync(`${toLocal(ud)}/control.json`, 'utf8')).pid) || 0
+  } catch {
+    return 0
   }
+}
+
+// Types a command line and presses Enter through the shell's own key path,
+// after the tty check of every grid that could take the keys (guardKeys): it
+// refuses while a claude process is on that tty, since the line would land in
+// claude's input box and the Enter would submit it as a prompt, and it refuses
+// when the tty cannot be resolved at all (fails closed).
+async function run(ud, cmdline, pid) {
+  const checkPid = shellPidOf(ud, pid)
+  await guardKeys(ud, checkPid)
   await must(ud, { cmd: 'text', s: cmdline }, 'text')
+  await guardKeys(ud, checkPid)
   await must(ud, { cmd: 'key', chord: 'Enter' }, 'key Enter')
 }
 
@@ -323,14 +332,11 @@ function releaseShellPids() {
   return out.split(/\s+/).map(Number).filter((n) => n > 0)
 }
 
-// The DPI the shell scales its saved window size by (run-native-w10.ps1 does
-// the same): 1440x900 DIP at 100,100 (or x, y), not maximized.
+// window-bounds.json holds DIPs, as Electron writes it (Phase 3 Task 7: the
+// shell multiplies them by the DPI of the monitor they fall on): 1440x900 DIP
+// at 100,100 (or x, y), not maximized, written unscaled.
 function writeBounds(udLinux, { x = 100, y = 100 } = {}) {
-  let dpi = Number(powershell("(Get-ItemProperty 'HKCU:\\Control Panel\\Desktop\\WindowMetrics' -Name AppliedDPI -ErrorAction SilentlyContinue).AppliedDPI"))
-  if (!dpi) dpi = 96
-  const w = Math.round((1440 * dpi) / 96)
-  const h = Math.round((900 * dpi) / 96)
-  writeFileSync(`${udLinux}/window-bounds.json`, `{"x":${x},"y":${y},"width":${w},"height":${h},"maximized":false}`)
+  writeFileSync(`${udLinux}/window-bounds.json`, `{"x":${x},"y":${y},"width":1440,"height":900,"maximized":false}`)
 }
 
 function coreRssMB(pid) {
@@ -618,11 +624,117 @@ async function gateRestore() {
   }
 }
 
-// The tty of a pane, from the pid file the core writes (spec 9).
+// A pty id as the pid file names it (src/shared/wsl-shell.ts paneFileKey):
+// anything outside [A-Za-z0-9_-] becomes `_`, so the drawer `drawer:pane-3`
+// writes pane-drawer_pane-3.pid.
+const paneFileKey = (paneId) => paneId.replace(/[^A-Za-z0-9_-]/g, '_')
+const pidFileOf = (paneId, pid) => `${PIDS}/${pid}/pane-${paneFileKey(paneId)}.pid`
+
+// The tty of a pane, from the pid file the shim writes (spec 9). Throws when
+// the file is missing, unreadable or holds no `<pid> pts/<n>` line.
 function paneTty(paneId, pid = shellPid) {
-  const m = /^(\d+) (pts\/\d+)$/.exec(readFileSync(`${PIDS}/${pid}/pane-${paneId}.pid`, 'utf8').trim())
+  const m = /^(\d+) (pts\/\d+)$/.exec(readFileSync(pidFileOf(paneId, pid), 'utf8').trim())
   if (!m) throw new Error(`no pid file line for ${paneId}`)
   return m[2]
+}
+
+// pid -> tty (`pts/3`) for the given pids that are alive and have one.
+function ttysOf(pids) {
+  const out = new Map()
+  if (!pids.length) return out
+  let text = ''
+  try {
+    text = execFileSync('ps', ['-o', 'pid=,tty=', '-p', pids.join(',')], { encoding: 'utf8' })
+  } catch (e) {
+    text = e.stdout || ''   // ps exits 1 when some pid is gone
+  }
+  for (const line of text.split('\n')) {
+    const m = /^\s*(\d+)\s+(pts\/\d+)\s*$/.exec(line)
+    if (m) out.set(Number(m[1]), m[2])
+  }
+  return out
+}
+
+// The tty from the pane's pid file, only while the pid it names is alive on
+// that tty (a stale file from an exited shell resolves nothing).
+function ttyFromPidFile(paneId, pid) {
+  let text
+  try {
+    text = readFileSync(pidFileOf(paneId, pid), 'utf8').trim()
+  } catch {
+    return null
+  }
+  const m = /^(\d+) (pts\/\d+)$/.exec(text)
+  if (!m) return null
+  return ttysOf([Number(m[1])]).get(Number(m[1])) === m[2] ? m[2] : null
+}
+
+// The tty of the scratch's processes whose start environment carries this
+// pty's SEASHELL_PANE_ID and the scratch's SEASHELL_APP_ID (win32-<shell
+// pid>): every process in that pane shell's tree, so all on one tty. Null
+// when none is found or they disagree.
+function ttyFromEnviron(paneId, pid) {
+  const wantPane = `SEASHELL_PANE_ID=${paneId}`
+  const wantApp = `SEASHELL_APP_ID=win32-${pid}`
+  const hits = []
+  for (const name of readdirSync('/proc')) {
+    if (!/^\d+$/.test(name)) continue
+    let env
+    try {
+      env = readFileSync(`/proc/${name}/environ`, 'utf8').split('\0')
+    } catch {
+      continue
+    }
+    if (env.includes(wantPane) && env.includes(wantApp)) hits.push(Number(name))
+  }
+  const ttys = new Set(ttysOf(hits).values())
+  return ttys.size === 1 ? [...ttys][0] : null
+}
+
+// The tty check, fail closed (Phase 3 Task 7). Resolves the tty of pty
+// `paneId` of the shell `pid`: its pid file (the drawer's under its file key),
+// and for a drawer, if that resolves nothing, the environ scan above. Waits up
+// to waitMs for a shell that is still starting. Throws "refusing to type"
+// when no tty resolves, or when a claude process is on it; else returns the
+// tty and how it was found.
+async function ttyGuard(paneId, pid, { waitMs = 10000 } = {}) {
+  if (!pid) throw new Error(`refusing to type into ${paneId}: no shell pid to find its pid file by`)
+  const end = now() + waitMs
+  let tty = null
+  let via = ''
+  for (;;) {
+    tty = ttyFromPidFile(paneId, pid)
+    if (tty) via = `pid file pane-${paneFileKey(paneId)}.pid`
+    else if (paneId.startsWith('drawer:')) {
+      tty = ttyFromEnviron(paneId, pid)
+      if (tty) via = `the environ of the scratch's processes (SEASHELL_PANE_ID=${paneId})`
+    }
+    if (tty || now() >= end) break
+    await sleep(250)
+  }
+  if (!tty) throw new Error(`refusing to type into ${paneId}: no tty resolved (pid file ${pidFileOf(paneId, pid)} missing, unreadable or stale${paneId.startsWith('drawer:') ? ', and no process carries its SEASHELL_PANE_ID' : ''})`)
+  const c = claudeOn(tty)
+  if (c) throw new Error(`refusing to type into ${paneId}: claude (pid ${c}) is running on ${tty}`)
+  return { tty, via }
+}
+
+// Before any key or text: the tty check of every grid that could take the
+// keys, whatever the input is aimed at (a field that loses the keys hands them
+// to a grid): the shell's own focused grid (stats.focusedGrid), the model's
+// focused terminal pane and the drawer while it has the keys. With no grid at
+// all (the empty state) there is nothing to type into.
+async function guardKeys(ud, pid) {
+  const m = await model(ud)
+  const s = await drive(ud, { cmd: 'stats' })
+  const ids = new Set()
+  if (typeof s.focusedGrid === 'string' && s.focusedGrid) ids.add(s.focusedGrid)
+  const f = m.panes.find((p) => p.focused)
+  if (f && f.kind === 'term') ids.add(f.id)
+  if (m.drawer && m.drawer.open && m.drawer.focused && m.drawer.ptyId) ids.add(m.drawer.ptyId)
+  if (!ids.size && m.panes.some((p) => p.kind === 'term')) ids.add((m.panes.find((p) => p.kind === 'term')).id)
+  const out = []
+  for (const id of ids) out.push({ id, ...(await ttyGuard(id, pid)) })
+  return out
 }
 
 // The pid of a claude process on that tty, or 0.
@@ -842,14 +954,16 @@ async function gateMatrix() {
 // Task 20 step 1.5: the inventory walk (Task 18), no fail, the status doc written.
 async function gateInventory() {
   const r = runScript('native-inventory.mjs', 'j18', 60 * 60000)
-  const t = r.lines.map((l) => /^totals: (\d+) ok live, (\d+) ok unit-only, (\d+) not driven, (\d+) skipped, (\d+) deferred, (\d+) fail \((\d+) rows\)$/.exec(l)).find(Boolean)
+  // totals: A ok live, B ok via another row, C ok unit-only, D not driven,
+  // E replaced by the native design, F skipped, G deferred, H fail (N rows)
+  const t = r.lines.map((l) => /^totals: (\d+) ok live, (\d+) ok via another row, (\d+) ok unit-only, (\d+) not driven, (\d+) replaced by the native design, (\d+) skipped, (\d+) deferred, (\d+) fail \((\d+) rows\)$/.exec(l)).find(Boolean)
   const failRows = r.lines.filter((l) => /^[A-Z]\d+ fail\b/.test(l))
   const scratchLine = r.lines.find((l) => l.startsWith('scratch j18:')) || 'scratch j18: no quit line'
   const docWritten = existsSync(STATUS_DOC) && statSync(STATUS_DOC).mtimeMs >= r.t0
   const values = { exit: r.code, signal: r.signal, totals: t ? t.slice(1).map(Number) : null, failRows, statusDoc: STATUS_DOC, docWritten }
-  if (r.code === 0 && t && t[6] === '0' && docWritten) {
+  if (r.code === 0 && t && t[8] === '0' && docWritten) {
     return {
-      line: `inventory: ok (${t[1]} ok live, ${t[2]} ok unit-only, ${t[3]} not driven, ${t[4]} skipped, ${t[5]} deferred, 0 fail; status doc written)`,
+      line: `inventory: ok (${t[1]} ok live, ${t[2]} ok via another row, ${t[3]} ok unit-only, ${t[4]} not driven, ${t[5]} replaced by the native design, ${t[6]} skipped, ${t[7]} deferred, 0 fail; status doc written)`,
       ok: true,
       values,
     }
@@ -903,7 +1017,7 @@ async function gateW10(variant) {
 
 // ---------------------------------------------------------------------- main
 
-export { BUILD_WIN, RELEASE_WIN, SCRATCH_WIN, PIDS, toLocal, sleep, drive, model, must, focusedPane, run, gridRows, waitText, launchShell, waitFile, quitShell, writeBounds, seedUiState, paneTty, claudeOn, pidAlive }
+export { BUILD_WIN, RELEASE_WIN, SCRATCH_WIN, PIDS, toLocal, sleep, drive, model, must, focusedPane, run, gridRows, waitText, launchShell, waitFile, quitShell, writeBounds, seedUiState, paneTty, paneFileKey, ttyFromEnviron, ttyGuard, guardKeys, claudeOn, pidAlive }
 
 if (isMain) {
   const runners = {

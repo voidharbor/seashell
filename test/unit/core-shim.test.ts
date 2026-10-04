@@ -63,6 +63,51 @@ describe('electron shim', () => {
     await shim.dispatch({ k: 'reply', ch: 'open:withDefaultApp', id: sent.id, p: { ok: true } })
     expect(await p).toBe('')
   })
+  it('an invoke the shell does not answer in 10 s rejects with ETIMEOUT, and a late reply is dropped', async () => {
+    vi.useFakeTimers()
+    try {
+      const out: string[] = []
+      const logs: string[] = []
+      const shim = createShim({ write: (l) => out.push(l), hostPid: 4242, userData: '/u', version: '0.6.0', onPush: () => {}, log: (l) => logs.push(l) })
+      const answered = shim.invokeShell('clip:write', { text: 'a' })
+      const firstId = JSON.parse(out.at(-1)!).id
+      const silent = shim.invokeShell('clip:write', { text: 'b' })
+      const silentId = JSON.parse(out.at(-1)!).id
+      const caught = silent.catch((e: unknown) => e)
+      await vi.advanceTimersByTimeAsync(9_999)
+      await shim.dispatch({ k: 'reply', ch: 'clip:write', id: firstId, p: { ok: true } })
+      expect(await answered).toEqual({ ok: true })
+      await vi.advanceTimersByTimeAsync(1)
+      const err = (await caught) as Error & { code?: string }
+      expect(err).toBeInstanceOf(Error)
+      expect(err.code).toBe('ETIMEOUT')
+      expect(logs).toEqual([`[core] the shell did not answer clip:write (id ${silentId}) in 10000 ms`])
+      // The late reply finds nothing pending and changes nothing.
+      await shim.dispatch({ k: 'reply', ch: 'clip:write', id: silentId, p: { ok: true } })
+      // The answered invoke's timer was cleared: nothing else times out.
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(logs).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('the folder picker waits on the user and never times out', async () => {
+    vi.useFakeTimers()
+    try {
+      const out: string[] = []
+      const shim = createShim({ write: (l) => out.push(l), hostPid: 4242, userData: '/u', version: '0.6.0', onPush: () => {}, log: () => {} })
+      const pick = shim.dialog.showOpenDialog()
+      const id = JSON.parse(out.at(-1)!).id
+      let settled = false
+      void pick.then(() => (settled = true), () => (settled = true))
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(settled).toBe(false)
+      await shim.dispatch({ k: 'reply', ch: 'app:pickFolder', id, p: { ok: true, path: '/home/joshwald/x' } })
+      expect(await pick).toEqual({ canceled: false, filePaths: ['/home/joshwald/x'] })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('the virtual window takes what createWindow and the window controls call, and does nothing but minimize and close', async () => {
     const { out, pushes, shim } = make()
     const win = new (shim.BrowserWindow as unknown as new (o: unknown) => ReturnType<typeof shim.BrowserWindow.getAllWindows>[number])({ width: 1440 })

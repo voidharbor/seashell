@@ -6,7 +6,14 @@
 import { EventEmitter } from 'node:events'
 import os from 'node:os'
 import path from 'node:path'
-import { CORE_PUSH_TO_SHELL, encodeEnvelope, type Envelope } from './protocol.js'
+import {
+  CORE_PUSH_TO_SHELL,
+  encodeEnvelope,
+  SHELL_INVOKE_TIMEOUT_MS,
+  SHELL_INVOKE_UNTIMED,
+  shellTimeoutError,
+  type Envelope,
+} from './protocol.js'
 import type { MenuItemModel, ShellCmd } from './controller/model.js'
 
 export interface ShimOptions {
@@ -22,6 +29,10 @@ export interface ShimOptions {
    * signals with SEASHELL_INSTALLED=1 (core_proc.cpp). Defaults to that env.
    */
   installed?: boolean
+  /** How long an invoke toward the shell waits for its reply. Defaults to SHELL_INVOKE_TIMEOUT_MS. */
+  invokeTimeoutMs?: number
+  /** One line to the core's log. Defaults to stderr. */
+  log?: (line: string) => void
 }
 
 export interface IpcEvent {
@@ -296,6 +307,11 @@ export function ptyDataForPipe(p: unknown): unknown {
 
 export function createShim(opts: ShimOptions): Shim {
   const exit = opts.exit ?? ((code: number) => process.exit(code))
+  const log = opts.log ?? ((line: string) => void process.stderr.write(line + '\n'))
+  /** For the shell invokes nobody awaits: a timeout is logged by invokeShell, not left unhandled. */
+  const quiet = (pr: Promise<unknown>): void => {
+    pr.catch(() => undefined)
+  }
   const paths: Record<string, string> = {
     userData: opts.userData,
     home: os.homedir(),
@@ -405,10 +421,10 @@ export function createShim(opts: ShimOptions): Shim {
     maximize() {},
     unmaximize() {},
     minimize() {
-      void invokeShell('window:minimize', {})
+      quiet(invokeShell('window:minimize', {}))
     },
     close() {
-      void invokeShell('window:close', {})
+      quiet(invokeShell('window:close', {}))
     },
     loadURL: () => Promise.resolve(),
   }
@@ -451,9 +467,35 @@ export function createShim(opts: ShimOptions): Shim {
   }
   const event: IpcEvent = { sender: webContents }
 
+  /**
+   * An invoke toward the shell. A reply that has not come in
+   * `invokeTimeoutMs` (10 s) rejects with `code: 'ETIMEOUT'`, and a reply
+   * arriving later is dropped. The folder picker waits on the user, so it has
+   * no timeout.
+   */
   function invokeShell<T = unknown>(ch: string, p: unknown): Promise<T> {
     const id = nextId++
-    const reply = new Promise<T>((resolve, reject) => pending.set(id, { resolve: resolve as (v: unknown) => void, reject }))
+    const reply = new Promise<T>((resolve, reject) => {
+      let timer: NodeJS.Timeout | undefined
+      pending.set(id, {
+        resolve: (v) => {
+          if (timer) clearTimeout(timer)
+          resolve(v as T)
+        },
+        reject: (e) => {
+          if (timer) clearTimeout(timer)
+          reject(e)
+        },
+      })
+      if (SHELL_INVOKE_UNTIMED.includes(ch)) return
+      const ms = opts.invokeTimeoutMs ?? SHELL_INVOKE_TIMEOUT_MS
+      timer = setTimeout(() => {
+        if (!pending.delete(id)) return
+        log(`[core] the shell did not answer ${ch} (id ${id}) in ${ms} ms`)
+        reject(shellTimeoutError(ch, ms))
+      }, ms)
+      timer.unref?.()
+    })
     opts.write(encodeEnvelope({ k: 'invoke', ch, id, p }))
     return reply
   }
@@ -559,7 +601,7 @@ export function createShim(opts: ShimOptions): Shim {
       if (!isOk(r)) throw new Error(errorText(r, 'openExternal failed'))
     },
     showItemInFolder(p) {
-      void invokeShell('open:revealInFinder', { path: p })
+      quiet(invokeShell('open:revealInFinder', { path: p }))
     },
   }
   const clipboard: ClipboardShim = {
@@ -591,15 +633,15 @@ export function createShim(opts: ShimOptions): Shim {
       return displays
     },
     getAllDisplays() {
-      void screen.refresh()
+      quiet(screen.refresh())
       return displays.length ? displays : [FALLBACK_DISPLAY]
     },
     getPrimaryDisplay() {
-      void screen.refresh()
+      quiet(screen.refresh())
       return displays[0] ?? FALLBACK_DISPLAY
     },
     getDisplayMatching(rect) {
-      void screen.refresh()
+      quiet(screen.refresh())
       let best = displays[0] ?? FALLBACK_DISPLAY
       let bestArea = 0
       for (const d of displays) {

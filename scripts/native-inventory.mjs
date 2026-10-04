@@ -8,17 +8,21 @@
 // Rows are numbered in document order inside each letter (A1, A2, ...; the X
 // table's rows count as X1.. in table order). Every row prints one line:
 //   B3 ok <detail>                      checked live on the scratch in this run
+//   X2 ok (via D7) <detail>             exercised by D7's live check; its status
+//                                       follows D7's (fail or not driven with it)
 //   B5 fail <detail>                    checked live and wrong
-//   D8 ok (unit: <file>; not driven live: <why>)
+//   C7 ok (unit: <file>) <detail>       covered by a unit test only
 //   D8 not driven (<why>)               no live check without breaking a rule
+//   D3 replaced by the native design    web or Electron machinery done otherwise
 //   K1 skipped (Josh 10/03)             previews are out (plan amendment 10/03)
-//   R1 deferred (spec 12)
+//   R1 deferred (spec 12)               (Y1..: deferred (inventory section Y: ...))
 // The table goes to docs/superpowers/specs/2026-10-02-seashell-inventory-status.md.
 // Nothing here touches Josh's clipboard, plays a sound, shows a menu or takes
 // focus: every input goes through the scratch's own driver, and every `text`,
-// `key` or `drop` aimed at a pane is preceded by the tty check (no claude on
-// that pane's tty). The scratch is quit through its driver; the exit code is
-// non-zero when any row is `fail`.
+// `key` or `drop` is preceded by the tty check of every grid that could take
+// it, which fails closed (native-gates.mjs ttyGuard: no claude on the tty, and
+// no typing when the tty cannot be resolved). The scratch is quit through its
+// driver; the exit code is non-zero when any row is `fail`.
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -27,17 +31,18 @@ import {
   BUILD_WIN,
   PIDS,
   SCRATCH_WIN,
-  claudeOn,
   drive,
   gridRows,
+  guardKeys,
   launchShell,
   model,
   must,
-  paneTty,
   pidAlive,
   quitShell,
   sleep,
   toLocal,
+  ttyFromEnviron,
+  ttyGuard,
   waitFile,
   waitText,
   writeBounds,
@@ -55,7 +60,10 @@ const MAKE_SESSION = join(ROOT, 'scripts/bakeoff/make-session.mjs')
 const README = `${ROOT}/README.md`
 const SKIP = 'skipped (Josh 10/03)'
 const DEFER = 'deferred (spec 12)'
+const DEFER_Y = 'deferred (inventory section Y: "Built but not wired, so do not port")'
+const REPLACED = 'replaced by the native design'
 let PID = 0
+let drawerTty = null   // how G4 resolved the drawer's tty (the fail-closed check)
 
 const now = () => Date.now()
 const q = (s) => JSON.stringify(s)
@@ -114,14 +122,10 @@ const notDriven = (row, why) => set(row, `not driven (${why})`)
 const D = (req) => drive(UD, req)
 const M = () => model(UD)
 // Every key and text goes through the tty check of whatever grid has the keys
-// (the focused pane, or the drawer's shell while it is focused), even when it
-// is aimed at a field: a field that lost the keys hands them to that grid.
-async function guardFocused() {
-  const m = await M()
-  const f = m.panes.find((p) => p.focused)
-  if (f && f.kind === 'term') guard(f.id)
-  if (m.drawer.open && m.drawer.focused && m.drawer.ptyId) guard(m.drawer.ptyId)
-}
+// (the shell's focused grid, the focused pane, or the drawer's shell while it
+// is focused), even when it is aimed at a field: a field that lost the keys
+// hands them to that grid. The check fails closed (native-gates.mjs ttyGuard).
+const guardFocused = () => guardKeys(UD, PID)
 const key = async (chord) => {
   await guardFocused()
   return must(UD, { cmd: 'key', chord }, `key ${chord}`)
@@ -153,13 +157,9 @@ const untilModel = (what, timeoutMs, pred, why = () => '') =>
 const activeTab = (m) => m.tabs.find((t) => t.active)
 const focused = (m) => m.panes.find((p) => p.focused) || m.panes[0]
 
-// The tty check of the scratch: refuse when claude is on the pane's tty.
-function guard(paneId) {
-  let tty = ''
-  try { tty = paneTty(paneId, PID) } catch {}
-  if (tty && claudeOn(tty)) throw new Error(`refusing to type into ${paneId}: claude is running on ${tty}`)
-  return tty
-}
+// The tty check of the scratch, fail closed: refuse when claude is on the
+// pane's tty, or when no tty resolves for it (ttyGuard).
+const guard = (paneId) => ttyGuard(paneId, PID)
 
 async function focusPane(paneId) {
   const m = await M()
@@ -169,18 +169,29 @@ async function focusPane(paneId) {
 }
 async function keyIn(paneId, chord) {
   await focusPane(paneId)
-  guard(paneId)
+  await guard(paneId)
   return key(chord)
 }
 async function textIn(paneId, s) {
   await focusPane(paneId)
-  guard(paneId)
+  await guard(paneId)
+  await guardFocused()
   return must(UD, { cmd: 'text', s }, 'text')
 }
 async function runIn(paneId, line) {
   await textIn(paneId, line)
-  guard(paneId)
+  await guard(paneId)
   await key('Enter')
+}
+// The system double-click time (HKCU Control Panel\Mouse DoubleClickSpeed,
+// what GetDoubleClickTime returns), read only; 500 when unreadable.
+function doubleClickMs() {
+  try {
+    const out = execFileSync('powershell.exe', ['-NoProfile', '-Command', "Set-Location C:\\; (Get-ItemProperty 'HKCU:\\Control Panel\\Mouse').DoubleClickSpeed"], { cwd: '/mnt/c', encoding: 'utf8', timeout: 30000 })
+    return Number(out.trim()) || 500
+  } catch {
+    return 500
+  }
 }
 const rowsOf = (paneId) => gridRows(UD, paneId)
 async function rowIndex(paneId, exact, timeoutMs = 15000) {
@@ -263,7 +274,16 @@ async function walk() {
     const p = x.panes[0]
     if (!(p.rect.y >= x.window.tabStripH && x.window.statusH > 0 && !x.sidebar.visible)) throw new Error(`pane y ${p.rect.y}, strip ${x.window.tabStripH}`)
     const s = await must(UD, { cmd: 'rect', target: `pane:${p.id}:grid` }, 'grid rect')
-    return `strip ${x.window.tabStripH} DIP, panes from y ${p.rect.y}, grid rect y ${Math.round(s.y)}, status bar ${x.window.statusH} DIP at the bottom, update banner ${x.update ? 'shown' : 'idle'}`
+    // The grid sits under the pane's title bar, every pane ends above the
+    // status bar (the window's bottom, from the driver's bounds), no banner.
+    const b = await must(UD, { cmd: 'bounds' }, 'bounds')
+    const bottom = Math.max(...x.panes.map((z) => z.rect.y + z.rect.h))
+    const bad = []
+    if (!(s.y > p.rect.y && s.y + s.h <= p.rect.y + p.rect.h + 1)) bad.push(`grid rect y ${s.y} h ${s.h} not under the title bar of pane y ${p.rect.y} h ${p.rect.h}`)
+    if (typeof b.h === 'number' && b.h > 0 && !(bottom <= b.h - x.window.statusH + 1)) bad.push(`panes reach y ${bottom}, over the ${x.window.statusH} DIP status bar of a ${b.h} DIP window`)
+    if (x.update) bad.push(`an update banner ${q(x.update)}`)
+    if (bad.length) throw new Error(bad.join('; '))
+    return `strip ${x.window.tabStripH} DIP, panes from y ${p.rect.y}, grid rect y ${Math.round(s.y)} under the title bar, panes end at y ${Math.round(bottom)} above the status bar (${x.window.statusH} DIP) of the ${b.h} DIP window, update banner idle`
   })
   const q1 = async () => {
     const x = await M()
@@ -397,10 +417,25 @@ async function walk() {
     return `6 panes, tabFull true, a 7th Ctrl+Shift+D toasted ${q(y.toast)}${r.ok ? '' : ' (pane:new button not registered)'}`
   })
   await check('C2', async () => {
+    // Six panes must be one row of three columns of two (ceil(sqrt(6))), each
+    // column one x and one width with its panes stacked without overlap, the
+    // columns side by side left to right without overlap.
     const y = await M()
     const xs = [...new Set(y.panes.map((p) => Math.round(p.rect.x)))].sort((a, b) => a - b)
     const per = xs.map((x) => y.panes.filter((p) => Math.round(p.rect.x) === x).length)
-    return `a row of ${xs.length} columns holding ${per.join('+')} panes`
+    const bad = []
+    if (y.panes.length !== 6) bad.push(`${y.panes.length} panes`)
+    if (per.join('+') !== '2+2+2') bad.push(`columns ${per.join('+')}`)
+    let prevRight = -Infinity
+    for (const x of xs) {
+      const col = y.panes.filter((p) => Math.round(p.rect.x) === x).sort((a, b) => a.rect.y - b.rect.y)
+      if (new Set(col.map((p) => Math.round(p.rect.w))).size !== 1) bad.push(`column at x ${x} has widths ${col.map((p) => Math.round(p.rect.w)).join(',')}`)
+      for (let i = 1; i < col.length; i++) if (col[i].rect.y < col[i - 1].rect.y + col[i - 1].rect.h - 1) bad.push(`column at x ${x}: pane ${col[i].index} overlaps pane ${col[i - 1].index}`)
+      if (x < prevRight - 1) bad.push(`column at x ${x} overlaps the one before (right edge ${prevRight})`)
+      prevRight = x + col[0].rect.w
+    }
+    if (bad.length) throw new Error(bad.join('; '))
+    return `a row of ${xs.length} columns holding ${per.join('+')} panes, each column one width with its panes stacked, the columns side by side`
   })
   await check('C3', async () => {
     const want = [2, 2, 2, 3, 3]
@@ -444,6 +479,14 @@ async function walk() {
     const y = await M()
     const p = y.panes[1]
     for (const t of ['title', 'color', 'link', 'close']) await must(UD, { cmd: 'rect', target: `pane:${p.id}:${t}` }, `rect ${t}`)
+    const bad = []
+    if (p.index !== 2) bad.push(`index ${p.index}`)
+    if (!p.label) bad.push('no label')
+    if (p.badge !== 'zsh') bad.push(`badge ${q(p.badge)}`)
+    if (p.memBadge !== null) bad.push(`memBadge ${q(p.memBadge)} for a zsh under 200 MB`)
+    if (p.zoomPercent !== null) bad.push(`zoom ${q(p.zoomPercent)} with no pane zoom`)
+    if (!/^#[0-9A-F]{6}$/i.test(p.color || '')) bad.push(`color ${q(p.color)}`)
+    if (bad.length) throw new Error(bad.join('; '))
     return `pane ${p.index}: label ${q(p.label)}, badge ${q(p.badge)}, memBadge ${q(p.memBadge)}, zoom ${q(p.zoomPercent)}, color ${p.color}; title, color, link and close targets registered`
   })
   await check('C9', async () => {
@@ -486,12 +529,27 @@ async function walk() {
     return `exit 3 gave ${q(ex.text)} failed=${ex.failed}; Restart brought the same id back live`
   })
   await check('C5', async () => {
+    // The focused pane 3 of 6 closes: 5 left, focus on the next pane in DFS
+    // order (the old pane 4). Then a fresh tab's only pane closes, and with it
+    // the tab.
     let y = await M()
-    const id = y.panes[2].id
+    const cTab = activeTab(y).id
+    const order = y.panes.map((p) => p.id)
+    const id = order[2]
+    await focusPane(id)
     await click(`pane:${id}:close`)
-    y = await untilModel('pane never closed', 10000, (z) => z.panes.length === 5)
+    y = await untilModel('pane never closed', 10000, (z) => z.panes.length === 5 && !z.panes.some((p) => p.id === id))
     const f = focused(y)
-    return `closing pane 3 of 6 left 5 (focus on ${f.index}); closing a tab's last pane closes the tab: X10`
+    if (f.id !== order[3]) throw new Error(`focus went to ${f.id} (pane ${f.index}), not the next pane in DFS order ${order[3]}`)
+    const tabsBefore = y.tabs.length
+    const lone = await freshTab()
+    const loneTab = activeTab(await M()).id
+    await click(`pane:${lone}:close`)
+    y = await untilModel('the tab of the closed last pane never closed', 10000, (z) => !z.tabs.some((t) => t.id === loneTab), (z) => `${z.tabs.length} tabs, panes ${z.panes.map((p) => p.id).join(',')}`)
+    if (y.tabs.length !== tabsBefore) throw new Error(`${y.tabs.length} tabs after, ${tabsBefore} before the fresh tab`)
+    if (!activeTab(y) || activeTab(y).id !== cTab) await click(`tab:${cTab}`)
+    await untilModel('the C tab never came back', 5000, (z) => activeTab(z) && activeTab(z).id === cTab)
+    return `closing the focused pane 3 of 6 left 5 with focus on the next pane in DFS order (pane ${f.index}, ${f.id}); closing a fresh tab's only pane closed the tab (${tabsBefore + 1} -> ${y.tabs.length} tabs)`
   })
   await check('C14', async () => {
     let y = await M()
@@ -519,14 +577,29 @@ async function walk() {
     return `the pane's shell is /usr/bin/zsh as a login shell at ${p.rows}x${p.cols} as the model says (launch command, newPaneCommand and the spawn-failure line not driven)`
   })
   await check('D6', async () => {
+    // The tty in raw mode with no echo, so the two bytes od prints are exactly
+    // what the key sent: a lone ESC never fills head's two bytes, and ESC LF
+    // or a plain CR read differently.
     await clearPane(d)
-    await runIn(d, 'cat -v')
-    await sleep(300)
+    await runIn(d, "stty raw -echo; head -c 2 | od -An -c; stty sane; echo D6-D''ONE")
+    await sleep(500)
     await keyIn(d, 'Shift+Enter')
-    await rowIndex(d, '^[', 5000)
-    await keyIn(d, 'Ctrl+c')
-    await waitText(UD, d, '%', 5000)
-    return 'Shift+Enter under cat -v printed ^[ then the line ended: ESC CR'
+    let bytes
+    try {
+      bytes = await until('od never printed the two bytes', 5000, async () => {
+        const rows = await rowsOf(d)
+        const row = rows.find((t) => /^\s*(033|\\\w|\S)\s+(\\\w|\S|033)\s*$/.test(t) && !t.includes('%'))
+        return { ok: !!row, row, why: rows.filter((t) => t.trim()).slice(-3).join(' | ') }
+      })
+    } catch (e) {
+      // Fill head's two bytes so stty sane runs and the prompt comes back.
+      await keyIn(d, 'Shift+Enter')
+      await waitText(UD, d, 'D6-DONE', 5000).catch(() => {})
+      throw e
+    }
+    await waitText(UD, d, 'D6-DONE', 5000)
+    if (!/^\s*033\s+\\r\s*$/.test(bytes.row)) throw new Error(`Shift+Enter sent ${q(bytes.row.trim())}, not 033 \\r`)
+    return `Shift+Enter read by head -c 2 | od -c on a raw tty with no echo: ${q(bytes.row.trim())}, exactly ESC CR (a lone ESC would leave head waiting)`
   })
   await check('D7', async () => {
     const before = (await M()).tabs.length
@@ -550,12 +623,17 @@ async function walk() {
     return `Ctrl+Shift+A selected ${q(s.text)} (the logical line to the cursor)`
   })
   await check('D9', async () => {
+    // A plain Backspace would leave "echo selall-j1": only Ctrl+U empties the
+    // line, and the select must be gone with it.
     await keyIn(d, 'Backspace')
     await until('the line was not cleared', 5000, async () => {
       const rows = await rowsOf(d)
-      return { ok: !rows.some((t) => t.includes('selall-j18')), why: rows.filter((t) => t.trim()).join(' | ') }
+      return { ok: !rows.some((t) => t.includes('selall') || t.includes('echo sel')), why: rows.filter((t) => t.trim()).join(' | ') }
     })
-    return 'Backspace right after the input-line select cleared the whole line (Ctrl+U)'
+    const s = await must(UD, { cmd: 'selection', paneId: d }, 'selection')
+    if (s.text) throw new Error(`the selection ${q(s.text)} stayed after the Backspace`)
+    const prompt = (await rowsOf(d)).filter((t) => t.trim()).pop() || ''
+    return `Backspace right after the input-line select cleared the whole line, not one character (Ctrl+U; the prompt row reads ${q(prompt.trimEnd())}) and the selection`
   })
   await check('D13', async () => {
     await clearPane(d)
@@ -593,7 +671,7 @@ async function walk() {
     const a2 = await must(UD, { cmd: 'appBar', paneId: d }, 'appBar')
     await sleep(400)
     const rows2 = await rowsOf(d)
-    guard(d)
+    await guard(d)
     await key('q')
     const a3 = await until('less never quit', 10000, async () => {
       const a = await must(UD, { cmd: 'appBar', paneId: d }, 'appBar')
@@ -633,9 +711,28 @@ async function walk() {
     return `Terminal palette ${amber.id} pushed palette ${pal.background || ''}/${pal.foreground || ''} to the live grid (rows kept), native restored it`
   })
   await check('D5', async () => {
+    // The colours read back off the window: three rows of ANSI red and green
+    // backgrounds (30 cells each), and the empty grid, against Homebrew's
+    // table (palette.ts:37-61; native/shell/src/palette.h kHomebrew).
     const y = await M()
     if (y.window.palette !== null) throw new Error(`palette ${q(y.window.palette)}`)
-    return 'window.palette null at boot: the grid draws its built-in Homebrew palette'
+    await clearPane(d)
+    const band = "printf '\\033[41m%30s\\033[42m%30s\\033[0m\\n' '' ''"
+    await runIn(d, `${band}; ${band}; ${band}; echo D5-D''ONE`)
+    await waitText(UD, d, 'D5-DONE', 10000)
+    const rows = await rowsOf(d)
+    const mid = rows.findIndex((t, i) => i > 0 && t.includes('D5-DONE')) - 2
+    const p = (await M()).panes[0]
+    const g = await must(UD, { cmd: 'rect', target: `pane:${p.id}:grid` }, 'grid rect')
+    const cw = g.w / p.cols, rh = g.h / p.rows
+    const at = (row, col) => ({ x: g.x + (col + 0.5) * cw, y: g.y + (row + 0.5) * rh })
+    const px = await must(UD, { cmd: 'pixels', points: [at(mid, 10), at(mid, 45), at(p.rows - 2, p.cols - 6)] }, 'pixels')
+    const want = ['#C23621', '#25BC24', '#000000']
+    const near = (a, b) => a && [1, 3, 5].every((i) => Math.abs(parseInt(a.slice(i, i + 2), 16) - parseInt(b.slice(i, i + 2), 16)) <= 3)
+    const got = px.colors
+    if (!(mid > 0) || !want.every((w, i) => near(got[i], w))) throw new Error(`read ${got.join(', ')} at the red cell, the green cell and an empty cell (row ${mid}), want ${want.join(', ')}`)
+    await clearPane(d)
+    return `window.palette null (native): pixels read the ANSI red background ${got[0]}, green ${got[1]} and the empty grid ${got[2]}, Homebrew's ${want.join(', ')}`
   })
   await check('D11', async () => {
     await runIn(d, 'cd /tmp')
@@ -689,6 +786,46 @@ async function walk() {
     await until('no open:withDefaultApp', 10000, async () => ({ ok: /open:withDefaultApp \\\\wsl\.localhost\\.*README\.md/.test(logSince(from)) }))
     return `plain dblclick revealed row:${README}; Ctrl+Alt dblclick logged open:withDefaultApp (test mode, nothing opened); the Ctrl preview gesture is ${SKIP}; drawer: G7`
   })
+  await check('E3', async () => {
+    // Native de-duplication (spec 5.4; grid_input.cpp kDblSlopPx = 4 and the
+    // system double-click time): one WM_LBUTTONDBLCLK is one path click, and a
+    // press inside 4 px and the double-click time of it is the third click
+    // (the line), never a fresh click; outside either, it starts afresh.
+    await clearPane(d)
+    await runIn(d, `echo ${README}`)
+    const r = await rowIndex(d, README)
+    const dct = doubleClickMs()
+    const revealSeq = async () => (await M()).sidebar.revealSeq
+    const sel = async () => (await must(UD, { cmd: 'selection', paneId: d }, 'selection')).text
+    // 1: one double-click, one path click.
+    const s0 = await revealSeq()
+    const at = await must(UD, { cmd: 'dblclick', paneId: d, row: r, col: 5 }, 'dblclick')
+    const t1 = now()
+    await must(UD, { cmd: 'click', x: at.x + 2, y: at.y }, 'click 2 DIP away')
+    const gap1 = now() - t1
+    const line = await sel()
+    await untilModel('the double-click made no path click', 10000, (z) => z.sidebar.revealSeq > s0)
+    await sleep(dct + 300)
+    const clicks = (await revealSeq()) - s0
+    if (clicks !== 1) throw new Error(`one double-click gave ${clicks} path clicks`)
+    if (line.trim() !== README) throw new Error(`a press 2 DIP away ${gap1} ms after the double-click selected ${q(line)}, not the line`)
+    // 2: 6 DIP away, inside the time: a fresh click.
+    await must(UD, { cmd: 'dblclick', paneId: d, row: r, col: 5 }, 'dblclick')
+    const t2 = now()
+    await must(UD, { cmd: 'click', x: at.x + 6, y: at.y }, 'click 6 DIP away')
+    const gap2 = now() - t2
+    const far = await sel()
+    await sleep(dct + 300)
+    // 3: the same point after the double-click time: a fresh click.
+    await must(UD, { cmd: 'dblclick', paneId: d, row: r, col: 5 }, 'dblclick')
+    await sleep(dct + 200)
+    await must(UD, { cmd: 'click', x: at.x, y: at.y }, 'click after the time')
+    const late = await sel()
+    if (far || late) throw new Error(`a press 6 DIP away (${gap2} ms) selected ${q(far)}, one at the same point after ${dct + 200} ms ${q(late)}; both should start afresh`)
+    if (gap1 >= dct || gap2 >= dct) throw new Error(`the driver took ${gap1} and ${gap2} ms between the clicks, not inside the ${dct} ms double-click time`)
+    await sleep(dct + 300)
+    return `one driver double-click (WM_LBUTTONDBLCLK) gave one path click (revealSeq +${clicks}); a press 2 DIP away ${gap1} ms later selected the line (the third click), one 6 DIP away ${gap2} ms later and one at the same point ${dct + 200} ms later started an empty selection (4 px, double-click time ${dct} ms)`
+  })
   await check('F10', async () => {
     const y = await M()
     const row = y.sidebar.rows.find((r) => r.id === `row:${README}`)
@@ -706,6 +843,8 @@ async function walk() {
     const f = y.sidebar.rows.find((r) => !r.isDir && r.chip)
     const ig = y.sidebar.rows.filter((r) => r.ignored).length
     if (!f) throw new Error('no file row with a chip')
+    const depth = Math.max(...y.sidebar.rows.map((r) => r.depth))
+    if (depth < 3 || ig < 1 || !/^#[0-9A-F]{6}$/i.test(f.chip)) throw new Error(`depth ${depth}, ${ig} ignored rows, chip ${q(f.chip)}`)
     return `rows at depths 0..${Math.max(...y.sidebar.rows.map((r) => r.depth))}, ${q(f.name)} chip ${q(f.chip)}, ${ig} gitignored rows dimmed, error and truncation rows: unit (controller-explorer.test.ts)`
   })
   await check('F9', async () => {
@@ -720,14 +859,42 @@ async function walk() {
     return 'a file created in the expanded worktree directory appeared and went away after removal, no refresh pressed'
   })
   await check('F8', async () => {
-    const before = (await M()).sidebar.rows.length
-    await click('sidebar:refresh')
-    await sleep(800)
+    // A re-read is only visible where no watch would show the change: the
+    // worktree's gitignored out/ expanded (an ignored directory is never
+    // watched, explorer.ts watchable()), a file made in it, unseen until the
+    // button re-reads, a second one unseen until Ctrl+Shift+R.
+    const outDir = `${ROOT}/out`
+    let y = await M()
+    const outRow = y.sidebar.rows.find((r) => r.path === outDir)
+    if (!outRow || !outRow.isDir || !outRow.ignored) throw new Error(`the out/ row is ${q(outRow)}, not an ignored directory`)
+    const expandedBefore = y.sidebar.rows.filter((r) => r.expanded).map((r) => r.path).join(',')
+    await click(`sidebar:twisty:${outDir}`)
+    y = await untilModel('out/ never expanded', 5000, (z) => z.sidebar.rows.find((r) => r.path === outDir).expanded && z.sidebar.rows.some((r) => r.path.startsWith(outDir + '/')))
+    const probeA = `${outDir}/j18-refresh-a.txt`
+    const probeB = `${outDir}/j18-refresh-b.txt`
+    const has = (z, p) => z.sidebar.rows.some((r) => r.path === p)
+    try {
+      writeFileSync(probeA, 'a\n')
+      await sleep(2000)
+      if (has(await M(), probeA)) throw new Error('the file in the ignored out/ showed without a refresh (a watch, so the check proves nothing)')
+      await click('sidebar:refresh')
+      await untilModel('the refresh button never re-read out/', 5000, (z) => has(z, probeA))
+      writeFileSync(probeB, 'b\n')
+      await sleep(2000)
+      if (has(await M(), probeB)) throw new Error('the second file showed without a refresh')
+      await key('Ctrl+Shift+R')
+      await untilModel('Ctrl+Shift+R never re-read out/', 5000, (z) => has(z, probeB))
+    } finally {
+      rmSync(probeA, { force: true })
+      rmSync(probeB, { force: true })
+    }
     await key('Ctrl+Shift+R')
-    await sleep(800)
-    const y = await M()
-    if (!y.sidebar.visible || y.sidebar.rows.length !== before) throw new Error(`rows ${before} -> ${y.sidebar.rows.length}`)
-    return `the refresh button and Ctrl+Shift+R re-read the tree (${y.sidebar.rows.length} rows kept, expansion kept)`
+    y = await untilModel('the removed files never went on a refresh', 5000, (z) => !has(z, probeA) && !has(z, probeB))
+    await click(`sidebar:twisty:${outDir}`)
+    y = await untilModel('out/ never collapsed', 5000, (z) => !z.sidebar.rows.find((r) => r.path === outDir).expanded)
+    const expandedAfter = y.sidebar.rows.filter((r) => r.expanded).map((r) => r.path).join(',')
+    if (!y.sidebar.visible || expandedAfter !== expandedBefore) throw new Error(`expansion ${expandedBefore} -> ${expandedAfter}`)
+    return `in the gitignored (unwatched) out/, a new file stayed unseen 2 s, then the refresh button re-read it in; a second one likewise with Ctrl+Shift+R; removed, Ctrl+Shift+R took both out (${y.sidebar.rows.length} rows, expansion kept)`
   })
   await check('F5', async () => {
     let y = await M()
@@ -746,15 +913,14 @@ async function walk() {
     await until('the file dblclick opened nothing', 10000, async () => ({ ok: /open:withDefaultApp .*README\.md/.test(logSince(from)) }))
     return `twisty on ${dir.name} expanded it unselected, a click selected it, a dblclick toggled it, a README dblclick logged open:withDefaultApp`
   })
-  await check('F6', async () => {
-    return 'a text file went to the default app through openPath (F5, logged); executable, too-large, binary and missing routes: unit (open-path.test.ts)'
-  })
+  set('F6', 'ok (unit: open-path.test.ts)', 'openPath routes viewer, os and a refused executable (open-path.test.ts); too-large and binary in route.test.ts, the executable toast in controller-explorer.test.ts; the text file to the default app also ran live in F5 (open:withDefaultApp logged)')
   await check('F7', async () => {
     await click(`sidebar:row:${README}`, { button: 2 })
     const y = await untilModel('no context menu', 5000, (z) => z.sidebar.menu)
     const items = y.sidebar.menu.items.map((i) => `${i.label}${i.enabled ? '' : ' (off)'}`)
     await key('Escape')
     await untilModel('Escape never closed it', 5000, (z) => !z.sidebar.menu)
+    if (items.join('|') !== 'Open Outside SeaShell|Reveal in Finder') throw new Error(`items ${items.join(', ')}`)
     return `right-click on README: ${items.join(', ')}; Escape closed it`
   })
   await check('F3', async () => {
@@ -859,9 +1025,11 @@ async function walk() {
   await check('G4', async () => {
     let y = await M()
     const pty = y.drawer.ptyId
-    let tty = ''
-    try { tty = paneTty(pty, PID) } catch {}
-    if (tty && claudeOn(tty)) throw new Error('claude on the drawer tty')
+    // The drawer's own tty check before anything is typed (fail closed), and
+    // its fallback, the environ scan, which must find the same tty.
+    drawerTty = await guard(pty)
+    const envTty = ttyFromEnviron(pty, PID)
+    if (envTty !== drawerTty.tty) throw new Error(`the drawer's pid file says ${drawerTty.tty}, the environ scan ${envTty}`)
     if (!y.drawer.focused) await click('drawer:grid')
     await typeText('cd /tmp')
     await key('Enter')
@@ -869,7 +1037,7 @@ async function walk() {
     const head = y.drawer.header
     await click('drawer:cd')
     y = await untilModel('cd to pane never went away', 10000, (z) => !z.drawer.header.showCd)
-    return `header ${q(head.label)} / ${q(head.title)}; cd /tmp showed "cd to pane", which typed the cd back and went away`
+    return `header ${q(head.label)} / ${q(head.title)}; cd /tmp showed "cd to pane", which typed the cd back and went away (the drawer's tty ${drawerTty.tty}, from its ${drawerTty.via}, which the environ scan for SEASHELL_PANE_ID=${pty} confirms; checked before every key)`
   })
   await check('G7', async () => {
     const y = await M()
@@ -1029,25 +1197,60 @@ async function walk() {
     await keyIn(tab3, 'Ctrl+c')
     return 'with the find bar open and the grid clicked, Escape closed it'
   })
+  await check('H8', async () => {
+    // The user's match stays the active one while output streams: a literal
+    // "77" over seq 1 2000, stepped off the first match with Enter, then six
+    // bursts of seq 1 100 (each a new "77" after the anchor, each pushing the
+    // scrollback). The refresh after each burst re-runs the search from the
+    // anchor (app.cpp findRefresh): the total grows, the index must not move.
+    // Without the anchor the search would restart at the first match.
+    await clearPane(tab3)
+    await runIn(tab3, "seq 1 2000; sleep 6; echo H8-ST''ART; for i in 1 2 3 4 5 6; do seq 1 100; sleep 0.4; done; echo H8-E''ND")
+    await rowIndex(tab3, '2000')
+    const tSeq = now()   // seq has ended by now, so the stream starts 6 s after at the earliest
+    await focusPane(tab3)
+    await key('Ctrl+Shift+F')
+    await untilModel('no find bar', 5000, (z) => z.find.open)
+    await typeText('77')
+    let y = await untilModel('no count for "77"', 5000, (z) => z.find.query === '77' && z.find.count && z.find.count.total > 5, (z) => q(z.find))
+    for (let i = 0; i < 6 && !(y.find.count.index >= 2 && y.find.count.index <= y.find.count.total - 2); i++) {
+      const i0 = y.find.count.index
+      await key('Enter')
+      y = await untilModel('Enter never moved', 5000, (z) => z.find.count && z.find.count.index !== i0)
+    }
+    const { index: k, total: t0 } = y.find.count
+    if (!(k >= 2)) throw new Error(`could not step off the first matches (index ${k} of ${t0})`)
+    if (now() - tSeq > 5000) throw new Error(`stepping took ${now() - tSeq} ms, so the stream may have begun first; the check would prove nothing`)
+    y = await untilModel('the streamed matches were never counted', 25000, (z) => z.find.count && z.find.count.total >= t0 + 6, (z) => q(z.find.count))
+    await sleep(1500)
+    y = await M()
+    const after = y.find.count
+    await key('Escape')
+    await untilModel('find never closed', 5000, (z) => !z.find.open)
+    await keyIn(tab3, 'Ctrl+c')
+    if (!after || after.index !== k) throw new Error(`the active match moved from ${k} of ${t0} to ${after && after.index} of ${after && after.total} while output streamed`)
+    return `query "77" stepped to match ${k} of ${t0}; six streamed bursts (each a new match and pushed scrollback) grew the count to ${after.total} and the active match stayed ${after.index}`
+  })
 
   // ---- J drops (tab 3)
   await check('J1', async () => {
     await clearPane(tab3)
-    guard(tab3)
+    await guard(tab3)
     const r = await must(UD, { cmd: 'drop', paneId: tab3, paths: ['C:\\seashell-build\\redesign\\bakeoff\\E-native.png'] }, 'drop')
     const g = await until('no dropped path', 5000, async () => {
       const rows = await rowsOf(tab3)
       return { ok: rows.some((t) => t.includes('/mnt/c/seashell-build/redesign/bakeoff/E-native.png')), rows }
     })
     void g
-    return `a CF_HDROP drop on the grid answered effect ${q(r.effect)}`
+    if (r.effect !== 'copy') throw new Error(`effect ${q(r.effect)}, the path typed anyway`)
+    return `a CF_HDROP drop on the grid answered effect ${q(r.effect)} and typed /mnt/c/seashell-build/redesign/bakeoff/E-native.png`
   })
   await check('J2', async () => {
     const rows = await rowsOf(tab3)
     const line = rows.find((t) => t.includes('E-native.png'))
     if (!line.endsWith('E-native.png') && !/E-native\.png\s*$/.test(line)) throw new Error(`line ${q(line)}`)
     await keyIn(tab3, 'Ctrl+u')
-    guard(tab3)
+    await guard(tab3)
     await must(UD, { cmd: 'drop', paneId: tab3, paths: [`${UD}\\a b.txt`] }, 'drop')
     const g = await until('no quoted path', 5000, async () => {
       const r2 = await rowsOf(tab3)
@@ -1058,17 +1261,16 @@ async function walk() {
     return `the drop typed ${q(line.slice(line.indexOf('/mnt')))} plus a space, and a space path as ${q(q2.slice(q2.indexOf("'")))}; nothing ran`
   })
   await check('J3', async () => {
-    guard(tab3)
+    await guard(tab3)
     await must(UD, { cmd: 'drop', paneId: tab3, text: 'file:///C:/seashell-build/redesign/bakeoff/E-native.png' }, 'drop')
     await until('no path from the file URI', 5000, async () => ({ ok: (await rowsOf(tab3)).some((t) => t.includes('/mnt/c/seashell-build/redesign/bakeoff/E-native.png')) }))
     await keyIn(tab3, 'Ctrl+u')
-    guard(tab3)
+    await guard(tab3)
     await must(UD, { cmd: 'drop', paneId: tab3, text: '\\\\wsl.localhost\\Ubuntu-24.04\\Users\\joshwald\\seashell-wt\\redesign\\README.md' }, 'drop')
     await until('no path from the UNC text', 5000, async () => ({ ok: (await rowsOf(tab3)).some((t) => t.includes(README)) }))
     await keyIn(tab3, 'Ctrl+u')
     return 'a file:///C:/ text drop and a \\\\wsl.localhost text drop became /mnt/c and POSIX paths'
   })
-  await check('J4', async () => 'C:\\ paths became /mnt/c/... in J1 and J3, \\\\wsl.localhost became / in J3')
   await check('J5', async () => {
     const shown = (await M()).sidebar.visible
     if (!shown) await key('Ctrl+Shift+B')
@@ -1108,6 +1310,7 @@ async function walk() {
     const items = y.popover.items.map((i) => `${i.label}${i.note ? ` (${i.note})` : ''}${i.disabled ? ' off' : ''}`)
     await key('Escape')
     await untilModel('never closed', 5000, (z) => !z.popover)
+    if (y.popover.title !== 'Share notes with' || !y.popover.items.length) throw new Error(`popover ${q(y.popover.title)} with ${y.popover.items.length} items`)
     return `the link button opened ${q(y.popover.title || '')}: ${items.join('; ')}; linking two agents needs claude (not driven)`
   })
   await check('D12', async () => {
@@ -1214,6 +1417,28 @@ async function walk() {
     if (f.kind !== 'text' || f.maxLen !== 200 || f.value !== '') throw new Error(q(f))
     return `"Start new panes with" text field, maxLen ${f.maxLen}, empty (a plain shell)`
   })
+  await check('R2', async () => {
+    // The built half of the row, live: an accent override from the sheet
+    // repaints the tokens, with its text colour picked by luminance, and
+    // Theme default restores it. Palettes: D16. Pane frames and CRT: deferred.
+    const ac = sheetField(st, 'accent')
+    const before = (await M()).tokens
+    const pick = ac.options.find((o) => o.id !== 'default' && !o.selected && !o.disabled && /^[0-9a-f]{6}$/i.test(o.id))
+    if (!pick) throw new Error(`no accent option to pick: ${q(ac.options.map((o) => o.id))}`)
+    await click(`sheet:settings:accent:${pick.id}`)
+    const y = await untilModel(`the accent never became #${pick.id}`, 5000, (z) => (z.tokens.accent || '').toLowerCase() === `#${pick.id}`.toLowerCase(), (z) => z.tokens.accent)
+    const t = y.tokens
+    const lum = (hex) => {
+      const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    }
+    const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05)
+    const textOk = t.accentText && ratio(t.accentText, t.accent) >= ratio(t.accentText.toUpperCase() === '#FFFFFF' ? '#1D0F22' : '#FFFFFF', t.accent) - 0.01
+    await click('sheet:settings:accent:default')
+    const z = await untilModel('Theme default never restored the accent', 5000, (w) => (w.tokens.accent || '').toLowerCase() === (before.accent || '').toLowerCase(), (w) => w.tokens.accent)
+    if (!textOk) throw new Error(`accentText ${t.accentText} on ${t.accent} is not the more readable of white and dark`)
+    return `the accent ${pick.id} set tokens.accent ${t.accent} with accentText ${t.accentText} (the more readable by luminance), default restored ${z.tokens.accent}; palettes live in D16; themes, pane frames and CRT deferred (spec 12; Settings greys them)`
+  })
   await check('P5', async () => {
     await click('sheet:settings:tutorial')
     const y = await untilModel('no tutorial', 5000, (z) => z.sheet && z.sheet.kind === 'tutorial')
@@ -1249,6 +1474,7 @@ async function walk() {
   await check('U1', async () => {
     await must(UD, { cmd: 'coreSend', ch: 'test:update', p: { phase: 'available', version: '9.9.8', canInstall: false, pageUrl: 'https://example.com/release' } }, 'coreSend')
     const y = await untilModel('no banner', 5000, (z) => z.update)
+    if (y.update.text !== 'SeaShell 9.9.8 is available.') throw new Error(`banner ${q(y.update.text)}`)
     return `test:update available gave the banner ${q(y.update.text)} (other phases: unit, controller-update.test.ts)`
   })
   await check('U2', async () => {
@@ -1262,13 +1488,30 @@ async function walk() {
     return 'Later hid it, ui-state.json says dismissedUpdate "9.9.8", the same version stayed hidden (error dismissal not driven)'
   })
   await check('V4', async () => {
+    const from = logSize()
     await key('Alt')
     const s = await D({ cmd: 'stats' })
     await key('Escape')
     const s2 = await D({ cmd: 'stats' })
     if (!s.menuOpen || s2.menuOpen) throw new Error(`menuOpen ${s.menuOpen} then ${s2.menuOpen}`)
+    const built = /menu: built (\d+) items/.exec(logSince(from))
+    if (!built) throw new Error('no "menu: built" line in shell.log after the Alt tap')
     // The menu itself is a real popup, which the walk may not show.
-    throw Object.assign(new Error(), { nd: 'a real menu popup would capture Josh\'s mouse and keyboard; live, a bare Alt tap set menuOpen true (test mode builds the HMENU and shows nothing) and Escape cleared it' })
+    return `a bare Alt tap built the app menu (${built[1]} items) and set menuOpen true, Escape cleared it (test mode builds the HMENU and never shows it, so the popup's own look is not checked)`
+  })
+  await check('V2', async () => {
+    // The "≡" menu button is the strip's glass `menu` button here; minimize,
+    // maximize and close are the system caption's, which DWM draws.
+    const from = logSize()
+    await click('menu')
+    const s = await D({ cmd: 'stats' })
+    await key('Escape')
+    const s2 = await D({ cmd: 'stats' })
+    if (!s.menuOpen || s2.menuOpen) throw new Error(`menuOpen ${s.menuOpen} then ${s2.menuOpen}`)
+    const built = /menu: built (\d+) items/.exec(logSince(from))
+    if (!built) throw new Error('no "menu: built" line in shell.log after the menu button')
+    const r = await must(UD, { cmd: 'rect', target: 'menu' }, 'rect menu')
+    return `the strip's menu button (${Math.round(r.w)}x${Math.round(r.h)} DIP at x ${Math.round(r.x)}) popped the app menu (${built[1]} items built, menuOpen true; test mode shows nothing), Escape cleared it; the window buttons are deferred: the system caption draws them`
   })
 
   // ---- N projects
@@ -1334,39 +1577,8 @@ async function walk() {
     return `last-session.json rewritten during the run (savedAt ${at} after the seeded ${firstSavedAt}); the quit write: below`
   })
 
-  // ---- X: chords not covered above, then the empty state (A4) last
-  await check('X1', async () => 'Ctrl+, opened Settings (P1)')
-  await check('X2', async () => 'Ctrl+Shift+T opened a tab (D7)')
-  await check('X3', async () => 'File, Rename Tab… opened the inline field (B4)')
-  await check('X4', async () => 'Ctrl+Alt+P opened Projects (N1)')
-  await check('X5', async () => 'Ctrl+Shift+S opened Projects on window scope (N1)')
-  await check('X6', async () => 'Save Tab as Project opened Projects on tab scope (N1)')
-  await check('X7', async () => 'Ctrl+Shift+D made panes 2..6 (C1)')
-  await check('X10', async () => 'Ctrl+Shift+W closed the focused pane (C14)')
-  await check('X12', async () => 'Ctrl+Alt+W closed the active tab (B7)')
-  await check('X14', async () => 'Ctrl+Shift+F opened find, Ctrl+Shift+G and Ctrl+Alt+G stepped (H1, H4)')
-  await check('X15', async () => 'Ctrl+Shift+K cleared the pane (I4)')
-  await check('X16', async () => 'Ctrl+Shift+Return toggled full screen (C8)')
-  await check('X17', async () => 'Ctrl+Alt+R rebalanced (C4)')
-  await check('X18', async () => 'Ctrl+Shift+B toggled the explorer (F1), Ctrl+Shift+J the drawer (G1), Ctrl+Shift+R refreshed (F8)')
-  await check('X19', async () => 'Ctrl+Shift+] and [ cycled panes (C9)')
-  await check('X20', async () => 'Ctrl+Alt+] and [ cycled tabs with wrap (B8)')
-  await check('X21', async () => 'Ctrl+Shift+3 and Ctrl+Shift+1 selected tabs (B8)')
-  await check('X22', async () => 'Ctrl+Shift+/ opened the tutorial (T1)')
-  await check('X23', async () => 'Ctrl+=, Ctrl+- and Ctrl+0 zoomed (S1)')
-  await check('X24', async () => 'Ctrl+Shift+= and Ctrl+Shift+- zoomed the pane (S2)')
-  await check('X25', async () => 'Shift+Enter sent ESC CR (D6)')
-  await check('X27', async () => 'Backspace after Ctrl+Shift+A sent Ctrl+U (D9)')
-  await check('X29', async () => 'Enter, Shift+Enter in the find field stepped, Esc closed (H4, I4)')
-  await check('X30', async () => 'Enter committed and Esc cancelled the tab rename (B3; blur not driven)')
-  await check('X31', async () => 'Esc, ArrowLeft, ArrowRight drove the tutorial (T2)')
-  await check('X32', async () => 'Esc closed Settings (P1), Projects (N1), the colour and link popovers (M1, M4) and the explorer menu (F7); the card\'s Esc not driven')
-  await check('X35', async () => 'Enter in the project name field saved (N2)')
-  await check('X36', async () => 'plain and Ctrl+Alt double-clicks on a path (E2), Alt under mouse tracking (E4); the Ctrl preview gesture is ' + SKIP)
-  await check('W1', async () => 'the restore card (O3), Settings (P1), Projects (N1) and the tutorial (T1) all opened live')
-  await check('W2', async () => 'the colour picker (M1), the link picker (M4) and the explorer context menu (F7) opened live')
-  await check('W3', async () => `the exit overlay (C13) live; the save-conflict and web error banners are preview overlays, ${SKIP}`)
-
+  // ---- the empty state (A4) last. The X and W rows that another row's
+  // check covers are derived from that row's result after the walk (VIA).
   await check('A4', async () => {
     let y = await M()
     for (let i = 0; i < 20 && y.tabs.length; i++) {
@@ -1381,7 +1593,6 @@ async function walk() {
     await waitText(UD, z.panes[0].id, '%', 60000)
     return 'closing every tab showed the empty state with its New Tab button; clicking it opened one tab at a prompt'
   })
-  await check('W5', async () => `the toast (A5), the update banner (U1) and the "No tabs open" state (A4) live; the splash is gone before the driver's first read`)
   await check('X13', async () => {
     throw Object.assign(new Error(), { nd: 'Copy and Paste read and write Josh\'s clipboard; Ctrl+Shift+A selected live (D10, I3)' })
   })
@@ -1392,7 +1603,11 @@ async function walk() {
 function fixedStatuses(rows) {
   const byLetter = (l) => rows.filter((r) => r.row.startsWith(l) && /^\D\d+$/.test(r.row)).map((r) => r.row)
   for (const r of [...byLetter('K'), ...byLetter('L')]) set(r, SKIP)
-  for (const r of [...byLetter('R'), ...byLetter('Y')]) set(r, DEFER, r.startsWith('Y') ? 'built but not wired, not ported by design' : 'themes, pane frames and CRT come back later (Settings greys them)')
+  // R2 is checked live (the accent) and R4 derives from D16 and R2 (VIA); the
+  // theme half of both stays deferred, as R1 and R3 do.
+  for (const r of byLetter('R')) set(r, DEFER, 'themes, pane frames and CRT come back later (Settings greys them)')
+  // Not spec 12: the inventory's own section Y excludes these.
+  for (const r of byLetter('Y')) set(r, DEFER_Y, 'built but not wired in the renderer, so not ported by design')
   set('C15', SKIP, 'Close All Panes closes previews only; A5 used its "No preview panes open" toast')
   set('H10', SKIP, 'file preview find')
   set('W4', SKIP, 'the four preview confirms')
@@ -1400,18 +1615,19 @@ function fixedStatuses(rows) {
   set('D18', DEFER, 'Option as Meta and Option-click are macOS only')
   set('V1', DEFER, 'traffic lights and the 78 px inset are macOS only')
   set('F12', DEFER, 'the Retro theme')
+  // What the native design replaces rather than ports.
+  set('D3', REPLACED, 'WebGL contexts and their loss are web technology; the native grid draws with Direct2D (spec 5)')
+  set('V3', REPLACED, 'the Electron win32 frame; the native shell draws its own strip on DWM glass with the system caption buttons (spec 6)')
+  // Covered by a unit test, not by a live check.
+  set('C7', 'ok (unit: layout.test.ts)', 'waterFill raises a sub-minimum child and pulls the deficit from siblings with slack (layout.test.ts "waterFill"); the core lays panes out with the same computeLayout (src/core/controller/layout.ts); a driver drag stops at the clamp first (C6)')
   // Rows no live check reaches without breaking a rule.
   notDriven('A1', 'the splash is gone before the driver can read a model')
   notDriven('A3', 'the first paint precedes the driver; the model carries the token table from its first frame')
-  notDriven('C7', 'water-filling under a starved column is not reached by a driver drag; C6 showed the clamp')
-  notDriven('D3', 'WebGL contexts are web technology; the native grid draws with Direct2D')
   notDriven('D4', 'the font face is not readable through the driver')
   notDriven('D8', 'needs an agent (claude) foreground, and the walk never types into claude')
   notDriven('D15', 'needs a display DPI change, which would touch Josh\'s desktop')
-  notDriven('E3', 'DOM mousedown and dblclick de-duplication has no native counterpart: one WM_LBUTTONDBLCLK per double-click')
   notDriven('E9', 'hover is cancelled by WM_MOUSELEAVE under the driver')
   notDriven('H6', 'match colours are drawn, not in the model')
-  notDriven('H8', 'needs streaming output under an open match; no unit test covers the native find')
   notDriven('I1', 'Copy writes Josh\'s clipboard')
   notDriven('I2', 'would touch Josh\'s clipboard: the Paste into the find field reads the real Windows clipboard; the field took typed text live (H2)')
   notDriven('M2', 'the border and stripe are drawn, not in the model')
@@ -1419,12 +1635,65 @@ function fixedStatuses(rows) {
   notDriven('N4', 'Open and Add rebuild or double the window of shells; Task 13 drove Open on i13')
   notDriven('N6', 'needs claude panes to resume')
   unit('O2', 'test/unit/restore-offer.test.ts', 'needs a quit with one plain pane and a relaunch')
-  notDriven('V2', 'a real menu popup would capture Josh\'s mouse and keyboard; window buttons are the system caption')
-  notDriven('V3', 'describes the Electron win32 frame; the native shell draws its own strip')
   notDriven('X26', 'needs an agent (claude) foreground')
 }
 
+// Rows whose behaviour another row's live check exercises: each prints
+// `ok (via <rows>)` only when every cited row is ok, `fail` when one failed,
+// and `not driven` when one was not driven or never reached. The detail names
+// any part of the row no cited row covers.
+const VIA = [
+  ['J4', ['J1', 'J3'], 'C:\\ paths became /mnt/c/... in J1 and J3, \\\\wsl.localhost became / in J3'],
+  ['R4', ['D16', 'R2'], 'the terminal palette pushed to the live grid (D16) and the accent tokens repainted (R2); applyTheme\'s switch between themes is deferred (spec 12)'],
+  ['W1', ['O3', 'P1', 'N1', 'T1'], 'the restore card, Settings, Projects and the tutorial all opened live'],
+  ['W2', ['M1', 'M4', 'F7'], 'the colour picker, the link picker and the explorer context menu opened live'],
+  ['W3', ['C13'], `the exit overlay live; the save-conflict and web error banners are preview overlays, ${SKIP}`],
+  ['W5', ['A5', 'U1', 'A4'], 'the toast, the update banner and the "No tabs open" state live; the splash is not driven (A1)'],
+  ['X1', ['P1'], 'Ctrl+, opened Settings'],
+  ['X2', ['D7'], 'Ctrl+Shift+T opened a tab'],
+  ['X3', ['B4'], 'File, Rename Tab… opened the inline field'],
+  ['X4', ['N1'], 'Ctrl+Alt+P opened Projects'],
+  ['X5', ['N1'], 'Ctrl+Shift+S opened Projects on window scope'],
+  ['X6', ['N1'], 'Save Tab as Project opened Projects on tab scope'],
+  ['X7', ['C1'], 'Ctrl+Shift+D made panes 2..6'],
+  ['X10', ['C14'], 'Ctrl+Shift+W closed the focused pane'],
+  ['X12', ['B7'], 'Ctrl+Alt+W closed the active tab'],
+  ['X14', ['H1', 'H4'], 'Ctrl+Shift+F opened find, Ctrl+Shift+G and Ctrl+Alt+G stepped'],
+  ['X15', ['I4'], 'Ctrl+Shift+K cleared the pane'],
+  ['X16', ['C8'], 'Ctrl+Shift+Return toggled full screen'],
+  ['X17', ['C4'], 'Ctrl+Alt+R rebalanced'],
+  ['X18', ['F1', 'G1', 'F8'], 'Ctrl+Shift+B toggled the explorer, Ctrl+Shift+J opened the drawer, Ctrl+Shift+R re-read an unwatched directory'],
+  ['X19', ['C9'], 'Ctrl+Shift+] and [ cycled panes'],
+  ['X20', ['B8'], 'Ctrl+Alt+] and [ cycled tabs with wrap'],
+  ['X21', ['B8'], 'Ctrl+Shift+3 and Ctrl+Shift+1 selected tabs'],
+  ['X22', ['T1'], 'Ctrl+Shift+/ opened the tutorial'],
+  ['X23', ['S1'], 'Ctrl+=, Ctrl+- and Ctrl+0 zoomed'],
+  ['X24', ['S2'], 'Ctrl+Shift+= and Ctrl+Shift+- zoomed the pane'],
+  ['X25', ['D6'], 'Shift+Enter sent exactly ESC CR'],
+  ['X27', ['D9'], 'Backspace after Ctrl+Shift+A sent Ctrl+U'],
+  ['X29', ['H4', 'I4'], 'Enter and Shift+Enter in the find field stepped, Esc closed it'],
+  ['X30', ['B3'], 'Enter committed and Esc cancelled the tab rename (blur not driven)'],
+  ['X31', ['T2'], 'Esc, ArrowLeft and ArrowRight drove the tutorial'],
+  ['X32', ['P1', 'N1', 'M1', 'M4', 'F7'], 'Esc closed Settings, Projects, the colour and link popovers and the explorer menu; the card\'s Esc (Start fresh) not driven'],
+  ['X35', ['N2'], 'Enter in the project name field saved'],
+  ['X36', ['E2', 'E4'], `plain and Ctrl+Alt double-clicks on a path (E2), Alt under mouse tracking (E4); the Ctrl preview gesture is ${SKIP}`],
+]
+
+function deriveVia() {
+  for (const [row, cites, detail] of VIA) {
+    const st = cites.map((c) => [c, results.has(c) ? results.get(c).status : 'never reached'])
+    const failed = st.filter(([, s]) => s === 'fail')
+    const notOk = st.filter(([, s]) => !s.startsWith('ok'))
+    if (failed.length) set(row, 'fail', `via ${failed.map(([c]) => c).join(', ')}, which failed; ${detail}`)
+    else if (notOk.length) set(row, `not driven (via ${notOk.map(([c, s]) => `${c}: ${s}`).join('; ')})`, detail)
+    else set(row, `ok (via ${cites.join(', ')})`, detail)
+  }
+}
+
 // ------------------------------------------------------------------- main
+
+const totalsText = (c, n) =>
+  `${c.okLive} ok live, ${c.okVia} ok via another row, ${c.okUnit} ok unit-only, ${c.notDriven} not driven, ${c.replaced} replaced by the native design, ${c.skipped} skipped, ${c.deferred} deferred, ${c.fail} fail (${n} rows)`
 
 function writeDoc(rows, counts) {
   const esc = (s) => String(s).replace(/\|/g, '/').replace(/\n/g, ' ')
@@ -1433,9 +1702,9 @@ function writeDoc(rows, counts) {
     '',
     `Generated by \`node scripts/native-inventory.mjs\` on ${new Date().toISOString()} against scratch \`${NAME}\` (release\\win-native, seeded with the W10 session). Rows are section 1 of \`2026-10-02-seashell-renderer-inventory.md\`, numbered in document order inside each letter (the X table in table order).`,
     '',
-    'Statuses: `ok` was checked live on the scratch in this run; `ok (unit: ...)` is covered by the named unit test only, with why it was not driven live; `not driven (...)` has no live check that keeps the rules (no claude typing, no clipboard, no sound, no real menu, no focus) and no unit test that covers the native code; `skipped (Josh 10/03)` is a preview line (plan amendment 10/03 04:30); `deferred (spec 12)` is not ported by design. A live `ok` whose detail names an undriven part checked the row\'s main behaviour and says which part it did not.',
+    'Statuses: `ok` was checked live on the scratch in this run; `ok (via <rows>)` is exercised by the named rows\' live checks and takes its status from their results in this run (a cited row that failed makes it `fail`, one not driven makes it `not driven`); `ok (unit: ...)` is covered by the named unit test only; `not driven (...)` has no live check that keeps the rules (no claude typing, no clipboard, no sound, no real menu, no focus) and no unit test that covers the native code; `replaced by the native design` describes web or Electron machinery the native shell does differently by design; `skipped (Josh 10/03)` is a preview line (plan amendment 10/03 04:30); `deferred (spec 12)` is not ported by design, and `deferred (inventory section Y: ...)` is excluded by the inventory itself. A live `ok` whose detail names an undriven or deferred part checked the row\'s main behaviour and says which part it did not. Every key and text the walk sends goes through the fail-closed tty check (scripts/native-gates.mjs ttyGuard).',
     '',
-    `Totals: ${counts.okLive} ok live, ${counts.okUnit} ok unit-only, ${counts.notDriven} not driven, ${counts.skipped} skipped, ${counts.deferred} deferred, ${counts.fail} fail (${rows.length} rows).`,
+    `Totals: ${totalsText(counts, rows.length)}.`,
     '',
     '| Row | Inventory (shortened) | Status | Detail |',
     '|---|---|---|---|',
@@ -1471,7 +1740,7 @@ async function main() {
   }
   let shotLine = ''
   try {
-    const s = await must(UD, { cmd: 'shot', path: `${BUILD_WIN}\\bakeoff\\P2-inventory.png` }, 'shot')
+    const s = await must(UD, { cmd: 'shot', path: `${BUILD_WIN}\\bakeoff\\P3-inventory.png` }, 'shot')
     shotLine = `shot ${s.path} stamped ${q(s.stamp)}`
   } catch (e) {
     shotLine = `shot failed: ${e.message}`
@@ -1491,13 +1760,16 @@ async function main() {
     if (cleared) set('O2', 'ok', `quit with one tab holding one plain zsh pane cleared the snapshot (${after ? 'no tabs' : 'file removed'}; before the quit it was saved at ${savedBefore})`)
     else set('O2', 'fail', `quit with one plain pane left a snapshot of ${after.tabs.length} tab(s) saved at ${after.savedAt}`)
   }
-  for (const r of rows) if (!results.has(r.row)) set(r.row, fatal ? 'fail' : 'not driven (no check reached it)', fatal ? `the walk stopped before this row: ${fatal.message.slice(0, 200)}` : '')
-  const counts = { okLive: 0, okUnit: 0, notDriven: 0, skipped: 0, deferred: 0, fail: 0 }
+  for (const r of rows) if (!results.has(r.row) && !VIA.some(([v]) => v === r.row)) set(r.row, fatal ? 'fail' : 'not driven (no check reached it)', fatal ? `the walk stopped before this row: ${fatal.message.slice(0, 200)}` : '')
+  deriveVia()
+  const counts = { okLive: 0, okVia: 0, okUnit: 0, notDriven: 0, replaced: 0, skipped: 0, deferred: 0, fail: 0 }
   for (const r of rows) {
     const s = results.get(r.row).status
     if (s === 'ok') counts.okLive++
+    else if (s.startsWith('ok (via')) counts.okVia++
     else if (s.startsWith('ok (unit')) counts.okUnit++
     else if (s.startsWith('not driven')) counts.notDriven++
+    else if (s.startsWith('replaced by the native design')) counts.replaced++
     else if (s.startsWith('skipped')) counts.skipped++
     else if (s.startsWith('deferred')) counts.deferred++
     else counts.fail++
@@ -1505,10 +1777,15 @@ async function main() {
     console.log(`${r.row} ${s}${d ? ' ' + d : ''}`)
   }
   writeDoc(rows, counts)
-  console.log(`totals: ${counts.okLive} ok live, ${counts.okUnit} ok unit-only, ${counts.notDriven} not driven, ${counts.skipped} skipped, ${counts.deferred} deferred, ${counts.fail} fail (${rows.length} rows)`)
+  console.log(`totals: ${totalsText(counts, rows.length)}`)
   console.log(shotLine)
   console.log(`scratch ${NAME}: ${how}`)
-  if (!pidAlive(PID)) rmSync(`${PIDS}/${PID}`, { recursive: true, force: true })
+  // The core removes its own pid directory at quit (Phase 3 Task 7); the walk
+  // removes it only when that did not happen and the scratch's pid is gone.
+  const gone = !pidAlive(PID)
+  const left = existsSync(`${PIDS}/${PID}`)
+  if (gone && left) rmSync(`${PIDS}/${PID}`, { recursive: true, force: true })
+  console.log(`pid dir ${PIDS}/${PID}: ${left ? (gone ? 'left after the quit, removed by the walk' : 'left, the shell is still up') : 'removed by the core at quit'}`)
   process.exit(counts.fail || how !== 'quit' ? 1 : 0)
 }
 

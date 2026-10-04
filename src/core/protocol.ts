@@ -11,6 +11,24 @@ export const SHELL_CHANNELS: readonly string[] = [
   'display:list', 'display:colorization', 'grid:cmd', 'test:screenshot',
 ]
 
+/** How long the core waits on the shell's reply to one of its invokes before giving up. */
+export const SHELL_INVOKE_TIMEOUT_MS = 10_000
+
+/** Invokes that wait on the user (the modal folder picker), so no timeout applies. */
+export const SHELL_INVOKE_UNTIMED: readonly string[] = ['app:pickFolder']
+
+/** What a user-visible invoke toasts when the shell let it time out. */
+export const SHELL_NO_ANSWER = 'The shell did not answer'
+
+/** The rejection of an invoke the shell did not answer in time: `code` is `ETIMEOUT`. */
+export function shellTimeoutError(ch: string, ms: number): Error & { code: 'ETIMEOUT' } {
+  return Object.assign(new Error(`the shell did not answer ${ch} in ${ms} ms`), { code: 'ETIMEOUT' as const })
+}
+
+export function isShellTimeout(err: unknown): boolean {
+  return err instanceof Error && (err as { code?: unknown }).code === 'ETIMEOUT'
+}
+
 /** The only `on` channels the core writes to the pipe. Every other push is for the controller. */
 export const CORE_PUSH_TO_SHELL: readonly string[] = ['pty:data', 'ui:model', 'grid:cmd', 'shell:cmd']
 

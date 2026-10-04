@@ -27,7 +27,7 @@ public:
   double refreshHz() const { return refreshHz_; }
   void setTitle(const std::wstring& s);
   void post(UINT msg, WPARAM w = 0, LPARAM l = 0);   // PostMessage to hwnd()
-  SavedBounds bounds() const;   // the last normal rect plus the maximized flag, for saveBounds
+  SavedBounds bounds() const;   // the last normal rect in DIPs plus the maximized flag, for saveBounds
   // WM_APP messages the rest of the shell uses:
   static constexpr UINT WM_APP_CORE_LINE = WM_APP + 1;   // wParam: QPC at the post; lParam: std::string* (heap, receiver deletes)
   static constexpr UINT WM_APP_CORE_EXIT = WM_APP + 2;   // wParam: exit code

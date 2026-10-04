@@ -5,6 +5,7 @@
 #include "ui/menu.h"
 #include "ui/ui.h"
 #include <dwmapi.h>
+#include <shellscalingapi.h>
 #include <windowsx.h>
 #include <cmath>
 
@@ -111,12 +112,28 @@ void Window::readRefreshHz() {
 void Window::setTitle(const std::wstring& s) { if (hwnd_) SetWindowTextW(hwnd_, s.c_str()); }
 void Window::post(UINT msg, WPARAM w, LPARAM l) { if (hwnd_) PostMessageW(hwnd_, msg, w, l); }
 
+// window-bounds.json holds DIPs, as Electron writes it (src/main/window-bounds.ts):
+// the last normal rect in pixels divided by the window's DPI scale.
 SavedBounds Window::bounds() const {
+  double s = dpi().scale();
   SavedBounds b;
-  b.x = normal_.left; b.y = normal_.top;
-  b.width = normal_.right - normal_.left; b.height = normal_.bottom - normal_.top;
+  b.x = (int)std::lround(normal_.left / s); b.y = (int)std::lround(normal_.top / s);
+  b.width = (int)std::lround((normal_.right - normal_.left) / s);
+  b.height = (int)std::lround((normal_.bottom - normal_.top) / s);
   b.maximized = hwnd_ && IsZoomed(hwnd_);
   return b;
+}
+
+// The saved DIPs times the DPI scale of the monitor they fall on, which is the
+// window's scale once it is created there; then into that monitor's work area.
+static bool savedToPixels(SavedBounds& b) {
+  RECT r{ b.x, b.y, b.x + b.width, b.y + b.height };
+  UINT dx = 96, dy = 96;
+  if (FAILED(GetDpiForMonitor(MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST), MDT_EFFECTIVE_DPI, &dx, &dy)) || !dx) dx = 96;
+  double s = dx / 96.0;
+  b.x = (int)std::lround(b.x * s); b.y = (int)std::lround(b.y * s);
+  b.width = (int)std::lround(b.width * s); b.height = (int)std::lround(b.height * s);
+  return clampBounds(b);
 }
 
 bool Window::create(HINSTANCE hinst, bool noActivate) {
@@ -139,7 +156,7 @@ bool Window::create(HINSTANCE hinst, bool noActivate) {
   if (!RegisterClassExW(&bc)) { App::log("error: RegisterClassEx body %lu", GetLastError()); return false; }
 
   SavedBounds b;
-  bool saved = loadBounds(b);
+  bool saved = loadBounds(b) && savedToPixels(b);
   if (!saved) {
     // 1440x900 DIP at 100,100 on the monitor holding that point.
     POINT at{ 100, 100 };

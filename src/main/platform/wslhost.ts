@@ -33,6 +33,8 @@ export interface WslhostIo {
    * test run asked to be treated as installed (core_proc.cpp).
    */
   installed: boolean
+  /** Runs `fn` once as the core exits (process 'exit': after main's drain, or the shim's cap). */
+  onExit(fn: () => void): void
 }
 
 /** The four variables this platform adds on top of buildEnv. */
@@ -40,6 +42,7 @@ const EXTRA_KEYS = new Set(['SEASHELL_PIDFILE', 'SEASHELL_APP_ID', 'TERM_PROGRAM
 
 export function createWslhost(io: WslhostIo): Platform {
   let shimDir: string | null = null
+  let exitArmed = false
   const home = io.home.replace(/\/+$/, '')
   const appId = appInstanceId('win32', io.hostPid)
   return {
@@ -67,6 +70,20 @@ export function createWslhost(io: WslhostIo): Platform {
           if (other !== io.hostPid && !io.windowsPidAlive(other)) io.rmrf(`${pidsRoot}/${name}`)
         }
         io.mkdirp(pidDirFor(home, io.hostPid))
+        // At quit this host's own pid directory goes, and nothing else: not a
+        // sibling (another shell's, swept above only when Windows says it is
+        // dead) and never the pids root. The panes are reaped by then.
+        if (!exitArmed && Number.isInteger(io.hostPid) && io.hostPid > 0) {
+          exitArmed = true
+          const mine = pidDirFor(home, io.hostPid)
+          io.onExit(() => {
+            try {
+              io.rmrf(mine)
+            } catch {
+              /* the next start's sweep removes it */
+            }
+          })
+        }
         shimDir = dir
         return dir
       } catch (err) {
@@ -108,25 +125,33 @@ function windowsPidAlive(pid: number): boolean {
   }
 }
 
+/** The real io for a host pid and a home; the unit tests point it at a temp home. */
+export function nodeWslhostIo(hostPid: number, home: string): WslhostIo {
+  return {
+    hostPid,
+    home,
+    appVersion: process.env.SEASHELL_CORE_VERSION ?? '0.0.0',
+    mkdirp: (d) => fs.mkdirSync(d, { recursive: true }),
+    writeFileAtomic: (f, c) => {
+      const tmp = `${f}.${process.pid}.tmp`
+      fs.writeFileSync(tmp, c)
+      fs.renameSync(tmp, f)
+    },
+    readdir: (d) => {
+      try {
+        return fs.readdirSync(d)
+      } catch {
+        return []
+      }
+    },
+    rmrf: (d) => fs.rmSync(d, { recursive: true, force: true }),
+    windowsPidAlive,
+    installed: process.env.SEASHELL_INSTALLED === '1',
+    onExit: (fn) => {
+      process.once('exit', fn)
+    },
+  }
+}
+
 /** Creating it does no I/O; the shim and the sweep wait for installShellIntegration. */
-export const wslhost: Platform = createWslhost({
-  hostPid: Number(process.env.SEASHELL_HOST_PID) || process.ppid,
-  home: os.homedir(),
-  appVersion: process.env.SEASHELL_CORE_VERSION ?? '0.0.0',
-  mkdirp: (d) => fs.mkdirSync(d, { recursive: true }),
-  writeFileAtomic: (f, c) => {
-    const tmp = `${f}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, c)
-    fs.renameSync(tmp, f)
-  },
-  readdir: (d) => {
-    try {
-      return fs.readdirSync(d)
-    } catch {
-      return []
-    }
-  },
-  rmrf: (d) => fs.rmSync(d, { recursive: true, force: true }),
-  windowsPidAlive,
-  installed: process.env.SEASHELL_INSTALLED === '1',
-})
+export const wslhost: Platform = createWslhost(nodeWslhostIo(Number(process.env.SEASHELL_HOST_PID) || process.ppid, os.homedir()))

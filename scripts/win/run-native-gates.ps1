@@ -63,10 +63,8 @@ if ($needsMain) {
   if ($running.Count -gt 0) { throw "$exe is already running (pid $(($running | ForEach-Object ProcessId) -join ',')); stop that scratch first" }
   if (Test-Path $ud) { Remove-Item -Recurse -Force $ud }
   New-Item -ItemType Directory -Force -Path $ud | Out-Null
-  # 1440x900 DIP at 100,100, as the W10 run; the shell saves physical pixels.
-  $dpi = (Get-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name AppliedDPI -ErrorAction SilentlyContinue).AppliedDPI
-  if (-not $dpi) { $dpi = 96 }
-  $w = [int][math]::Round(1440 * $dpi / 96); $h = [int][math]::Round(900 * $dpi / 96)
+  # 1440x900 DIP at 100,100, as the W10 run; the shell reads and writes DIPs.
+  $w = 1440; $h = 900
   Set-Content -Path "$ud\window-bounds.json" -Value "{`"x`":100,`"y`":100,`"width`":$w,`"height`":$h,`"maximized`":false}" -Encoding Ascii
   # The tutorial was seen (plan Task 14): no first-run sheet holds the keys or dims the window.
   Set-Content -Path "$ud\ui-state.json" -Value '{"tutorialSeen":true}' -Encoding Ascii

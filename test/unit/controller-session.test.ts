@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Controller } from '../../src/core/controller/controller.js'
 import { fakeDeps } from './controller-fakes.js'
 import { buildW10 } from '../../scripts/bakeoff/make-session.mjs'
@@ -7,6 +7,9 @@ const GEO = { clientW: 1440, clientH: 900, dpi: 96, cellW: 7.8, cellH: 15 }
 const mods = { ctrl: false, alt: false, shift: false }
 
 describe('controller: session', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   it('offers the restore card for a saved window and restores 9 tabs and 10 panes on Restore', async () => {
     const f = fakeDeps()
     f.handlers['session:load'] = () => buildW10('/Users/joshwald')
@@ -45,6 +48,41 @@ describe('controller: session', () => {
     expect(saves()).toBe(n + 1)
     c.push('session:requestSnapshot', undefined); await new Promise((r) => setImmediate(r))
     expect(saves()).toBe(n + 2)
+  })
+  it('writes the session snapshot 30 s after a change and not when nothing changed', async () => {
+    // The core's own clock (src/core/index.ts setTimer) on vitest's fake timers,
+    // against the renderer it replaced (app.tsx:570-634): every 30 s, written
+    // only when the serialized tabs changed.
+    vi.useFakeTimers()
+    const f = fakeDeps()
+    const c = new Controller(
+      {
+        ...f.deps,
+        setTimer: (fn, ms) => {
+          const t = setTimeout(fn, ms)
+          return () => clearTimeout(t)
+        },
+      },
+      { home: '/Users/joshwald', version: '0.6.0', chords: [] }
+    )
+    await c.boot(GEO)
+    const saves = () => f.sent.filter(([ch]) => ch === 'session:save').length
+    c.command('tab.new')
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(saves()).toBe(0)
+    // First tick: the change is written.
+    await vi.advanceTimersByTimeAsync(1)
+    expect(saves()).toBe(1)
+    // Second tick: nothing changed, nothing written. Two ticks, one write.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(saves()).toBe(1)
+    // Third tick, still no change: still no write.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(saves()).toBe(1)
+    // The clock is still running: the next change is written on the next tick.
+    c.command('tab.new')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(saves()).toBe(2)
   })
   it('logs the quit snapshot to the core log', async () => {
     const f = fakeDeps()

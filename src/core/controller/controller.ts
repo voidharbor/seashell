@@ -78,6 +78,7 @@ import { STEPS, type TutorialStep } from './tutorial-steps.js'
 import { Projects } from './projects.js'
 import { ACCENTS, PALETTE_ORDER, type PaletteKey } from '../../renderer/theme/tokens.js'
 import { TAB_STRIP_ORDER, type TabStripMode } from '../../renderer/settings/settings.js'
+import { isShellTimeout, SHELL_NO_ANSWER } from '../protocol.js'
 import type {
   ChordModel,
   DrawerModel,
@@ -632,7 +633,7 @@ export class Controller {
         // terminal.ts:238-243 (WebLinksAddon): a click on a bare http(s) URL
         // opens it through main's guarded open:externalHttp.
         const url = typeof e.line === 'string' && Number.isInteger(e.index) ? webUrlAt(e.line, e.index) : null
-        if (url) void this.deps.invoke('open:externalHttp', { url }).catch(() => undefined)
+        if (url) void this.deps.invoke('open:externalHttp', { url }).catch((err: unknown) => this.shellSilent(err))
         break
       }
       default:
@@ -1450,7 +1451,7 @@ export class Controller {
     if (!m) return
     if (id === 'reveal') {
       this.closeMenu()
-      void this.deps.invoke('open:revealInFinder', { path: m.path }).catch(() => undefined)
+      void this.deps.invoke('open:revealInFinder', { path: m.path }).catch((err: unknown) => this.shellSilent(err))
     } else if (id === 'open-outside' && !m.isDir) {
       this.closeMenu()
       void this.openPath(m.path, 'os')
@@ -1462,8 +1463,17 @@ export class Controller {
     const text = x.selected ?? x.root
     void this.deps.invokeShell<{ ok?: unknown } | null>('clip:write', { text }).then(
       (r) => this.toast(r?.ok === true ? 'Copied path' : 'Could not copy the path'),
-      () => this.toast('Could not copy the path')
+      (err: unknown) => this.toast(isShellTimeout(err) ? SHELL_NO_ANSWER : 'Could not copy the path')
     )
+  }
+
+  /**
+   * The catch of a user-visible invoke that reaches the shell: a reply the
+   * shell never sent (`ETIMEOUT`, 10 s) says so; any other failure stays as
+   * quiet as it was.
+   */
+  private shellSilent(err: unknown): void {
+    if (isShellTimeout(err)) this.toast(SHELL_NO_ANSWER)
   }
 
   /**
@@ -1515,6 +1525,7 @@ export class Controller {
       await routeOpen(p, this.openDeps(), force)
     } catch (err) {
       this.deps.log?.(`open failed: ${err instanceof Error ? err.message : String(err)}`)
+      this.shellSilent(err)
     }
   }
 
@@ -2561,7 +2572,7 @@ export class Controller {
         this.deps.send('update:install', undefined)
         break
       case 'page':
-        if (s.phase === 'available') void this.deps.invoke('open:externalHttp', { url: s.pageUrl }).catch(() => undefined)
+        if (s.phase === 'available') void this.deps.invoke('open:externalHttp', { url: s.pageUrl }).catch((err: unknown) => this.shellSilent(err))
         break
       case 'later':
       case 'dismiss':

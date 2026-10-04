@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { CHIP_BY_EXT, ExplorerState } from '../../src/core/controller/explorer.js'
 import { Controller } from '../../src/core/controller/controller.js'
 import { fakeDeps, GEO } from './controller-fakes.js'
+import { shellTimeoutError } from '../../src/core/protocol.js'
 
 const entry = (name: string, isDir: boolean, ignored = false) => ({ name, isDir, isSymlink: false, size: 0, mtimeMs: 0, ignored })
 const mods = { ctrl: false, alt: false, shift: false }
@@ -336,6 +337,19 @@ describe('explorer in the controller', () => {
     await tick()
     expect(c.model().toast).toBe('Could not copy the path')
   })
+  it('the strip says the shell did not answer when clip:write times out', async () => {
+    const f = fakeDeps('/h')
+    f.deps.invokeShell = async <T = unknown>(ch: string): Promise<T> => {
+      throw shellTimeoutError(ch, 10_000)
+    }
+    f.handlers['fs:readDir'] = () => ({ ok: true, entries: [], truncated: false })
+    const c = new Controller(f.deps, { home: '/h', version: '0', chords: [] })
+    await c.boot(GEO)
+    c.command('explorer.toggle')
+    c.event({ type: 'click', target: 'sidebar:strip', x: 0, y: 0, button: 0, mods })
+    await tick()
+    expect(c.model().toast).toBe('The shell did not answer')
+  })
   it('a right click opens the menu at the point; Escape, or a press elsewhere, closes it', async () => {
     const f = fakeDeps('/h')
     f.handlers['fs:readDir'] = () => ({ ok: true, entries: [entry('src', true), entry('a.ts', false)], truncated: false })
@@ -386,6 +400,22 @@ describe('explorer in the controller', () => {
     c.event({ type: 'click', target: 'sidebar:menu:open-outside', x: 10, y: 10, button: 0, mods })
     await tick()
     expect(c.model().toast).toBe('That file is executable, revealed in Finder instead')
+  })
+  it('a file the shell never opens outside SeaShell toasts that the shell did not answer', async () => {
+    const f = fakeDeps('/h')
+    f.handlers['fs:readDir'] = () => ({ ok: true, entries: [entry('doc.pdf', false)], truncated: false })
+    f.handlers['fs:probe'] = () => ({ exists: true, isDir: false, size: 1, ext: 'pdf', route: 'viewer' })
+    f.handlers['open:withDefaultApp'] = () => {
+      throw shellTimeoutError('open:withDefaultApp', 10_000)
+    }
+    const c = new Controller(f.deps, { home: '/h', version: '0', chords: [] })
+    await c.boot(GEO)
+    c.command('explorer.toggle')
+    await tick()
+    c.event({ type: 'click', target: 'sidebar:row:/h/doc.pdf', x: 10, y: 10, button: 2, mods })
+    c.event({ type: 'click', target: 'sidebar:menu:open-outside', x: 10, y: 10, button: 0, mods })
+    await tick()
+    expect(c.model().toast).toBe('The shell did not answer')
   })
   it('reveal of a directory expands it, and a new reveal restarts the flash', async () => {
     const f = fakeDeps('/h')
