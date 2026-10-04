@@ -20,11 +20,20 @@ function freshDeps() {
 }
 
 describe('tutorial', () => {
-  it('has twelve steps with Windows spellings and shows on first run only', async () => {
-    expect(STEPS('win32')).toHaveLength(12)
+  it('has eleven steps with Windows spellings and shows on first run only', async () => {
+    expect(STEPS('win32')).toHaveLength(11)
     expect(JSON.stringify(STEPS('win32'))).toContain('Ctrl+Shift+D')
     expect(JSON.stringify(STEPS('win32'))).not.toContain('Cmd+')
     expect(JSON.stringify(STEPS('win32'))).not.toContain('\u2014')
+    // This build's copy: no previews, the drawer's chord, one theme.
+    const copy = JSON.stringify(STEPS('win32'))
+    expect(copy).toContain('Ctrl+double-click opens it with the default app')
+    expect(copy).not.toMatch(/preview/i)
+    expect(STEPS('win32')[6]!.keys.map(([chord]) => chord)).toEqual(['Ctrl+Shift+J', 'Ctrl+Shift+]  Ctrl+Shift+['])
+    expect(copy).toContain('Aero Glass in this build; the other themes return later')
+    expect(copy).toContain('the same zsh you get in WSL,')
+    expect(copy).not.toContain('Terminal.app')
+    expect(JSON.stringify(STEPS('darwin'))).toContain('the same zsh you get in Terminal.app,')
     const f = freshDeps()
     const c = new Controller(f.deps, { home: '/h', version: '0', chords: [] })
     await c.boot(GEO)
@@ -57,12 +66,12 @@ describe('tutorial', () => {
       ['back', 'Back', true, false],
       ['next', 'Next', false, true],
     ])
-    click(c, 'sheet:tutorial:step:11')
+    click(c, 'sheet:tutorial:step:10')
     expect(c.model().sheet!.buttons.find((b) => b.id === 'next')!.label).toBe('Get started')
     click(c, 'sheet:tutorial:btn:back')
-    expect(c.model().sheet!.sections[0]!.title).toBe(STEPS('win32')[10]!.title)
+    expect(c.model().sheet!.sections[0]!.title).toBe(STEPS('win32')[9]!.title)
     key(c, 'ArrowRight'); key(c, 'ArrowRight')   // stays on the last step
-    expect(c.model().sheet!.sections[0]!.title).toBe(STEPS('win32')[11]!.title)
+    expect(c.model().sheet!.sections[0]!.title).toBe(STEPS('win32')[10]!.title)
     click(c, 'sheet:tutorial:dontShow')
     click(c, 'sheet:tutorial:btn:next')   // Get started closes
     expect(c.model().sheet).toBeNull()

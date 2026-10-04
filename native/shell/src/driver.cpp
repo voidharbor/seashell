@@ -190,6 +190,134 @@ json settingChange(const json& req) {
   SendMessageW(h, WM_SETTINGCHANGE, 0, l);
   return { { "ok", true }, { "lparam", *it } };
 }
+
+bool numXY(const json& j, double* x, double* y) {
+  if (!j.is_object() || !j.contains("x") || !j.contains("y") || !j["x"].is_number() || !j["y"].is_number()) return false;
+  *x = j["x"].get<double>();
+  *y = j["y"].get<double>();
+  return true;
+}
+
+// pixels (Phase 3 Task 6): the colours of the window at client DIP points,
+// from one PrintWindow capture with PW_RENDERFULLCONTENT taken after the
+// strip and the body repainted synchronously, so it shows the state the
+// last command left. Each point reads the device pixel that holds it
+// (floor of DIP times the scale); colors are '#RRGGBB', null off the window.
+// {rect:{x,y,w,h}} (DIP, at most 512 by 512 device pixels) also returns that
+// block as `region` {x, y, w, h in device pixels, hex: 'RRGGBB' per pixel,
+// rows top to bottom}. {press:'<target>'} holds the left button on a target
+// through the capture: WM_MOUSEMOVE and WM_LBUTTONDOWN at its centre, as
+// dragStep's press, then always a move to releaseAt (client DIP; 8 DIP above
+// and left of the target when absent) and the release there, so the press
+// activates nothing. Press, repaint, capture and release run in this one
+// UI-thread call: the WM_MOUSELEAVE that TrackMouseEvent posts while the real
+// pointer is elsewhere only runs after the release. Runs on the UI thread.
+json pixels(const json& req) {
+  Window& win = Window::instance();
+  HWND hwnd = win.hwnd();
+  if (!hwnd || !win.body()) return fail("ENOWINDOW");
+  float scale = win.dpi().scale();
+  float top = (float)win.bodyRect().top;
+
+  // The press, when asked for: the window under the target's centre takes it.
+  std::string press = strArg(req, "press");
+  HWND pressWin = nullptr;
+  float px = 0, py = 0;
+  auto lp = [&](float cx, float cy) {   // client pixels to the press window's coordinates
+    return MAKELPARAM((int)std::lround(cx), (int)std::lround(pressWin == win.body() ? cy - top : cy));
+  };
+  if (!press.empty()) {
+    D2D1_RECT_F r{};
+    if (!Ui::instance().targetRect(press, &r)) return fail("ENOTARGET");
+    px = (r.left + r.right) / 2;
+    py = (r.top + r.bottom) / 2;
+    pressWin = py < top ? hwnd : win.body();
+    float rx = r.left - 8 * scale, ry = r.top - 8 * scale;
+    double ax, ay;
+    if (req.contains("releaseAt") && numXY(req["releaseAt"], &ax, &ay)) { rx = (float)ax * scale; ry = (float)ay * scale; }
+    SendMessageW(pressWin, WM_MOUSEMOVE, 0, lp(px, py));
+    SendMessageW(pressWin, WM_LBUTTONDOWN, MK_LBUTTON, lp(px, py));
+    px = rx;   // from here on, where the release goes
+    py = ry;
+  }
+  // The release on every path below, whatever the capture did.
+  struct Release {
+    HWND to;
+    LPARAM at;
+    ~Release() {
+      if (!to) return;
+      SendMessageW(to, WM_MOUSEMOVE, MK_LBUTTON, at);
+      SendMessageW(to, WM_LBUTTONUP, 0, at);
+    }
+  } release{ pressWin, pressWin ? lp(px, py) : 0 };
+
+  RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+  RECT wr{};
+  GetWindowRect(hwnd, &wr);
+  POINT origin{ 0, 0 };
+  ClientToScreen(hwnd, &origin);
+  int w = wr.right - wr.left, h = wr.bottom - wr.top;
+  int ox = origin.x - wr.left, oy = origin.y - wr.top;   // the client's origin in the capture
+  if (w <= 0 || h <= 0) return fail("ENOWINDOW");
+  BITMAPINFO bi{};
+  bi.bmiHeader = { sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB };
+  void* bits = nullptr;
+  HDC screen = GetDC(nullptr);
+  HDC dc = CreateCompatibleDC(screen);
+  HBITMAP bmp = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+  ReleaseDC(nullptr, screen);
+  if (!bmp) { DeleteDC(dc); return fail("EDIB"); }
+  HGDIOBJ old = SelectObject(dc, bmp);
+  BOOL printed = PrintWindow(hwnd, dc, PW_RENDERFULLCONTENT);
+  SelectObject(dc, old);
+  GdiFlush();
+  json out = fail("EPRINTWINDOW");
+  if (printed) {
+    const auto* p = static_cast<const uint8_t*>(bits);
+    auto at = [&](int x, int y, char* hex) {   // client pixel to "RRGGBB"; false off the capture
+      int cx = x + ox, cy = y + oy;
+      if (cx < 0 || cy < 0 || cx >= w || cy >= h) return false;
+      const uint8_t* q = p + ((size_t)cy * w + cx) * 4;   // BGRA
+      snprintf(hex, 7, "%02X%02X%02X", q[2], q[1], q[0]);
+      return true;
+    };
+    json colors = json::array();
+    if (req.contains("points") && req["points"].is_array()) {
+      for (const json& pt : req["points"]) {
+        double x, y;
+        char hex[7];
+        if (numXY(pt, &x, &y) && at((int)std::floor(x * scale), (int)std::floor(y * scale), hex)) colors.push_back(std::string("#") + hex);
+        else colors.push_back(nullptr);
+      }
+    }
+    out = { { "ok", true }, { "colors", colors }, { "scale", scale } };
+    if (req.contains("rect") && req["rect"].is_object()) {
+      const json& rr = req["rect"];
+      double x, y;
+      if (!numXY(rr, &x, &y) || !rr.contains("w") || !rr.contains("h") || !rr["w"].is_number() || !rr["h"].is_number()) {
+        out = fail("ERECT");
+      } else {
+        int x0 = (int)std::floor(x * scale), y0 = (int)std::floor(y * scale);
+        int rw = (int)std::lround(rr["w"].get<double>() * scale), rh = (int)std::lround(rr["h"].get<double>() * scale);
+        if (rw <= 0 || rh <= 0 || rw > 512 || rh > 512) {
+          out = fail("ERECT");
+        } else {
+          std::string hexAll;
+          hexAll.reserve((size_t)rw * rh * 6);
+          char hex[7];
+          for (int yy = y0; yy < y0 + rh; yy++)
+            for (int xx = x0; xx < x0 + rw; xx++) hexAll += at(xx, yy, hex) ? hex : "000000";
+          out["region"] = { { "x", x0 }, { "y", y0 }, { "w", rw }, { "h", rh }, { "hex", hexAll } };
+        }
+      }
+    }
+    if (!press.empty() && out.value("ok", false))
+      out["press"] = { { "target", press }, { "releasedAt", { { "x", px / scale }, { "y", py / scale } } } };
+  }
+  DeleteObject(bmp);
+  DeleteDC(dc);
+  return out;
+}
 }  // namespace
 
 Driver& Driver::instance() { static Driver d; return d; }
@@ -410,6 +538,7 @@ json Driver::execute(const json& req) {
     if (path.empty()) return fail("ENOPATH");
     return HostApi::handle("test:screenshot", { { "path", path } });   // PrintWindow with PW_RENDERFULLCONTENT to PNG
   }
+  if (cmd == "pixels") return pixels(req);
   if (cmd == "colorization") {
     // The WM_DWMCOLORIZATIONCOLORCHANGED handler with a test value instead of
     // DWM's: the desktop and the registry are never touched. {argb:null}

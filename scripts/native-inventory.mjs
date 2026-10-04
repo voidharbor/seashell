@@ -1226,7 +1226,8 @@ async function walk() {
     await key('Ctrl+Shift+/')
     const y = await untilModel('no tutorial', 5000, (z) => z.sheet && z.sheet.kind === 'tutorial')
     const step = sheetField(y, 'step')
-    if (!step || step.options.length !== 12) throw new Error(`steps ${q(step)}`)
+    // 11 steps since Phase 3 Task 6: the preview step gave way to the existing drawer step.
+    if (!step || step.options.length !== 11) throw new Error(`steps ${q(step)}`)
     return `Ctrl+Shift+/ opened the tutorial at ${q(y.sheet.title)} (${q(y.sheet.sections[0].title)}), ${step.options.length} step dots (first-run showing: Task 14)`
   })
   await check('T2', async () => {

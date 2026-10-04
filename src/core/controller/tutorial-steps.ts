@@ -1,10 +1,14 @@
 /**
- * [pure] The tutorial's twelve steps, copied from
+ * [pure] The tutorial's eleven steps, copied from
  * `src/renderer/tutorial/Tutorial.tsx:49-231` (`buildSteps`), which imports
  * React and `window` and so is not imported here. The copy is the renderer's,
- * verbatim, except its em dashes: each became a colon, a semicolon or a comma
- * (UI copy carries none). Chords are spelled for the platform through
- * `src/shared/keys.ts`, exactly as the renderer spells them.
+ * verbatim, except its em dashes (each became a colon, a semicolon or a comma;
+ * UI copy carries none) and what this build lacks: there are no previews, so
+ * a modified path double-click opens the default app and the previews step
+ * gave its place to the shell drawer's (the renderer's own drawer step, which
+ * it would repeat, is gone), and Aero Glass is the only theme. Chords are
+ * spelled for the platform through `src/shared/keys.ts`, exactly as the
+ * renderer spells them.
  */
 import { chordLabel, keyPlatform, modifiersLabel, zoomLabel, type Modifier } from '../../shared/keys.js'
 
@@ -34,7 +38,7 @@ export function STEPS(platform: string): TutorialStep[] {
       body: [
         'A terminal window manager. One window holds tabs, each tab tiles up to six ' +
           'panes, and every pane is a real login shell: the same zsh you get in ' +
-          'Terminal.app, with your dotfiles, your PATH and your history.',
+          `${mac ? 'Terminal.app' : 'WSL'}, with your dotfiles, your PATH and your history.`,
       ],
       keys: [
         [k('Cmd+T'), 'New tab'],
@@ -73,15 +77,15 @@ export function STEPS(platform: string): TutorialStep[] {
           'highlights it. It reveals; it does not open. Inside a pane running ' +
           `an agent or any full-screen program, hold ${optWord}: those programs claim the ` +
           `mouse for themselves, and ${optWord} is how you tell SeaShell the click was ` +
-          `meant for it. ${cmdWord} double-click also opens it as a preview pane, and ` +
-          `${cmdAltWord} double-click opens it in its default app instead. Bare URLs are ` +
+          `meant for it. ${cmdWord}+double-click opens it with the default app, and ` +
+          `${cmdAltWord}+double-click does so even for a file it would only reveal. Bare URLs are ` +
           'clickable anywhere.',
       ],
       keys: [
         ['double-click', 'Reveal a path in the explorer'],
         [`${m('Alt')} double-click`, 'Same, inside an agent or TUI pane'],
-        [`${m('Cmd')} double-click`, 'Also open it as a preview pane'],
-        [`${m('Cmd', 'Alt')} double-click`, 'Open it in its default app'],
+        [`${m('Cmd')} double-click`, 'Also open it with the default app'],
+        [`${m('Cmd', 'Alt')} double-click`, 'Always open it in its default app'],
       ],
     },
     {
@@ -121,17 +125,18 @@ export function STEPS(platform: string): TutorialStep[] {
       ],
     },
     {
-      title: 'Previews are panes, not windows',
+      title: 'A scratch shell for each pane',
       body: [
-        'Open a file from the explorer and it becomes a preview pane, tiled next to ' +
-          'your terminals with syntax highlighting. A web preview does the same for a ' +
-          'URL: run a dev server in one pane and watch the page in the one beside it. ' +
-          `They resize with the same dividers and close with the same ${k('Cmd+W')}.`,
+        `${k('Cmd+J')} opens a shell drawer over the grid, and every pane gets its own, ` +
+          'starting in that pane’s working directory, with its own history and ' +
+          'scrollback. Switching panes switches shells, so a quick `git status` next ' +
+          'to a running agent costs neither a new pane nor an interruption. The ' +
+          'drawer names the pane it belongs to, and its shell is created the first ' +
+          'time you open it there and dies with the pane.',
       ],
       keys: [
-        [k('Cmd+Shift+U'), 'New web preview'],
-        [k('Cmd+Alt+W'), 'Close all preview panes'],
-        [k('Cmd+F'), 'Find in the focused pane'],
+        [k('Cmd+J'), 'Show or hide the shell drawer'],
+        [`${k('Cmd+]')}  ${k('Cmd+[')}`, 'Switch panes; the drawer shows that pane’s shell'],
       ],
     },
     {
@@ -155,18 +160,6 @@ export function STEPS(platform: string): TutorialStep[] {
       ],
     },
     {
-      title: 'A scratch shell for each pane',
-      body: [
-        `${k('Cmd+J')} opens a shell drawer over the grid, and every pane gets its own, ` +
-          'starting in that pane’s working directory, with its own history and ' +
-          'scrollback. Switching panes switches shells, so a quick `git status` next ' +
-          'to a running agent costs neither a new pane nor an interruption. The ' +
-          'drawer names the pane it belongs to, and its shell is created the first ' +
-          'time you open it there and dies with the pane.',
-      ],
-      keys: [[k('Cmd+J'), 'Show or hide the shell drawer']],
-    },
-    {
       title: 'Link two agents to share notes',
       body: [
         'The ⇄ button in a pane’s title bar links it to another agent pane. ' +
@@ -181,14 +174,13 @@ export function STEPS(platform: string): TutorialStep[] {
       keys: [],
     },
     {
-      title: 'Seven themes',
+      title: 'Themes and colours',
       body: [
-        'Settings > Appearance. Nautical is the default; Current is exactly what ' +
-          'the app looked like before. Three more dials sit beside it and compose ' +
-          'freely: an accent colour, a terminal palette that recolours the terminals ' +
-          'themselves and not just the chrome, and the pane frame: hairline, bezel, ' +
-          'floating or slab. CRT glass is separate from the theme, so you can run ' +
-          'scanlines and a curved tube over macOS Dark if you want to.',
+        'Settings > Appearance. Aero Glass in this build; the other themes return later. ' +
+          'Three dials sit beside it and compose freely: an accent colour, the tab ' +
+          'strip (light, dark, or following the Windows app theme), and a terminal ' +
+          'palette that recolours the terminals themselves and not just the chrome. ' +
+          'The pane frame and CRT glass come back with the other themes.',
       ],
       keys: [[k('Cmd+,'), 'Settings']],
     },
