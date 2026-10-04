@@ -40,7 +40,6 @@ public:
   LPCWSTR cursorFor(POINT bodyPx) const;             // IDC_SIZEWE over a vertical divider or the sidebar grip, IDC_SIZENS over a horizontal divider or the drawer grip, IDC_IBEAM over an edit or a grid, IDC_ARROW
   void mouseLeave(bool strip);                       // WM_MOUSELEAVE, or the pointer went onto the caption
   void captionPress();                               // a press on strip:empty (the window drag): blur the edit
-  void captionDblClick();                            // dblclick strip:empty, which the core turns into a new tab
   void cancelDrag();                                 // the body lost the capture mid divider, grip or scrollbar drag: end it where it was
   // The driver's click by target: what a click on that target does (the
   // shell's own handling first, else the ui:event), without a pointer.

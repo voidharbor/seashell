@@ -395,10 +395,6 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       if (w == HTCAPTION) Ui::instance().captionPress();
       else AppMenu::instance().noteDown();
       break;
-    case WM_NCLBUTTONDBLCLK:
-      // strip:empty's double-click is the core's new tab, not maximize.
-      if (w == HTCAPTION) { Ui::instance().captionDblClick(); return 0; }
-      break;
     case WM_NCMOUSEMOVE:
       Ui::instance().mouseLeave(true);
       break;

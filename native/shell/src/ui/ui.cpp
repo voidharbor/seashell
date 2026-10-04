@@ -354,11 +354,6 @@ void Ui::closeMenuOnPress(const std::string& target, float xDip, float yDip, int
   send("down", target, xDip, yDip, button, m);
 }
 
-void Ui::captionDblClick() {
-  if (modal()) return;
-  send("dblclick", "strip:empty", 0, 0, 0, Mods{});
-}
-
 // Without this a lost capture (Alt+Tab, a modal loop) would leave the drag on,
 // and every later pointer move would resize the panes with no button down.
 void Ui::cancelDrag() {
