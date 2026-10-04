@@ -26,6 +26,7 @@ const UINT kRepeatEveryMs = 90;  // app-scrollbar.ts REPEAT_EVERY_MS
 // The dark strip (Task 12b): the inactive tabs' highlight and the tab edge.
 const uint32_t kDarkSheen = 0x3A3A3A;
 const uint32_t kDarkTabEdge = 0x0A0A0A;
+const float kDarkTopSheen = 0.4f;   // the dark inactive face's top keeps its 40 percent sheen
 
 // A glyph button on glass: a frosted face under the pointer, fainter on the
 // dark strip so its light glyph still reads.
@@ -164,7 +165,7 @@ void Ui::viewTabs(Painter& p) {
     if (dark) {
       // The dark face runs to the strip's bottom, where a 1 DIP body-coloured
       // seam joins the active tab to the light body: a hard edge, no border.
-      p.win7Tab(r, t.active, hover, t_.tabActive, t_.tabInactive, t_.tabActive, kDarkSheen, kDarkTabEdge);
+      p.win7Tab(r, t.active, hover, t_.tabActive, t_.tabInactive, t_.tabActive, kDarkSheen, kDarkTabEdge, kDarkTopSheen);
       if (t.active && p.live()) p.fillRect(D2D1::RectF(r.left + one, r.bottom - one, r.right - one, r.bottom), t_.body);
     } else {
       p.win7Tab(r, t.active, hover, t_.tabActive, t_.tabInactive, t_.body);

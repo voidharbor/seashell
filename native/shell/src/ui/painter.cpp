@@ -341,12 +341,12 @@ void Painter::win7Button(D2D1_RECT_F r, BtnState state, const std::wstring& labe
 }
 
 void Painter::win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor,
-                      uint32_t sheen, uint32_t border) {
+                      uint32_t sheen, uint32_t border, float topSheen) {
   if (!rt_) return;
   ID2D1Factory* fac = nullptr;
   rt_->GetFactory(&fac);
   if (!fac) return;
-  float rad = std::min(6 * scale(), (r.right - r.left) / 2);
+  float rad = std::min(5 * scale(), (r.right - r.left) / 2);
   float one = std::max(1.f, std::round(dpi_));
   auto shape = [&](bool closed, ComPtr<ID2D1PathGeometry>& out) {
     if (FAILED(fac->CreatePathGeometry(out.GetAddressOf()))) return false;
@@ -367,7 +367,7 @@ void Painter::win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFac
   fac->Release();
   // Active: tabActive into the body color below it, so it joins the content.
   // Inactive: 6.3's #f2f2f2 to #dcdcdc, lighter under the pointer.
-  uint32_t top = active ? activeFace : mixRgb(sheen, inactiveFace, hover ? 0.75f : 0.4f);
+  uint32_t top = active ? activeFace : mixRgb(sheen, inactiveFace, hover ? 0.75f : topSheen);
   uint32_t bottom = active ? joinColor : (hover ? mixRgb(sheen, inactiveFace, 0.4f) : inactiveFace);
   D2D1_GRADIENT_STOP stops[] = { { 0.f, color(top, 1) }, { 1.f, color(bottom, 1) } };
   ComPtr<ID2D1GradientStopCollection> coll;
