@@ -9,7 +9,7 @@ function io(over: Partial<Parameters<typeof createWslhost>[0]> = {}) {
   return {
     writes, dirs, removed,
     io: {
-      hostPid: 777, home: '/Users/joshwald', appVersion: '0.6.0',
+      hostPid: 777, home: '/Users/joshwald', appVersion: '0.6.0', installed: false,
       mkdirp: (d: string) => { dirs.push(d) },
       writeFileAtomic: (f: string, c: string) => { writes[f] = c },
       readdir: () => ['777', '31337', 'junk'],
@@ -58,7 +58,11 @@ describe('wslhost platform', () => {
     expect(p.terminalFontPath()).toBeNull()
     expect(p.id).toBe('linux')
   })
-  it('turns the update check off (plan decision 6: the checker would offer the Linux AppImage)', () => {
-    expect(createWslhost(io().io).updater).toBe('off')
+  it('checks for updates only when installed, on the win-native channel', () => {
+    const fake = io().io
+    expect(createWslhost({ ...fake, installed: false }).updater).toBe('off')
+    const p = createWslhost({ ...fake, installed: true })
+    expect(p.updater).toBe('on')
+    expect(p.updateChannel).toBe('win-native')
   })
 })

@@ -4,9 +4,13 @@
 # build tree's node_modules is the Windows install and out\ is never synced.
 # Refuses while release\win-native\SeaShell.exe runs (checked by path), so a
 # scratch instance is never overwritten under itself.
+# -Zip also writes release\SeaShell-<VERSION>-win-native.zip: a top-level
+# SeaShell\ folder holding release\win-native plus install-native.ps1 and
+# uninstall-native.ps1. The zip is the future release asset; nothing uploads it.
 param(
   [string]$Worktree = '\\wsl.localhost\Ubuntu-24.04\Users\joshwald\seashell-wt\redesign',
-  [string]$Root = 'C:\seashell-build\redesign'
+  [string]$Root = 'C:\seashell-build\redesign',
+  [switch]$Zip
 )
 $ErrorActionPreference = 'Stop'
 $dst = "$Root\release\win-native"
@@ -23,6 +27,13 @@ $bundle = "$Worktree\out\core"
 $pty = "$Worktree\node_modules\node-pty"
 foreach ($need in @("$built\SeaShell.exe", "$bundle\index.cjs", "$bundle\VERSION", "$pty\package.json", "$pty\build\Release\pty.node", "$Root\scripts\win\stage-core.sh")) {
   if (-not (Test-Path $need)) { [Console]::Error.WriteLine("pack-native: missing $need"); exit 3 }
+}
+# Checked before anything is written, so a -Zip without the scripts packs nothing.
+$scripts = @("$Root\scripts\win\install-native.ps1", "$Root\scripts\win\uninstall-native.ps1")
+if ($Zip) {
+  foreach ($need in $scripts) {
+    if (-not (Test-Path $need)) { [Console]::Error.WriteLine("pack-native: -Zip needs $need, which is missing; nothing was packed"); exit 5 }
+  }
 }
 
 New-Item -ItemType Directory -Force -Path $dst | Out-Null
@@ -50,3 +61,19 @@ $version = ([IO.File]::ReadAllText("$core\VERSION")).Trim()
 $files = @(Get-ChildItem -Recurse -File $dst)
 $mb = [math]::Round((($files | Measure-Object Length -Sum).Sum) / 1MB, 1)
 Write-Output "packed $dst (core $version, build $($hash.Substring(0, 12)), $($files.Count) files, $mb MB)"
+
+if ($Zip) {
+  $stageRoot = "$Root\release\zip-stage"
+  $stage = "$stageRoot\SeaShell"
+  $zipPath = "$Root\release\SeaShell-$version-win-native.zip"
+  if (Test-Path $stageRoot) { Remove-Item -Recurse -Force $stageRoot }
+  New-Item -ItemType Directory -Force -Path $stage | Out-Null
+  Copy-Item -Recurse -Force "$dst\*" $stage
+  foreach ($s in $scripts) { Copy-Item -Force $s $stage }
+  if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+  # The folder itself as the path, so the zip's one top-level entry is SeaShell\.
+  Compress-Archive -Path $stage -DestinationPath $zipPath -CompressionLevel Optimal
+  Remove-Item -Recurse -Force $stageRoot
+  $zmb = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+  Write-Output "zipped $zipPath ($zmb MB)"
+}

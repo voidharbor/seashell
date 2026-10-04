@@ -111,6 +111,26 @@ std::wstring exeDir() {
   return slash == std::wstring::npos ? L"." : p.substr(0, slash);
 }
 
+// The installed build is the exe at ...\AppData\Local\Programs\SeaShell\SeaShell.exe
+// (compared case-insensitively); a test run (SEASHELL_TEST_PORT) may also ask
+// for it with SEASHELL_TEST_INSTALLED=1. Only that build gets SEASHELL_INSTALLED=1,
+// which turns the core's update check on. Worked out and logged once.
+bool shellInstalled() {
+  static const bool installed = [] {
+    std::wstring p(32768, L'\0');
+    DWORD n = GetModuleFileNameW(nullptr, p.data(), (DWORD)p.size());
+    p.resize(n < p.size() ? n : 0);
+    const std::wstring suffix = L"\\AppData\\Local\\Programs\\SeaShell\\SeaShell.exe";
+    bool byPath = p.size() >= suffix.size() &&
+                  CompareStringOrdinal(p.c_str() + (p.size() - suffix.size()), (int)suffix.size(), suffix.c_str(),
+                                       (int)suffix.size(), TRUE) == CSTR_EQUAL;
+    bool byTest = App::instance().testMode() && envW(L"SEASHELL_TEST_INSTALLED") == L"1";
+    App::log("installed: %d", (byPath || byTest) ? 1 : 0);
+    return byPath || byTest;
+  }();
+  return installed;
+}
+
 const DWORD kStageTimeoutMs = 60000;
 
 // Spec 4.5: copy resources\core into ~/.cache/seashell-win/core/<version> with
@@ -291,6 +311,15 @@ bool CoreProc::start() {
   if (!cdp.empty()) args.push_back(L"SEASHELL_CDP_PORT=" + cdp);
   // Under the test driver the core accepts the driver's test:* sends (coreSend; Task 14).
   if (!envW(L"SEASHELL_TEST_PORT").empty()) args.push_back(L"SEASHELL_TEST_MODE=1");
+  if (shellInstalled()) args.push_back(L"SEASHELL_INSTALLED=1");
+  // A test run may point the update check at a local release (updater.ts reads
+  // these two); outside test mode the core never sees them and asks GitHub.
+  if (App::instance().testMode()) {
+    for (const wchar_t* name : { L"SEASHELL_UPDATE_API", L"SEASHELL_UPDATE_ORIGIN" }) {
+      std::wstring v = envW(name);
+      if (!v.empty()) args.push_back(std::wstring(name) + L"=" + v);
+    }
+  }
   args.push_back(L"/usr/bin/node");
   // global.gc for the core's idle collector (src/core/idle-gc.ts).
   args.push_back(L"--expose-gc");

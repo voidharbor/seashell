@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isNewer, parseRelease, RELEASE_ORIGIN } from '../../src/main/update/check.js'
+import { assetNameFor, isNewer, parseRelease, RELEASE_ORIGIN } from '../../src/main/update/check.js'
 
 const release = (over: Record<string, unknown> = {}) => ({
   tag_name: 'v0.6.0',
@@ -43,5 +43,28 @@ describe('isNewer', () => {
   it('never trusts garbage', () => {
     expect(isNewer('x.y.z', '0.5.0')).toBe(false)
     expect(isNewer('0.6.0', 'dev')).toBe(false)
+  })
+})
+
+const releaseOf = (names: string[], version = '9.9.9') => ({
+  tag_name: `v${version}`,
+  html_url: `https://github.com/voidharbor/seashell/releases/tag/v${version}`,
+  assets: names.map((name) => ({ name, size: 1234, browser_download_url: `https://github.com/voidharbor/seashell/releases/download/v${version}/${name}` })),
+})
+
+describe('update channels', () => {
+  it('names the asset per channel', () => {
+    expect(assetNameFor('0.5.0', 'universal')).toBe('SeaShell-0.5.0-universal.zip')
+    expect(assetNameFor('0.5.0', 'win-native')).toBe('SeaShell-0.5.0-win-native.zip')
+  })
+  it('a release with only the Mac zip is nothing to a win-native build', () => {
+    const r = releaseOf(['SeaShell-9.9.9-universal.zip'])
+    expect(parseRelease(r)?.version).toBe('9.9.9')
+    expect(parseRelease(r, undefined, 'win-native')).toBeNull()
+  })
+  it('a release with the win-native zip is seen only by the win-native build', () => {
+    const r = releaseOf(['SeaShell-9.9.9-universal.zip', 'SeaShell-9.9.9-win-native.zip'])
+    expect(parseRelease(r, undefined, 'win-native')?.zipUrl.endsWith('SeaShell-9.9.9-win-native.zip')).toBe(true)
+    expect(parseRelease(r)?.zipUrl.endsWith('SeaShell-9.9.9-universal.zip')).toBe(true)
   })
 })

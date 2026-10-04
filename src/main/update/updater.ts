@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { net } from 'electron'
 import type { UpdateState } from '../../shared/ipc.js'
-import { isNewer, parseRelease, RELEASE_ORIGIN, type ReleaseInfo } from './check.js'
+import { isNewer, parseRelease, RELEASE_ORIGIN, type ReleaseInfo, type UpdateChannel } from './check.js'
 import { buildInstallScript } from './install-script.js'
 import { shouldEmitProgress, type ProgressPoint } from './progress.js'
 
@@ -19,6 +19,12 @@ export interface UpdaterDeps {
   /** The app's own pid, for the install script's wait. */
   pid: number
   quit: () => void
+  /**
+   * Whose asset the check looks for (check.ts). Default 'universal', the Mac
+   * zip. The native Windows shell passes 'win-native'; it is never darwin, so
+   * its `available` always has `canInstall: false` and offers the release page.
+   */
+  channel?: UpdateChannel
   /**
    * Injected only by the tests. Production leaves it unset and gets Electron's
    * `net.fetch`, which goes through the app's own network stack, proxy
@@ -67,7 +73,7 @@ export class Updater {
       })
       clearTimeout(t)
       if (!res.ok) return
-      const info = parseRelease(await res.json(), ORIGIN)
+      const info = parseRelease(await res.json(), ORIGIN, this.d.channel ?? 'universal')
       if (!info || !isNewer(info.version, this.d.currentVersion)) return
       this.release = info
       // The swap script only knows how to replace INSTALLED_APP, so a copy

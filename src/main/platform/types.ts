@@ -1,4 +1,5 @@
 import type { KillRow } from '../monitor/procsweep.js'
+import type { UpdateChannel } from '../update/check.js'
 
 /**
  * The platform boundary.
@@ -94,11 +95,14 @@ export interface Platform {
   readonly paneAppId?: string
 
   /**
-   * 'off' skips main's update check where the checker would offer the wrong
-   * build (wslhost: the native Windows shell, whose core runs the Linux
-   * checker, until Phase 3). Absent means on.
+   * 'off' skips main's update check (wslhost: every native Windows shell but
+   * the installed one, so a scratch or dev build never shows the banner).
+   * Absent means on.
    */
   readonly updater?: 'on' | 'off'
+
+  /** The release asset the update check looks for. Absent means 'universal'. */
+  readonly updateChannel?: UpdateChannel
 
   /**
    * Optional: the whole spawn for a pane, cwd validation included. Absent

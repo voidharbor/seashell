@@ -28,6 +28,11 @@ export interface WslhostIo {
   rmrf(dir: string): void
   /** tasklist.exe through /mnt/c; true on any error, so a live run is never swept. */
   windowsPidAlive(pid: number): boolean
+  /**
+   * SEASHELL_INSTALLED is '1': the shell runs from the installed path, or a
+   * test run asked to be treated as installed (core_proc.cpp).
+   */
+  installed: boolean
 }
 
 /** The four variables this platform adds on top of buildEnv. */
@@ -41,9 +46,11 @@ export function createWslhost(io: WslhostIo): Platform {
     ...linux,
     controlTransport: 'tcp',
     paneAppId: appId,
-    // Plan decision 6: today's checker would offer the Linux AppImage; the
-    // banner is built and tested with an injected state instead.
-    updater: 'off',
+    // Only the installed build checks, and only for the win-native zip: a
+    // release with just the Mac zip leaves it idle, and it never installs
+    // (canInstall is darwin only), so the banner offers the release page.
+    updater: io.installed ? 'on' : 'off',
+    updateChannel: 'win-native',
     terminalFontPath: () => null,
 
     installShellIntegration(): string | null {
@@ -121,4 +128,5 @@ export const wslhost: Platform = createWslhost({
   },
   rmrf: (d) => fs.rmSync(d, { recursive: true, force: true }),
   windowsPidAlive,
+  installed: process.env.SEASHELL_INSTALLED === '1',
 })

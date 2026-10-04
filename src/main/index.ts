@@ -398,6 +398,7 @@ app.whenReady().then(warmUpPlatform).then(() => importLinuxState(app.getPath('us
     pid: process.pid,
     send: (s) => mainWindow?.webContents.send(CH.updateState, s),
     quit: () => app.quit(),
+    channel: platform.updateChannel ?? 'universal',
   })
   ipcMain.on(CH.updateDownload, () => void updater.download())
   ipcMain.on(CH.updateInstall, () => void updater.install())

@@ -14,7 +14,11 @@ describe('electron shim', () => {
     expect(shim.app.getPath('userData')).toBe('/mnt/c/scratch/ud')
     expect(shim.app.getVersion()).toBe('0.6.0')
     expect(shim.app.requestSingleInstanceLock()).toBe(true)
-    expect(shim.app.isPackaged).toBe(true)
+  })
+  it('is packaged only when the shell says it is the installed build', () => {
+    const base = { write: () => {}, hostPid: 1, userData: '/u', version: '0.6.0', onPush: () => {} }
+    expect(createShim({ ...base, installed: true }).app.isPackaged).toBe(true)
+    expect(createShim({ ...base, installed: false }).app.isPackaged).toBe(false)
   })
   it('webContents.send writes pty:data and ui:model to the pipe and routes everything else to onPush', () => {
     const { out, pushes, shim } = make()

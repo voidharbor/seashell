@@ -17,6 +17,11 @@ export interface ShimOptions {
   onPush: (ch: string, p: unknown) => void // pushes NOT in CORE_PUSH_TO_SHELL go here (the controller)
   /** How `app.quit` and `app.exit` end the process. Defaults to `process.exit`. */
   exit?: (code: number) => void
+  /**
+   * `app.isPackaged`: true only for the installed build, which the shell
+   * signals with SEASHELL_INSTALLED=1 (core_proc.cpp). Defaults to that env.
+   */
+  installed?: boolean
 }
 
 export interface IpcEvent {
@@ -323,7 +328,9 @@ export function createShim(opts: ShimOptions): Shim {
       },
     }
   }
-  Object.defineProperty(app, 'isPackaged', { value: true, enumerable: true })
+  // A scratch or dev shell is not packaged, so main's updater stays quiet there.
+  const installed = opts.installed ?? process.env.SEASHELL_INSTALLED === '1'
+  Object.defineProperty(app, 'isPackaged', { value: installed, enumerable: true })
   Object.assign(app, {
     getPath(name: string): string {
       const v = paths[name]

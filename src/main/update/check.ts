@@ -7,6 +7,18 @@
 
 export const RELEASE_ORIGIN = 'https://github.com/voidharbor/seashell/releases/download/'
 
+/**
+ * Which build's asset a release is read for: the Mac's universal zip, or the
+ * native Windows shell's zip. Each build sees only its own, so a release that
+ * carries just the Mac zip is no update at all to the Windows build.
+ */
+export type UpdateChannel = 'universal' | 'win-native'
+
+/** The one asset name a channel accepts for `version`. */
+export function assetNameFor(version: string, channel: UpdateChannel): string {
+  return `SeaShell-${version}-${channel}.zip`
+}
+
 export interface ReleaseInfo {
   version: string
   zipUrl: string
@@ -34,20 +46,24 @@ export function isNewer(candidate: string, current: string): boolean {
 
 /**
  * Reads GitHub's releases/latest JSON down to the one asset the updater may
- * fetch: the universal zip, named exactly for the version, hosted on the
+ * fetch: the channel's zip, named exactly for the version, hosted on the
  * release download origin. Anything else is null, which means "no update".
  *
  * `origin` is a parameter only so a smoke test can point the whole path at a
  * local server. Production always passes the real release origin.
  */
-export function parseRelease(json: unknown, origin: string = RELEASE_ORIGIN): ReleaseInfo | null {
+export function parseRelease(
+  json: unknown,
+  origin: string = RELEASE_ORIGIN,
+  channel: UpdateChannel = 'universal'
+): ReleaseInfo | null {
   if (typeof json !== 'object' || json === null) return null
   const r = json as { tag_name?: unknown; html_url?: unknown; assets?: unknown }
   if (typeof r.tag_name !== 'string' || !r.tag_name.startsWith('v')) return null
   const version = r.tag_name.slice(1)
   if (!VERSION_RE.test(version)) return null
   if (!Array.isArray(r.assets)) return null
-  const want = `SeaShell-${version}-universal.zip`
+  const want = assetNameFor(version, channel)
   const asset = r.assets.find(
     (a): a is { name: string; size: number; browser_download_url: string } =>
       typeof a === 'object' && a !== null && (a as { name?: unknown }).name === want
