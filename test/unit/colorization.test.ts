@@ -48,14 +48,15 @@ describe('colorizationToTokens (Review Focus 5)', () => {
       tabActive: '#2B2B2B',
       tabInactive: '#1A1A1A',
       tabText: '#F0F0F0',
-      badge: '#3A3A3A',
-      badgeText: '#D0D0D0',
       glassTint: '#8C000000',
       stripDark: '1',
     })
     expect(dark.body).toBe(light.body)
     expect(dark.panel).toBe(light.panel)
     expect(dark.accent).toBe(light.accent)
+    // The pane titles, sheets and sidebar below the strip read badge and badgeText.
+    expect(dark.badge).toBe(light.badge)
+    expect(dark.badgeText).toBe(light.badgeText)
     // A derived colorization keeps its own body too.
     expect(colorizationToTokens('#C8107C10', false, true).body).toBe(colorizationToTokens('#C8107C10').body)
   })

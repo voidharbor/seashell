@@ -24,7 +24,11 @@ const float kArrowDip = 18;      // the overflow arrows
 const UINT kRepeatDelayMs = 350; // app-scrollbar.ts REPEAT_DELAY_MS
 const UINT kRepeatEveryMs = 90;  // app-scrollbar.ts REPEAT_EVERY_MS
 // The dark strip (Task 12b): the inactive tabs' highlight and the tab edge.
+// The zoom badge on the dark strip is the sheen with kDarkBadgeText on it; the
+// badge and badgeText tokens stay light for the pane titles, sheets and
+// sidebar below the strip.
 const uint32_t kDarkSheen = 0x3A3A3A;
+const uint32_t kDarkBadgeText = 0xD0D0D0;
 const uint32_t kDarkTabEdge = 0x0A0A0A;
 const float kDarkTopSheen = 0.4f;   // the dark inactive face's top keeps its 40 percent sheen
 
@@ -89,9 +93,10 @@ void Ui::viewTabs(Painter& p) {
     float zw = p.textWidth(z, UiFont{ 11 }) + 14 * s;
     D2D1_RECT_F badge = D2D1::RectF(rx - zw, btnTop + 4 * s, rx, btnBottom - 4 * s);
     hit(true, badge, "zoom:badge");
-    uint32_t badgeHover = dark ? mixRgb(0xFFFFFF, t_.badge, 0.15f) : 0xFFFFFF;
-    p.roundedRect(badge, 8, hovered("zoom:badge") ? badgeHover : t_.badge, 0.9f, t_.panelBorder, 0.8f);
-    p.text(badge, z, UiFont{ 11 }, t_.badgeText, Align::Center, false);
+    uint32_t badgeFill = dark ? kDarkSheen : t_.badge;
+    uint32_t badgeHover = dark ? mixRgb(0xFFFFFF, badgeFill, 0.15f) : 0xFFFFFF;
+    p.roundedRect(badge, 8, hovered("zoom:badge") ? badgeHover : badgeFill, 0.9f, t_.panelBorder, 0.8f);
+    p.text(badge, z, UiFont{ 11 }, dark ? kDarkBadgeText : t_.badgeText, Align::Center, false);
     rx = badge.left - 6 * s;
   }
 

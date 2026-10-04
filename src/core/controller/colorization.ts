@@ -54,7 +54,8 @@ const SPEC_TABLE: Readonly<TokenTable> = Object.freeze({
 /**
  * The dark tab strip (plan amendment 10/03 05:40): these keys replace the
  * table's own when the strip is dark. Only the strip's tokens are here; the
- * body, panels, cards and accent below it keep their light values.
+ * body, panels, cards, badges and accent below it keep their light values
+ * (the zoom badge on the dark strip takes the strip's colours in tabs.cpp).
  * `glassTint` is black at 55 percent, the wash the shell paints on glass.
  */
 const DARK_STRIP: Readonly<Partial<TokenTable>> = Object.freeze({
@@ -63,8 +64,6 @@ const DARK_STRIP: Readonly<Partial<TokenTable>> = Object.freeze({
   tabActive: '#2B2B2B',
   tabInactive: '#1A1A1A',
   tabText: '#F0F0F0',
-  badge: '#3A3A3A',
-  badgeText: '#D0D0D0',
   glassTint: '#8C000000',
 })
 
