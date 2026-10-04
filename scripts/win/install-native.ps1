@@ -4,15 +4,20 @@
 # backup back. Nothing touches shortcuts, the registry or %APPDATA%\seashell.
 #
 # Guards, in this order, each printing one line and exiting with its code:
-#   2  -Target is the live install (%LOCALAPPDATA%\Programs\SeaShell) and -Live
-#      was not given, or -Target is anywhere else under %LOCALAPPDATA%\Programs.
-#      Checked first, for every mode, before anything is read.
+#   2  -Target or -Source is not a plain drive-letter path (UNC, \\?\, \\.\ or a
+#      stream), or -Target is the live install (%LOCALAPPDATA%\Programs\SeaShell)
+#      and -Live was not given, or -Target is anywhere else under
+#      %LOCALAPPDATA%\Programs. Compared both as written and as resolved through
+#      junctions, symlinks and 8.3 names (read-only). Checked first, for every
+#      mode, before anything is changed.
 #   3  a process runs from -Target (by ExecutablePath through Win32_Process,
-#      never by name), or a SeaShell.exe has an unreadable path (fail closed).
+#      as written and resolved, never by name), or a SeaShell.exe has an
+#      unreadable or unresolvable path (fail closed).
 #   4  -Source lacks one of the six release files, or lies inside -Target.
-# Other exits: 5 nothing to do or a name is taken (nothing was changed),
-# 6 a step failed and the previous state was restored, 7 a step failed and the
-# restore failed too (the line names where everything is).
+# Other exits: 5 nothing to do, a name is taken, or -Rollback finds two newest
+# backups with the same stamp (nothing was changed), 6 a step failed and the
+# previous state was restored, 7 a step failed and the restore failed too (the
+# line names where everything is).
 # -DryRun evaluates the guards, prints what it would do and changes nothing.
 param(
   [string]$Source = 'C:\seashell-build\redesign\release\win-native',
@@ -23,48 +28,146 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-# Guard (2). Strings only: GetFullPath does not touch the folder.
-function Get-NormPath([string]$p) {
-  if (-not [IO.Path]::IsPathRooted($p)) { $p = Join-Path (Get-Location).ProviderPath $p }
-  return [IO.Path]::GetFullPath($p).TrimEnd('\')
+# Where a path really is: the deepest part that exists, opened with no access
+# (CreateFileW, OPEN_EXISTING, never creating) and resolved through every
+# junction, symlink and 8.3 name by GetFinalPathNameByHandleW, plus the part
+# that does not exist yet. Null when an existing part cannot be opened.
+if (-not ('SeaShellFinalPath' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+public static class SeaShellFinalPath {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern uint GetFinalPathNameByHandleW(SafeFileHandle h, StringBuilder buf, uint size, uint flags);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern uint GetFileAttributesW(string name);
+  static string Final(string path, out int err) {
+    err = 0;
+    // access 0, share read/write/delete, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS
+    using (SafeFileHandle h = CreateFileW(path, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero)) {
+      if (h.IsInvalid) { err = Marshal.GetLastWin32Error(); return null; }
+      StringBuilder sb = new StringBuilder(1024);
+      uint n = GetFinalPathNameByHandleW(h, sb, (uint)sb.Capacity, 0);
+      if (n >= sb.Capacity) { sb = new StringBuilder((int)n + 1); n = GetFinalPathNameByHandleW(h, sb, (uint)sb.Capacity, 0); }
+      if (n == 0 || n >= sb.Capacity) { err = -1; return null; }
+      return sb.ToString();
+    }
+  }
+  public static string Resolve(string path) {
+    string cur = path;
+    string rest = "";
+    while (true) {
+      int err;
+      string f = Final(cur, out err);
+      if (f != null) {
+        if (f.StartsWith(@"\\?\UNC\")) f = @"\\" + f.Substring(8);
+        else if (f.StartsWith(@"\\?\")) f = f.Substring(4);
+        f = f.TrimEnd('\\');
+        return rest.Length == 0 ? f : f + "\\" + rest;
+      }
+      // Only a part that is really absent is carried over; a dangling link,
+      // a denied open or anything else fails closed.
+      if (err != 2 && err != 3) return null;
+      uint attrs = GetFileAttributesW(cur);
+      int aerr = Marshal.GetLastWin32Error();
+      if (attrs != 0xFFFFFFFF || (aerr != 2 && aerr != 3)) return null;
+      string parent = Path.GetDirectoryName(cur);
+      if (parent == null) return null;
+      string leaf = Path.GetFileName(cur);
+      rest = rest.Length == 0 ? leaf : leaf + "\\" + rest;
+      cur = parent;
+    }
+  }
 }
+'@
+}
+# A plain drive-letter path (C:\...) with no UNC, \\?\ or \\.\ form and no
+# stream colon, normalised by GetFullPath (strings only), or $null.
+function Get-NormPath([string]$p) {
+  try {
+    if (-not [IO.Path]::IsPathRooted($p)) { $p = Join-Path (Get-Location).ProviderPath $p }
+    if ($p -match '^[\\/]{2}') { return $null }
+    $full = [IO.Path]::GetFullPath($p).TrimEnd('\')
+  } catch { return $null }
+  if ($full -match '^[A-Za-z]:\\[^:]+$') { return $full }
+  return $null
+}
+function Resolve-Final([string]$p) {
+  try { $f = [SeaShellFinalPath]::Resolve($p) } catch { return $null }
+  if ($f -and $f -match '^[A-Za-z]:\\[^:]+$') { return $f }
+  return $null
+}
+function Test-Under([string]$path, [string[]]$dirs) {
+  foreach ($d in $dirs) { if ($path -ieq $d -or $path.StartsWith("$d\", [StringComparison]::OrdinalIgnoreCase)) { return $true } }
+  return $false
+}
+
+# Guard (2).
 if (-not $env:LOCALAPPDATA) { Write-Output 'install-native: refusing, LOCALAPPDATA is not set so the live install cannot be told apart'; exit 2 }
 $livePath = Get-NormPath "$env:LOCALAPPDATA\Programs\SeaShell"
 $programs = Get-NormPath "$env:LOCALAPPDATA\Programs"
+$liveReal = if ($livePath) { Resolve-Final $livePath } else { $null }
+$programsReal = if ($programs) { Resolve-Final $programs } else { $null }
+if (-not $liveReal -or -not $programsReal) { Write-Output "install-native: refusing, $env:LOCALAPPDATA\Programs\SeaShell is not a plain drive-letter path that resolves, so the live install cannot be told apart"; exit 2 }
+$given = $Target
 $Target = Get-NormPath $Target
-$isLive = ($Target -ieq $livePath) -or ($Target -like '*\AppData\Local\Programs\SeaShell')
+if (-not $Target) { Write-Output "install-native: refusing, -Target $given is not a plain drive-letter path (no UNC, \\?\, \\.\ or stream form)"; exit 2 }
+$given = $Source
+$Source = Get-NormPath $Source
+if (-not $Source) { Write-Output "install-native: refusing, -Source $given is not a plain drive-letter path (no UNC, \\?\, \\.\ or stream form)"; exit 2 }
+$targetReal = Resolve-Final $Target
+if (-not $targetReal) { Write-Output "install-native: refusing, cannot resolve where $Target really is (a link that cannot be followed, or not a drive path)"; exit 2 }
+$really = if ($targetReal -ine $Target) { " (really $targetReal)" } else { '' }
+$isLive = $false
+foreach ($t in @($Target, $targetReal)) {
+  if ($t -ieq $livePath -or $t -ieq $liveReal -or $t -like '*\AppData\Local\Programs\SeaShell') { $isLive = $true }
+}
 if ($isLive -and -not $Live) {
-  Write-Output "install-native: refusing, $Target is the live install and -Live was not given"
+  Write-Output "install-native: refusing, $Target$really is the live install and -Live was not given"
   exit 2
 }
 # Anything else in or under Programs is never a target, -Live or not.
-if (-not $isLive -and ($Target -ieq $programs -or $Target.StartsWith("$programs\", [StringComparison]::OrdinalIgnoreCase) -or $Target -like '*\AppData\Local\Programs*')) {
-  Write-Output "install-native: refusing, $Target is under $programs but is not the live install"
+if (-not $isLive -and ((Test-Under $Target @($programs, $programsReal)) -or (Test-Under $targetReal @($programs, $programsReal)) -or $Target -like '*\AppData\Local\Programs*' -or $targetReal -like '*\AppData\Local\Programs*')) {
+  Write-Output "install-native: refusing, $Target$really is under $programs but is not the live install"
   exit 2
 }
-$Source = Get-NormPath $Source
 
-# Guard (3): any process whose image lies in the folder, by path. A SeaShell.exe
-# whose path cannot be read might be running from it, so that refuses too.
+# Guard (3): any process whose image lies in the folder, by path as reported
+# and as resolved (a process started through a junction or 8.3 name reports
+# that name). A SeaShell.exe whose path cannot be read or resolved might be
+# running from it, so that refuses too.
 function Test-InUse([string]$dir, [string]$label) {
+  $dirReal = Resolve-Final $dir
+  if (-not $dirReal) { Write-Output "install-native: refusing, cannot resolve where $label really is"; exit 3 }
   $procs = @(Get-CimInstance Win32_Process)
   $exe = "$dir\SeaShell.exe"
+  $blind = @()
   foreach ($p in $procs) {
-    if (-not $p.ExecutablePath) { continue }
     $path = $p.ExecutablePath
-    if ($path -ieq $exe -or $path.StartsWith("$dir\", [StringComparison]::OrdinalIgnoreCase)) {
-      Write-Output "install-native: refusing, pid $($p.ProcessId) runs $path from $label"
+    if (-not $path) {
+      if ($p.Name -ieq 'SeaShell.exe') { $blind += $p.ProcessId }
+      continue
+    }
+    $pathReal = Resolve-Final $path
+    if ($path -ieq $exe -or (Test-Under $path @($dir, $dirReal)) -or ($pathReal -and (Test-Under $pathReal @($dir, $dirReal)))) {
+      $shown = if ($pathReal -and $pathReal -ine $path) { "$path (really $pathReal)" } else { $path }
+      Write-Output "install-native: refusing, pid $($p.ProcessId) runs $shown from $label"
       exit 3
     }
+    if (-not $pathReal -and $p.Name -ieq 'SeaShell.exe') { $blind += $p.ProcessId }
   }
-  $blind = @($procs | Where-Object { -not $_.ExecutablePath -and $_.Name -ieq 'SeaShell.exe' })
   if ($blind.Count -gt 0) {
-    Write-Output ("install-native: refusing, SeaShell.exe pid " + (($blind | ForEach-Object ProcessId) -join ',') + " has an unreadable path and may run from $label")
+    Write-Output ("install-native: refusing, SeaShell.exe pid " + ($blind -join ',') + " has an unreadable or unresolvable path and may run from $label")
     exit 3
   }
 }
 
-$stamp = Get-Date -Format 'yyyyMMdd-HHmm'
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $parent = Split-Path -Parent $Target
 $leaf = Split-Path -Leaf $Target
 $liveFlag = if ($isLive) { ' -Live' } else { '' }
@@ -77,11 +180,17 @@ function Assert-Free([string]$path) {
 if ($Rollback) {
   Test-InUse $Target $Target
   # Newest by the stamp in the name: a moved folder keeps its old timestamps.
-  $pattern = '^' + [regex]::Escape($leaf) + '\.(electron|native)-(\d{8}-\d{4})$'
+  # Stamps carry seconds (yyyyMMdd-HHmmss); an older minute stamp counts as :00.
+  $pattern = '^' + [regex]::Escape($leaf) + '\.(electron|native)-(\d{8}-\d{4}(?:\d{2})?)$'
+  $stampKey = { $s = [regex]::Match($_.Name, $pattern).Groups[2].Value; if ($s.Length -eq 13) { "${s}00" } else { $s } }
   $backups = @(Get-ChildItem -LiteralPath $parent -Directory -Force -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match $pattern } |
-    Sort-Object { [regex]::Match($_.Name, $pattern).Groups[2].Value } -Descending)
+    Sort-Object $stampKey -Descending)
   if ($backups.Count -eq 0) { Write-Output "install-native: nothing to roll back to, no $leaf.electron-* or $leaf.native-* next to $Target"; exit 5 }
+  if ($backups.Count -ge 2 -and ($backups[0] | ForEach-Object $stampKey) -eq ($backups[1] | ForEach-Object $stampKey)) {
+    Write-Output "install-native: refusing, $($backups[0].Name) and $($backups[1].Name) have the same stamp so the newest is not known; nothing was changed"
+    exit 5
+  }
   $backup = $backups[0].FullName
   Test-InUse $backup $backup
   $aside = "$Target.rolledback-$stamp"
