@@ -5,11 +5,18 @@
  * tutorial from `src/renderer/tutorial/Tutorial.tsx`.
  * Pure: the shell draws a `SheetModel`, the controller applies its clicks.
  *
- * Only Aero is drawn on the native build, so the other themes, the pane frames
- * and the CRT glass are listed greyed with the tooltip `coming back` (spec 12).
- * Accent, the tab strip and terminal palette work.
+ * The theme row is the native build's own (`nativeTheme`: System, Aero, Aero
+ * Dark and the ported Electron themes; colorization.ts paints them). The pane
+ * frames and the CRT glass are listed greyed with the tooltip `coming back`
+ * (spec 12). Accent, the tab strip and terminal palette work.
  */
-import { TAB_STRIP_ORDER, type Settings, type TabStripMode } from '../../renderer/settings/settings.js'
+import {
+  NATIVE_THEME_ORDER,
+  TAB_STRIP_ORDER,
+  type NativeThemeKey,
+  type Settings,
+  type TabStripMode,
+} from '../../renderer/settings/settings.js'
 import {
   ACCENTS,
   PALETTE_LABELS,
@@ -17,7 +24,6 @@ import {
   PALETTES,
   PANE_STYLE_ORDER,
   PANE_STYLES,
-  THEME_ORDER,
   THEMES,
   type PaneStyleKey,
   type PaletteKey,
@@ -40,6 +46,38 @@ const TAB_STRIP_LABELS: Record<TabStripMode, string> = { system: 'System', light
 
 /** UI copy here never carries an em dash (U+2014): the renderer's spaced dash becomes ', '. */
 const noDash = (s: string): string => s.replace(/\s*\u2014\s*/g, ', ')
+
+/**
+ * The native themes' button labels, names (for the note) and tooltips. The
+ * ported ones keep the Electron theme's own words; Homebrew's label there is
+ * `Current`, which would read as the selected one here.
+ */
+const ported = (k: 'mac' | 'macDark' | 'nautical' | 'hacker' | 'homebrew', label = THEMES[k].label) => ({
+  label,
+  name: noDash(THEMES[k].name),
+  note: noDash(THEMES[k].note),
+})
+const NATIVE_THEMES: Record<NativeThemeKey, { label: string; name: string; note: string }> = {
+  system: {
+    label: 'System',
+    name: 'System',
+    note: 'Follows the Windows app theme: Aero Glass while apps are light, Aero Dark while they are dark.',
+  },
+  aero: { label: THEMES.aero.label, name: noDash(THEMES.aero.name), note: noDash(THEMES.aero.note) },
+  aeroDark: {
+    label: 'Aero Dark',
+    name: 'Aero Dark, Windows 7 glass over dark surfaces',
+    note: 'The Aero glass tab strip over Windows 11 dark surfaces, from the panes to the menus and dialogs, with the desktop colour as the accent.',
+  },
+  mac: ported('mac'),
+  macDark: ported('macDark'),
+  nautical: ported('nautical'),
+  hacker: ported('hacker'),
+  homebrew: ported('homebrew', 'Homebrew'),
+}
+
+/** The Tab strip setting darkens Aero's strip only; every other theme sets its own. System counts while it can be Aero. */
+export const tabStripApplies = (theme: NativeThemeKey): boolean => theme === 'aero' || theme === 'system'
 
 /**
  * The check rows, SettingsPanel.tsx:66-100 (GROUPS), titles verbatim. Two
@@ -74,7 +112,8 @@ export const SETTINGS_CHECKS: readonly string[] = CHECKS.map((c) => c.id)
 /** The accent option id for a `#rrggbb` key: the hex without `#`. */
 export const accentOptionId = (key: string): string => key.replace(/^#/, '')
 
-export function settingsSheet(settings: Settings, platform: string, uiScale = 1): SheetModel {
+/** `appsDark` is the shell's last report, for the note on what System is showing now. */
+export function settingsSheet(settings: Settings, platform: string, uiScale = 1, appsDark = false): SheetModel {
   const option = (id: string, label: string, selected: boolean, disabled: boolean, tooltip: string | null, swatch: string | null = null) => ({
     id,
     label,
@@ -88,14 +127,12 @@ export function settingsSheet(settings: Settings, platform: string, uiScale = 1)
       id: 'theme',
       kind: 'buttons',
       label: 'Theme',
-      options: THEME_ORDER.map((k) =>
-        k === 'aero'
-          ? option(k, THEMES[k].label, true, false, noDash(THEMES[k].note))
-          : option(k, THEMES[k].label, false, true, COMING_BACK),
-      ),
-      // The renderer's detail is the theme's name. Homebrew's own label is
-      // `Current`, so the note says which theme is current instead of the button.
-      note: `Current: ${noDash(THEMES.aero.name)}`,
+      options: NATIVE_THEME_ORDER.map((k) => option(k, NATIVE_THEMES[k].label, settings.nativeTheme === k, false, NATIVE_THEMES[k].note)),
+      // The renderer's detail is the theme's name.
+      note:
+        settings.nativeTheme === 'system'
+          ? `Current: System, showing ${appsDark ? NATIVE_THEMES.aeroDark.label : NATIVE_THEMES.aero.label} while Windows apps are ${appsDark ? 'dark' : 'light'}.`
+          : `Current: ${NATIVE_THEMES[settings.nativeTheme].name}`,
     },
     {
       id: 'accent',
@@ -107,12 +144,18 @@ export function settingsSheet(settings: Settings, platform: string, uiScale = 1)
       ],
     },
     {
-      // Plan amendment 10/03 05:40: a dark mode for the tabs only.
+      // Plan amendment 10/03 05:40: a dark mode for Aero's tabs only. Greyed under a theme with its own strip.
       id: 'tabStrip',
       kind: 'buttons',
       label: 'Tab strip',
-      options: TAB_STRIP_ORDER.map((k) => option(k, TAB_STRIP_LABELS[k], settings.tabStrip === k, false, null)),
-      note: 'System follows the Windows app theme. Only the tabs darken; everything below them stays light.',
+      options: TAB_STRIP_ORDER.map((k) =>
+        tabStripApplies(settings.nativeTheme)
+          ? option(k, TAB_STRIP_LABELS[k], settings.tabStrip === k, false, null)
+          : option(k, TAB_STRIP_LABELS[k], settings.tabStrip === k, true, 'Aero Glass only'),
+      ),
+      note: tabStripApplies(settings.nativeTheme)
+        ? 'For Aero Glass: System follows the Windows app theme. Only the tabs darken; everything below them stays light.'
+        : 'For Aero Glass only. This theme sets its own tab strip.',
     },
     {
       id: 'palette',

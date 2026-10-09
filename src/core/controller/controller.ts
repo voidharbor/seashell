@@ -72,12 +72,12 @@ import { ExplorerState, FLASH_MS, type Listing } from './explorer.js'
 import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-state.js'
 import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
 import { mem, statusModel } from './status.js'
-import { colorizationToTokens, isColorization, withAccent } from './colorization.js'
-import { accentOptionId, cleanNewPaneCommand, paletteOverride, SETTINGS_CHECKS, settingsSheet, tutorialSheet } from './sheets.js'
+import { colorizationToTokens, isColorization, resolveTheme, themeTokens, withAccent } from './colorization.js'
+import { accentOptionId, cleanNewPaneCommand, paletteOverride, SETTINGS_CHECKS, settingsSheet, tabStripApplies, tutorialSheet } from './sheets.js'
 import { STEPS, type TutorialStep } from './tutorial-steps.js'
 import { Projects } from './projects.js'
 import { ACCENTS, PALETTE_ORDER, type PaletteKey } from '../../renderer/theme/tokens.js'
-import { TAB_STRIP_ORDER, type TabStripMode } from '../../renderer/settings/settings.js'
+import { NATIVE_THEME_ORDER, TAB_STRIP_ORDER, type NativeThemeKey, type TabStripMode } from '../../renderer/settings/settings.js'
 import { isShellTimeout, SHELL_NO_ANSWER } from '../protocol.js'
 import type {
   ChordModel,
@@ -227,9 +227,9 @@ export class Controller {
   private readonly closing = new Set<string>()
   private emitQueued = false
   private seq = 0
-  /** The Aero tokens from the shell's `shell:colorization`; the 6.2 table until it reports. */
+  /** The theme's tokens from the shell's `shell:colorization`; Aero's 6.2 table until it reports. */
   private tokens: Record<string, string> = { ...colorizationToTokens(null), composition: '1' }
-  /** The last `shell:colorization` payload, kept so a `tabStrip` change can rebuild the tokens; null until it reports. */
+  /** The last `shell:colorization` payload, kept so a theme or `tabStrip` change can rebuild the tokens; null until it reports. */
   private colorization: { argb: string | null; opaque: boolean; composition: boolean; appsDark: boolean } | null = null
   /** The file explorer while the sidebar shows; null while hidden, as the renderer unmounts it. */
   private explorer: ExplorerState | null = null
@@ -317,7 +317,7 @@ export class Controller {
       this.uiFile = path.posix.join(this.paths.userData, 'ui-state.json')
       this.ui = loadUiState(this.uiFile)
       this.updateDismissed = this.ui.dismissedUpdate
-      // A saved `Dark` tab strip paints before the shell's first colorization.
+      // A saved theme or `Dark` tab strip paints before the shell's first colorization.
       this.rebuildTokens()
     }
     this.s = reducer(this.s, { type: 'explorer.setRoot', root: this.home })
@@ -2338,30 +2338,34 @@ export class Controller {
   private setSetting<K extends keyof UiState['settings']>(key: K, value: UiState['settings'][K]): void {
     if (this.ui.settings[key] === value) return
     this.ui = { ...this.ui, settings: { ...this.ui.settings, [key]: value } }
-    if (key === 'tabStrip') this.rebuildTokens()
+    if (key === 'tabStrip' || key === 'nativeTheme') this.rebuildTokens()
     this.saveUi()
     this.emit()
   }
 
   /**
-   * The token table from the last colorization and the `tabStrip` setting
-   * (plan amendment 10/03 05:40): `System` follows Windows' app theme, `Light`
-   * and `Dark` pin it. The accent override rides on top in `build()`, so it
-   * survives every rebuild.
+   * The token table from the last colorization, the `nativeTheme` setting
+   * (`System` is Aero or Aero Dark by Windows' app theme, so it flips live on
+   * ImmersiveColorSet) and, for Aero, the `tabStrip` setting (plan amendment
+   * 10/03 05:40): `System` follows Windows' app theme, `Light` and `Dark` pin
+   * it. The accent override rides on top in `build()`, so it survives every
+   * rebuild.
    */
   private rebuildTokens(): void {
     const c = this.colorization
+    const appsDark = c?.appsDark === true
+    const theme = resolveTheme(this.ui.settings.nativeTheme, appsDark)
     const mode = this.ui.settings.tabStrip
-    const darkStrip = mode === 'dark' || (mode === 'system' && c?.appsDark === true)
+    const darkStrip = mode === 'dark' || (mode === 'system' && appsDark)
     if (c === null) {
-      // The shell has not reported: the 6.2 table on glass, as at construction.
-      this.tokens = { ...colorizationToTokens(null, false, darkStrip), composition: '1' }
+      // The shell has not reported: the theme's table on glass, as at construction.
+      this.tokens = { ...themeTokens(theme, null, darkStrip), composition: '1' }
       return
     }
     // A missing or malformed colorization (DWM off, a remote session) paints
     // the opaque strip, as composition off does (Review Focus 5).
     const glass = c.composition && isColorization(c.argb)
-    this.tokens = { ...colorizationToTokens(c.argb, c.opaque, darkStrip), composition: glass ? '1' : '0' }
+    this.tokens = { ...themeTokens(theme, c.argb, darkStrip), composition: glass ? '1' : '0' }
   }
 
   private sheetEvent(t: string, e: UiEvent): void {
@@ -2411,10 +2415,13 @@ export class Controller {
       }
     } else if (field === 'palette') {
       if ((PALETTE_ORDER as readonly string[]).includes(option)) this.setSetting('palette', option as PaletteKey)
+    } else if (field === 'theme') {
+      if ((NATIVE_THEME_ORDER as readonly string[]).includes(option)) this.setSetting('nativeTheme', option as NativeThemeKey)
     } else if (field === 'tabStrip') {
-      if ((TAB_STRIP_ORDER as readonly string[]).includes(option)) this.setSetting('tabStrip', option as TabStripMode)
+      if (tabStripApplies(this.ui.settings.nativeTheme) && (TAB_STRIP_ORDER as readonly string[]).includes(option))
+        this.setSetting('tabStrip', option as TabStripMode)
     }
-    // Theme (Aero only), pane frame and CRT glass are greyed: nothing to apply.
+    // Pane frame and CRT glass are greyed: nothing to apply.
   }
 
   // ---------------------------------------------------------------------------
@@ -2671,7 +2678,7 @@ export class Controller {
       drawer: this.drawerModel(),
       sheet:
         this.sheetKind === 'settings'
-          ? settingsSheet(this.ui.settings, this.deps.platform, ui)
+          ? settingsSheet(this.ui.settings, this.deps.platform, ui, this.colorization?.appsDark === true)
           : this.sheetKind === 'projects'
             ? this.projects.sheet(ui)
             : this.sheetKind === 'tutorial'

@@ -6,16 +6,50 @@ const mods = { ctrl: false, alt: false, shift: false }
 const click = (c: Controller, target: string) => c.event({ type: 'click', target, x: 0, y: 0, button: 0, mods })
 
 describe('settings sheet', () => {
-  it('opens with Aero current and the other themes greyed with the tooltip', async () => {
+  it('opens with every native theme enabled and Aero current', async () => {
     const f = fakeDeps()
     const c = new Controller(f.deps, { home: '/h', version: '0', chords: [] })
     await c.boot(GEO)
     c.command('app.settings')
-    const sheet = c.model().sheet!
-    expect(sheet.kind).toBe('settings')
-    const theme = sheet.sections[0]!.fields.find((x) => x.id === 'theme')!
-    expect(theme.options!.filter((o) => !o.disabled).map((o) => o.id)).toEqual(['aero'])
-    expect(theme.options!.find((o) => o.id === 'retro')).toMatchObject({ disabled: true, tooltip: 'coming back' })
+    const theme = () => c.model().sheet!.sections[0]!.fields.find((x) => x.id === 'theme')!
+    expect(c.model().sheet!.kind).toBe('settings')
+    expect(theme().options!.map((o) => [o.id, o.label, o.disabled])).toEqual([
+      ['system', 'System', false],
+      ['aero', 'Aero Glass', false],
+      ['aeroDark', 'Aero Dark', false],
+      ['mac', 'macOS Light', false],
+      ['macDark', 'macOS Dark', false],
+      ['nautical', 'Nautical', false],
+      ['hacker', 'Hacker', false],
+      ['homebrew', 'Homebrew', false],
+    ])
+    expect(theme().options!.filter((o) => o.selected).map((o) => o.id)).toEqual(['aero'])
+    expect(theme().options!.some((o) => o.tooltip === 'coming back')).toBe(false)
+    expect(theme().note).toBe('Current: Aero Glass, the Windows 7 era')
+    click(c, 'sheet:settings:theme:aeroDark')
+    expect(theme().options!.filter((o) => o.selected).map((o) => o.id)).toEqual(['aeroDark'])
+    expect(theme().note).toBe('Current: Aero Dark, Windows 7 glass over dark surfaces')
+    click(c, 'sheet:settings:theme:system')
+    c.push('shell:colorization', { argb: '#FF881798', opaque: false, composition: true, appsDark: true })
+    expect(theme().note).toBe('Current: System, showing Aero Dark while Windows apps are dark.')
+    expect(JSON.stringify(c.model().sheet)).not.toMatch(/\u2014/)
+  })
+  it('the tab strip setting is for Aero only', async () => {
+    const f = fakeDeps()
+    const c = new Controller(f.deps, { home: '/h', version: '0', chords: [] })
+    await c.boot(GEO)
+    c.command('app.settings')
+    const strip = () => c.model().sheet!.sections[0]!.fields.find((x) => x.id === 'tabStrip')!
+    expect(strip().options!.every((o) => !o.disabled)).toBe(true)
+    click(c, 'sheet:settings:theme:macDark')
+    expect(strip().options!.every((o) => o.disabled && o.tooltip === 'Aero Glass only')).toBe(true)
+    expect(strip().note).toBe('For Aero Glass only. This theme sets its own tab strip.')
+    click(c, 'sheet:settings:tabStrip:dark')
+    expect(c.uiState().settings.tabStrip).toBe('system') // greyed: the click does nothing
+    click(c, 'sheet:settings:theme:aero')
+    click(c, 'sheet:settings:tabStrip:dark')
+    expect(c.model().tokens.stripDark).toBe('1')
+    expect(c.model().tokens.body).toBe('#ECE2F0') // light body, dark strip
   })
   it('accent and palette apply to the tokens and the model, and persist', async () => {
     const f = fakeDeps()
