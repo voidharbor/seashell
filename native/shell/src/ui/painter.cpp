@@ -144,7 +144,7 @@ Painter::Painter(ID2D1RenderTarget* rt, float dpiScale, float uiScale, const Tok
 }
 
 const Tokens& Painter::tokens() const {
-  static const Tokens kAero;
+  static const Tokens kAero{};
   return tokens_ ? *tokens_ : kAero;
 }
 
