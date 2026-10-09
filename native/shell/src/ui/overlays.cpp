@@ -26,9 +26,9 @@ std::wstring localTime(const std::string& iso) {
 }
 
 void card(Painter& p, D2D1_RECT_F r, const Tokens& t) {
-  // A 2 px drop shadow, then 6.3's #f0f0f0 face with a 1 px #a0a0a0 border.
-  p.roundedRect(D2D1::RectF(r.left + p.px(1), r.top + p.px(2), r.right + p.px(2), r.bottom + p.px(3)), t.radius, 0x000000, 0.18f, 0, 0);
-  p.roundedRect(r, t.radius, t.toastBg, 1, 0xA0A0A0, 1);
+  // A 2 px drop shadow, then 6.3's toastBg face (#f0f0f0) with a 1 px cardBorder (#a0a0a0).
+  p.roundedRect(D2D1::RectF(r.left + p.px(1), r.top + p.px(2), r.right + p.px(2), r.bottom + p.px(3)), t.radius, t.shadow, 0.18f, 0, 0);
+  p.roundedRect(r, t.radius, t.toastBg, 1, t.cardBorder, 1);
 }
 }  // namespace
 
@@ -71,7 +71,7 @@ void Ui::viewFindBar(Painter& p) {
   else if (!find_.valueUtf8().empty())
     count = L"0 of 0";
   float cw = 68 * s;
-  p.text(D2D1::RectF(x - cw, bar.top, x - 2 * s, bar.bottom), count, UiFont{ 11 }, m_.find.miss ? mixRgb(t_.danger, 0, 0.8f) : t_.toastText,
+  p.text(D2D1::RectF(x - cw, bar.top, x - 2 * s, bar.bottom), count, UiFont{ 11 }, m_.find.miss ? t_.dangerText : t_.toastText,
          Align::Center, true);
   x -= cw + 2 * s;
   auto toggle = [&](const char* target, const wchar_t* label, bool on) {
@@ -85,11 +85,11 @@ void Ui::viewFindBar(Painter& p) {
   toggle("find:case", L"Aa", m_.find.caseSensitive);
   D2D1_RECT_F field = D2D1::RectF(bar.left + 6 * s, bar.top + 4 * s, x - 2 * s, bar.bottom - 4 * s);
   hit(false, field, "find:query");
-  find_.draw(p, field, UiFont{ 12 }, 0x1E1E1E, m_.find.miss, caretOn_);
+  find_.draw(p, field, UiFont{ 12 }, t_.editText, m_.find.miss, caretOn_);
 }
 
 // The update banner (UpdateBanner.tsx; plan Task 14) in the band the core's
-// layout leaves above the status bar: toastBg with a 1 px #a0a0a0 top line,
+// layout leaves above the status bar: toastBg with a 1 px cardBorder top line,
 // the text at the left, the buttons at the right as win7Buttons (Download,
 // Install and Relaunch and Try again are the primary ones, btn--primary,
 // drawn with the default ring), and a thin accent bar along the bottom for a
@@ -103,7 +103,7 @@ void Ui::viewUpdate(Painter& p) {
   hit(false, band, "update:bar");
   if (p.live()) {
     p.fillRect(band, t_.toastBg);
-    p.fillRect(D2D1::RectF(band.left, band.top, band.right, band.top + std::max(1.f, std::round(d))), 0xA0A0A0);
+    p.fillRect(D2D1::RectF(band.left, band.top, band.right, band.top + std::max(1.f, std::round(d))), t_.cardBorder);
   }
   float bh = std::round(std::min(22 * s, band.bottom - band.top - 4 * s));
   float by = std::round((band.top + band.bottom) / 2 - bh / 2);
@@ -176,7 +176,7 @@ void Ui::viewOverlays(Painter& p) {
   if (modal() && m_.restore) {
     D2D1_RECT_F all = D2D1::RectF(0, 0, W, H);
     hit(false, all, "restore:card");
-    p.fillRect(all, 0x000000, 0.4f);
+    p.fillRect(all, t_.shadow, 0.4f);
     float cw = std::min(420 * s, W - 24 * s), ch = 150 * s;
     D2D1_RECT_F r = D2D1::RectF(std::round(W / 2 - cw / 2), std::round(H / 2 - ch / 2), std::round(W / 2 + cw / 2), std::round(H / 2 + ch / 2));
     card(p, r, t_);
@@ -218,8 +218,8 @@ void Ui::viewOverlays(Painter& p) {
     float left = std::clamp(px, 4 * s, std::max(4 * s, W - tw - 4 * s));
     float top = std::clamp(py, 2 * s, std::max(2 * s, H - th - 2 * s));
     D2D1_RECT_F r = D2D1::RectF(std::round(left), std::round(top), std::round(left + tw), std::round(top + th));
-    p.fillRect(r, 0xFFFFFF);
-    p.strokeRect(r, 0x767676);
-    p.text(inset(r, 6 * s, 0), tip_, f, 0x575757, Align::Left, true);
+    p.fillRect(r, t_.tipBg);
+    p.strokeRect(r, t_.tipBorder);
+    p.text(inset(r, 6 * s, 0), tip_, f, t_.tipText, Align::Left, true);
   }
 }

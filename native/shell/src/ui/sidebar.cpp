@@ -282,7 +282,7 @@ void Ui::viewSidebar(Painter& p) {
   p.text(D2D1::RectF(sb_.head.left + 12 * s, sb_.head.top, refresh.left - 4 * s, sb_.head.bottom - one), L"File Browser", UiFont{ 12, true },
          t_.badgeText, Align::Left, true);
   hit(false, refresh, "sidebar:refresh");
-  if (hovered("sidebar:refresh")) p.roundedRect(refresh, 3, 0xFFFFFF, pressed("sidebar:refresh") ? 0.9f : 0.6f, t_.panelBorder, 0.6f);
+  if (hovered("sidebar:refresh")) p.roundedRect(refresh, 3, t_.hoverFace, pressed("sidebar:refresh") ? 0.9f : 0.6f, t_.panelBorder, 0.6f);
   p.glyph(refresh, 0x27F3, hovered("sidebar:refresh") ? t_.titleText : t_.badgeText, 13);
 
   // The path strip: the selected path (or the root), its end always in view.

@@ -30,11 +30,11 @@ void Ui::viewPanes(Painter& p) {
     float th = title.bottom - title.top;
     uint32_t edge = hexColor(pm.color, t_.panelBorder);
 
-    // The title bar: 6.2's glass gradient, brighter on the focused pane.
+    // The title bar: 6.2's glass gradient, brighter (toward titleSheen) on the focused pane.
     hit(false, title, id + ":title");
     if (p.live() && th > 0) {
-      uint32_t top = pm.focused ? mixRgb(0xFFFFFF, t_.titleBar, 0.5f) : t_.titleBar;
-      uint32_t bottom = pm.focused ? mixRgb(0xFFFFFF, t_.titleBar, 0.2f) : mixRgb(t_.titleBar, t_.panelBorder, 0.85f);
+      uint32_t top = pm.focused ? mixRgb(t_.titleSheen, t_.titleBar, 0.5f) : t_.titleBar;
+      uint32_t bottom = pm.focused ? mixRgb(t_.titleSheen, t_.titleBar, 0.2f) : mixRgb(t_.titleBar, t_.panelBorder, 0.85f);
       auto c = [](uint32_t v) { return D2D1::ColorF(((v >> 16) & 0xFF) / 255.f, ((v >> 8) & 0xFF) / 255.f, (v & 0xFF) / 255.f, 1.f); };
       D2D1_GRADIENT_STOP stops[] = { { 0.f, c(top) }, { 1.f, c(bottom) } };
       p.gradientV(title, stops, 2);
@@ -93,7 +93,7 @@ void Ui::viewPanes(Painter& p) {
     if (pm.linkEnabled) {
       D2D1_RECT_F link = D2D1::RectF(rx - 18 * s, title.top + (th - 18 * s) / 2, rx, title.top + (th + 18 * s) / 2);
       hit(false, link, id + ":link");
-      if (hovered(id + ":link")) p.roundedRect(link, 3, 0xFFFFFF, 0.6f, t_.panelBorder, 0.6f);
+      if (hovered(id + ":link")) p.roundedRect(link, 3, t_.hoverFace, 0.6f, t_.panelBorder, 0.6f);
       p.glyph(link, 0x21C4, pm.linked ? t_.accent : t_.badgeText, 11);
       rx = link.left - 4 * s;
     }
@@ -126,15 +126,15 @@ void Ui::viewPanes(Painter& p) {
 void Ui::viewExitOverlay(Painter& p, const PaneModel& pm, D2D1_RECT_F g) {
   float s = p.scale();
   if (g.right - g.left < 40 * s || g.bottom - g.top < 40 * s) return;
-  p.fillRect(g, 0x000000, 0.55f);
+  p.fillRect(g, t_.shadow, 0.55f);
   float w = std::min(300 * s, g.right - g.left - 16 * s), h = std::min(88 * s, g.bottom - g.top - 8 * s);
   float cx = (g.left + g.right) / 2, cy = (g.top + g.bottom) / 2;
   D2D1_RECT_F card = D2D1::RectF(std::round(cx - w / 2), std::round(cy - h / 2), std::round(cx + w / 2), std::round(cy + h / 2));
-  p.roundedRect(card, t_.radius, t_.toastBg, 1, 0xA0A0A0, 1);
+  p.roundedRect(card, t_.radius, t_.toastBg, 1, t_.cardBorder, 1);
   bool failed = coreDead_ || (pm.exit && pm.exit->failed);
   std::wstring msg = coreDead_ ? L"core exited" : fromUtf8(pm.exit->text);
   p.text(D2D1::RectF(card.left + 10 * s, card.top + 8 * s, card.right - 10 * s, card.top + 36 * s), msg, UiFont{ 12, true },
-         failed ? mixRgb(t_.danger, 0x000000, 0.8f) : t_.toastText, Align::Center, true);
+         failed ? t_.dangerText : t_.toastText, Align::Center, true);
   D2D1_RECT_F btnR = D2D1::RectF(std::round(cx - 44 * s), card.bottom - 36 * s, std::round(cx + 44 * s), card.bottom - 12 * s);
   std::string target = "pane:" + pm.id + ":restart";
   hit(false, btnR, target);

@@ -1,5 +1,5 @@
 // The sheet over the dimmed window (redesign spec 6.3 cards and dialogs): a
-// centred toastBg card with a 1 px #a0a0a0 border and a 6 DIP radius, the
+// centred toastBg card with a 1 px cardBorder and the tokens' radius, the
 // title bold, each section's title in badgeText, option rows of win7Buttons
 // (pressed when selected, greyed when disabled, a 10 DIP swatch when the
 // option has one), 13 DIP Win7 check boxes, a text field through EditWidget,
@@ -159,7 +159,7 @@ void Ui::viewSheet(Painter& p) {
   // The dim takes every press that misses the card.
   D2D1_RECT_F all = D2D1::RectF(0, 0, W, H);
   hit(false, all, base);
-  p.fillRect(all, 0x000000, 0.4f);
+  p.fillRect(all, t_.shadow, 0.4f);
 
   float cw = std::round(std::min((float)sh.width * d, W * sheet::kMaxWidth));
   float pad = sheet::kPad * s;
@@ -203,7 +203,7 @@ void Ui::viewSheet(Painter& p) {
             std::string t = ft + ":" + o.id;
             reg(D2D1::RectF(x + dot / 2 - hitW / 2, cy - hitW / 2, x + dot / 2 + hitW / 2, cy + hitW / 2), t);
             if (paint && p.live() && dr.bottom > clip.top && dr.top < clip.bottom) {
-              uint32_t c = o.selected ? t_.accent : hovered(t) ? mixRgb(t_.toastText, 0xE6E6E6, 0.35f) : mixRgb(t_.toastText, 0xE6E6E6, 0.12f);
+              uint32_t c = o.selected ? t_.accent : hovered(t) ? mixRgb(t_.toastText, t_.dotTrack, 0.35f) : mixRgb(t_.toastText, t_.dotTrack, 0.12f);
               p.roundedRect(dr, kDot / 2, c, 1, 0, 0);
             }
             x += dot + gap;
@@ -235,7 +235,7 @@ void Ui::viewSheet(Painter& p) {
                 p.strokeRect(box, 0x5A5A5A, 1, 0.8f);
                 lr.left = box.right;
               }
-              p.text(lr, label, UiFont{ 11, o.selected && !o.disabled }, o.disabled ? 0x838383 : 0x1E1E1E, Align::Center, true);
+              p.text(lr, label, UiFont{ 11, o.selected && !o.disabled }, o.disabled ? t_.btnDisabledText : t_.btnText, Align::Center, true);
               ring(r, t);
             }
             x += bw + 6 * s;
@@ -253,11 +253,11 @@ void Ui::viewSheet(Painter& p) {
           reg(row, ft);
           stops.push_back(ft);
           if (paint && p.live() && row.bottom > clip.top && row.top < clip.bottom) {
-            // 6.3 check box: a #8e8f8f border over a light gradient face, #3c7fb1 under the pointer.
-            D2D1_GRADIENT_STOP stops2[] = { { 0.f, D2D1::ColorF(0xDCDCDC) }, { 1.f, D2D1::ColorF(0xFFFFFF) } };
+            // 6.3 check box: a checkBorder (#8e8f8f) over the checkTop to checkBottom face, editFocus under the pointer.
+            D2D1_GRADIENT_STOP stops2[] = { { 0.f, D2D1::ColorF(t_.checkTop) }, { 1.f, D2D1::ColorF(t_.checkBottom) } };
             p.gradientV(box, stops2, 2);
-            p.strokeRect(box, hovered(ft) ? 0x3C7FB1 : 0x8E8F8F);
-            if (f.check) p.glyph(box, 0x2713, 0x1E1E1E, 11);
+            p.strokeRect(box, hovered(ft) ? t_.editFocus : t_.checkBorder);
+            if (f.check) p.glyph(box, 0x2713, t_.editText, 11);
             p.text(labelR, fromUtf8(f.label), UiFont{ 12 }, t_.toastText, Align::Left, true);
             ring(D2D1::RectF(box.left, box.top, std::min(x0 + w, tx + p.textWidth(fromUtf8(f.label), UiFont{ 12 })), box.bottom), ft);
           }
@@ -273,9 +273,9 @@ void Ui::viewSheet(Painter& p) {
           reg(field, ft);
           stops.push_back(ft);
           if (paint && p.live() && field.bottom > clip.top && field.top < clip.bottom) {
-            p.fillRect(field, 0xFFFFFF);
-            p.strokeRect(field, sheetEdit_.focused() ? 0x3C7FB1 : 0xABADB3);
-            if (sheetEdit_.target() == ft) sheetEdit_.draw(p, inset(field, 4 * s, 0), UiFont{ 12 }, 0x1E1E1E, false, caretOn_);
+            p.fillRect(field, t_.editBg);
+            p.strokeRect(field, sheetEdit_.focused() ? t_.editFocus : t_.editBorder);
+            if (sheetEdit_.target() == ft) sheetEdit_.draw(p, inset(field, 4 * s, 0), UiFont{ 12 }, t_.editText, false, caretOn_);
             ring(field, ft);
           }
           y += 24 * s + 4 * s;
@@ -395,8 +395,8 @@ void Ui::viewSheet(Painter& p) {
   D2D1_RECT_F card = D2D1::RectF(std::round(W / 2 - cw / 2), std::round(H / 2 - ch / 2), std::round(W / 2 + cw / 2), std::round(H / 2 + ch / 2));
   hit(false, card, base + ":card");
   if (p.live()) {
-    p.roundedRect(D2D1::RectF(card.left + p.px(1), card.top + p.px(2), card.right + p.px(2), card.bottom + p.px(3)), t_.radius, 0x000000, 0.18f, 0, 0);
-    p.roundedRect(card, t_.radius, t_.toastBg, 1, 0xA0A0A0, 1);
+    p.roundedRect(D2D1::RectF(card.left + p.px(1), card.top + p.px(2), card.right + p.px(2), card.bottom + p.px(3)), t_.radius, t_.shadow, 0.18f, 0, 0);
+    p.roundedRect(card, t_.radius, t_.toastBg, 1, t_.cardBorder, 1);
   }
   // The tutorial's title is its step counter, quiet as .tut__step.
   p.text(D2D1::RectF(card.left + pad, card.top + 14 * s, card.right - pad, card.top + 40 * s), fromUtf8(sh.title), UiFont{ tutorial ? 12.f : 14.f, !tutorial },
