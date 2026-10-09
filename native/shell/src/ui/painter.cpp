@@ -27,10 +27,14 @@ std::wstring utf16(uint32_t cp) {
 
 // 6.3 button faces: top, upper middle, lower middle, bottom; the border.
 struct Face { uint32_t c0, c1, c2, c3, border; };
-const Face kNormal{ 0xF2F2F2, 0xEBEBEB, 0xDDDDDD, 0xCFCFCF, 0x707070 };
-const Face kHover{ 0xEAF6FD, 0xD9F0FC, 0xBEE6FD, 0xA7D9F5, 0x3C7FB1 };
-const Face kPressed{ 0xE5F4FC, 0xC4E5F6, 0x98D1EF, 0x68B3DB, 0x2C628B };
-const Face kDisabled{ 0xF4F4F4, 0xF4F4F4, 0xF4F4F4, 0xF4F4F4, 0xADB2B5 };
+Face faceOf(const Tokens& t, BtnState state) {
+  switch (state) {
+    case BtnState::Hover: return Face{ t.btnHover0, t.btnHover1, t.btnHover2, t.btnHover3, t.btnHoverBorder };
+    case BtnState::Pressed: return Face{ t.btnPress0, t.btnPress1, t.btnPress2, t.btnPress3, t.btnPressBorder };
+    case BtnState::Disabled: return Face{ t.btnDisabled, t.btnDisabled, t.btnDisabled, t.btnDisabled, t.btnDisabledBorder };
+    default: return Face{ t.btn0, t.btn1, t.btn2, t.btn3, t.btnBorder };
+  }
+}
 
 // The row icons and arrows: factory resources built once in their own unit
 // box (icons.tsx's 16 by 16 viewBox; 10 by 10 for the triangles) and mapped
@@ -133,10 +137,15 @@ uint32_t mixRgb(uint32_t rgb, uint32_t base, float w) {
   return ch(16) | ch(8) | ch(0);
 }
 
-Painter::Painter(ID2D1RenderTarget* rt, float dpiScale, float uiScale)
-    : rt_(rt), dpi_(dpiScale > 0 ? dpiScale : 1), ui_(uiScale > 0 ? uiScale : 1) {
+Painter::Painter(ID2D1RenderTarget* rt, float dpiScale, float uiScale, const Tokens* tokens)
+    : rt_(rt), dpi_(dpiScale > 0 ? dpiScale : 1), ui_(uiScale > 0 ? uiScale : 1), tokens_(tokens) {
   if (rt_) rt_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 1), brush_.GetAddressOf());
   if (!brush_) rt_ = nullptr;
+}
+
+const Tokens& Painter::tokens() const {
+  static const Tokens kAero;
+  return tokens_ ? *tokens_ : kAero;
 }
 
 ID2D1SolidColorBrush* Painter::brush(uint32_t rgb, float alpha) {
@@ -319,8 +328,8 @@ void Painter::twisty(D2D1_RECT_F r, bool open, uint32_t rgb, float alpha) {
 
 void Painter::win7Button(D2D1_RECT_F r, BtnState state, const std::wstring& label, float labelDip) {
   if (!rt_) return;
-  const Face& f = state == BtnState::Hover ? kHover : state == BtnState::Pressed ? kPressed
-                : state == BtnState::Disabled ? kDisabled : kNormal;
+  const Tokens& t = tokens();
+  const Face f = faceOf(t, state);
   float one = std::max(1.f, std::round(dpi_));
   if (state == BtnState::Default) {
     // The default button's #3399ff glow ring, just outside the border.
@@ -331,13 +340,13 @@ void Painter::win7Button(D2D1_RECT_F r, BtnState state, const std::wstring& labe
   float rad = 3 * scale();
   // The inner highlight; pressed buttons show an inset shadow instead.
   if (state == BtnState::Pressed)
-    rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, one * 1.5f, one * 1.5f), rad, rad), brush(0x000000, 0.18f), one);
+    rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, one * 1.5f, one * 1.5f), rad, rad), brush(t.shadow, 0.18f), one);
   else if (state != BtnState::Disabled)
-    rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, one * 1.5f, one * 1.5f), rad, rad), brush(0xFFFFFF, 0.8f), one);
-  // 6.3: the default button keeps the 1 px #707070 border; only the glow ring marks it.
+    rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, one * 1.5f, one * 1.5f), rad, rad), brush(t.btnShine, 0.8f), one);
+  // 6.3: the default button keeps the 1 px btnBorder; only the glow ring marks it.
   rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, one / 2, one / 2), rad, rad), brush(f.border, 1), one);
   if (!label.empty())
-    text(r, label, UiFont{ labelDip }, state == BtnState::Disabled ? 0x838383 : 0x1E1E1E, Align::Center, true);
+    text(r, label, UiFont{ labelDip }, state == BtnState::Disabled ? t.btnDisabledText : t.btnText, Align::Center, true);
 }
 
 void Painter::win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor,

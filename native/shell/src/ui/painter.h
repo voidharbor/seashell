@@ -2,13 +2,16 @@
 // Rects are device pixels; `scale` is the DPI scale times the model's uiScale,
 // so DIP sizes (radii, borders, font sizes) multiply by it. A Painter built
 // with a null target draws nothing: Ui runs the views through one to register
-// their hit rects without painting.
+// their hit rects without painting. The chrome's tokens ride along so the
+// 6.3 controls (buttons, edit boxes, menus, scrollbars) paint the theme's
+// faces; a Painter built without them paints Aero's.
 #pragma once
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
 #include <cstdint>
 #include <string>
+#include "ui/tokens.h"
 
 struct UiFont {
   float dip = 12;        // Segoe UI 9 pt
@@ -21,8 +24,9 @@ enum class BtnState { Normal, Hover, Pressed, Default, Disabled };
 
 class Painter {
 public:
-  Painter(ID2D1RenderTarget* rt, float dpiScale, float uiScale);
+  Painter(ID2D1RenderTarget* rt, float dpiScale, float uiScale, const Tokens* tokens = nullptr);
   bool live() const { return rt_ != nullptr; }
+  const Tokens& tokens() const;                 // the ones given, else the Aero defaults
   ID2D1RenderTarget* rt() const { return rt_; }
   float scale() const { return dpi_ * ui_; }    // DIP to device pixels for chrome sizes
   float dpiScale() const { return dpi_; }
@@ -33,14 +37,15 @@ public:
   void roundedRect(D2D1_RECT_F r, float radiusDip, uint32_t fill, float fillAlpha, uint32_t stroke, float strokeAlpha);
   void gradientV(D2D1_RECT_F r, const D2D1_GRADIENT_STOP* stops, UINT n, float radiusDip = 0);
   void gradientH(D2D1_RECT_F r, const D2D1_GRADIENT_STOP* stops, UINT n, float radiusDip = 0);   // left to right
-  // 6.3 button: two-stop gradient, 1 px border, inner highlight, a label.
+  // 6.3 button: the four-stop face of its state from the tokens (btn*), 1 px border, inner highlight, a label.
   void win7Button(D2D1_RECT_F r, BtnState state, const std::wstring& label = L"", float labelDip = 12);
   // The Win7 tab: 5 px top radii (6.3); the active one shades into joinColor (the
   // body color under it) with no bottom border, so it merges into the content.
   // sheen is mixed into the inactive face's top at topSheen (63 percent white
   // over #dcdcdc is 6.3's #f2f2f2) and more under the pointer; border is the 1 px edge.
+  // tabs.cpp passes the tokens' tabSheen and tabEdge.
   void win7Tab(D2D1_RECT_F r, bool active, bool hover, uint32_t activeFace, uint32_t inactiveFace, uint32_t joinColor,
-               uint32_t sheen = 0xFFFFFF, uint32_t border = 0x8E8F8F, float topSheen = 0.63f);
+               uint32_t sheen, uint32_t border, float topSheen = 0.63f);
   void text(D2D1_RECT_F r, const std::wstring& s, UiFont f, uint32_t rgb, Align a = Align::Left, bool ellipsis = true, float alpha = 1);
   // text() in two halves, so a caller can keep the layout across frames (the
   // explorer's row names): build it for a w by h box, then draw it in r.
@@ -59,7 +64,8 @@ public:
   void arrow(D2D1_RECT_F box, Dir dir, uint32_t rgb, float alpha = 1);   // a filled triangle filling box
   // The Win7 caption glow behind text on glass: a white rect blurred by
   // blurDip through the D2D Gaussian blur (stacked soft rects without it).
-  void glow(D2D1_RECT_F r, float blurDip = 4, float alpha = 0.85f);
+  // The strip passes the tokens' glyphGlow as alpha.
+  void glow(D2D1_RECT_F r, float blurDip = 4, float alpha = 0.5f);
   float textWidth(const std::wstring& s, UiFont f) const;   // device pixels
   // The caret index (UTF-16) nearest to x within s laid out from x0.
   size_t hitIndex(const std::wstring& s, UiFont f, float x0, float x) const;
@@ -79,6 +85,7 @@ private:
 
   ID2D1RenderTarget* rt_;
   float dpi_, ui_;
+  const Tokens* tokens_;
   Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
 };
 

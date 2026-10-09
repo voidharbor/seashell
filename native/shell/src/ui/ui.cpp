@@ -171,7 +171,7 @@ void Ui::layout() {
   stripHits_.clear();
   bodyHits_.clear();
   sidebarGeometry();
-  Painter none(nullptr, dpi(), (float)m_.window.uiScale);
+  Painter none(nullptr, dpi(), (float)m_.window.uiScale, &t_);
   viewTabs(none);
   viewSidebar(none);
   viewPanes(none);
@@ -765,20 +765,21 @@ void Ui::drawBackground(ID2D1RenderTarget* rt) {
 }
 
 void Ui::drawStrip(ID2D1RenderTarget* rt) {
-  Painter p(rt, dpi(), (float)m_.window.uiScale);
+  Painter p(rt, dpi(), (float)m_.window.uiScale, &t_);
   if (!p.live()) return;
   // Gray-scale text: ClearType needs an opaque background, the glass is not.
   rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
   RECT rc{};
   GetClientRect(Window::instance().hwnd(), &rc);
   D2D1_RECT_F strip = D2D1::RectF(0, 0, (float)rc.right, (float)Window::instance().stripHeightPx());
-  // The colorization's wash over the glass; the dark strip's is black at 55 percent.
-  if (onGlass()) p.fillRect(strip, stripDark() ? 0x000000 : t_.glassTint & 0xFFFFFF, stripDark() ? 0.55f : 0.10f);
+  // The theme's wash over the glass: the colorization at 10 percent, or on a
+  // dark strip glassTint's own colour (Aero's black) at 55 percent.
+  if (onGlass()) p.fillRect(strip, t_.glassTint & 0xFFFFFF, stripDark() ? 0.55f : 0.10f);
   else {
     // No composition: the opaque frame. The DWM caption buttons sit under the
     // client pixels, so their 138 DIP stay at alpha 0 or they would be covered.
     strip.right = std::max(0.f, strip.right - 138 * dpi());
-    p.fillRect(strip, t_.frame);   // the dark strip's frame token is #1F1F1F
+    p.fillRect(strip, t_.frame);   // the dark strip's and Aero Dark's frame token is #1F1F1F
   }
   viewTabs(p);
 }
@@ -794,7 +795,7 @@ bool Ui::stripDark() const {
 }
 
 void Ui::drawBody(ID2D1RenderTarget* rt) {
-  Painter p(rt, dpi(), (float)m_.window.uiScale);
+  Painter p(rt, dpi(), (float)m_.window.uiScale, &t_);
   if (!p.live()) return;
   viewSidebar(p);
   viewPanes(p);
@@ -805,7 +806,7 @@ void Ui::drawBody(ID2D1RenderTarget* rt) {
 }
 
 void Ui::drawOverlays(ID2D1RenderTarget* rt) {
-  Painter p(rt, dpi(), (float)m_.window.uiScale);
+  Painter p(rt, dpi(), (float)m_.window.uiScale, &t_);
   if (!p.live()) return;
   viewFindBar(p);
   viewMenu(p);

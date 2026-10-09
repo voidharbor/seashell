@@ -23,13 +23,10 @@ const float kBtnDip = 28;
 const float kArrowDip = 18;      // the overflow arrows
 const UINT kRepeatDelayMs = 350; // app-scrollbar.ts REPEAT_DELAY_MS
 const UINT kRepeatEveryMs = 90;  // app-scrollbar.ts REPEAT_EVERY_MS
-// The dark strip (Task 12b): the inactive tabs' highlight and the tab edge.
-// The zoom badge on the dark strip is the sheen with kDarkBadgeText on it; the
-// badge and badgeText tokens stay light for the pane titles, sheets and
-// sidebar below the strip.
-const uint32_t kDarkSheen = 0x3A3A3A;
-const uint32_t kDarkBadgeText = 0xD0D0D0;
-const uint32_t kDarkTabEdge = 0x0A0A0A;
+// The dark strip (Task 12b): the inactive tabs' highlight and the tab edge are
+// the tabSheen and tabEdge tokens. The zoom badge on the dark strip is the
+// sheen with stripBadgeText on it; the badge and badgeText tokens belong to
+// the pane titles, sheets and sidebar below the strip, light under Aero.
 const float kDarkTopSheen = 0.4f;   // the dark inactive face's top keeps its 40 percent sheen
 
 // A glyph button on glass: a frosted face under the pointer, fainter on the
@@ -41,13 +38,14 @@ void glassButton(Painter& p, D2D1_RECT_F r, bool hover, bool down, bool dark) {
 }
 
 // A chrome glyph in frameText. On glass it sits on the Win7 caption glow, as
-// the caption text does, so it reads over any wallpaper; the opaque strip
-// needs none, and neither does the dark strip, whose black wash carries its
-// light glyphs (a white glow would wash them out).
-void stripGlyph(Painter& p, bool glass, D2D1_RECT_F r, uint32_t cp, uint32_t ink, float dip, float alpha = 1) {
-  if (glass && p.live()) {
+// the caption text does, so it reads over any wallpaper; glow is the tokens'
+// glyphGlow (0.5: 0.85 was too bright a white behind every glyph). The opaque
+// strip needs none, and neither does a dark strip, whose dark wash carries its
+// light glyphs (a white glow would wash them out): viewTabs passes 0 for both.
+void stripGlyph(Painter& p, float glow, D2D1_RECT_F r, uint32_t cp, uint32_t ink, float dip, float alpha = 1) {
+  if (glow > 0 && p.live()) {
     float cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2, h = p.px(dip) * 0.5f;
-    p.glow(D2D1::RectF(cx - h, cy - h, cx + h, cy + h), 4, 0.85f * alpha);
+    p.glow(D2D1::RectF(cx - h, cy - h, cx + h, cy + h), 4, glow * alpha);
   }
   p.glyph(r, cp, ink, dip, alpha);
 }
@@ -65,7 +63,7 @@ void Ui::viewTabs(Painter& p) {
   uint32_t ink = t_.frameText;
   bool dark = stripDark();
   bool glass = onGlass();
-  bool glow = glass && !dark;
+  float glow = glass && !dark ? t_.glyphGlow : 0.f;
   float one = std::max(1.f, std::round(d));
 
   // The menu button (Phase 2 opens the menu; Phase 1 toasts).
@@ -93,10 +91,10 @@ void Ui::viewTabs(Painter& p) {
     float zw = p.textWidth(z, UiFont{ 11 }) + 14 * s;
     D2D1_RECT_F badge = D2D1::RectF(rx - zw, btnTop + 4 * s, rx, btnBottom - 4 * s);
     hit(true, badge, "zoom:badge");
-    uint32_t badgeFill = dark ? kDarkSheen : t_.badge;
+    uint32_t badgeFill = dark ? t_.tabSheen : t_.badge;
     uint32_t badgeHover = dark ? mixRgb(0xFFFFFF, badgeFill, 0.15f) : 0xFFFFFF;
     p.roundedRect(badge, 8, hovered("zoom:badge") ? badgeHover : badgeFill, 0.9f, t_.panelBorder, 0.8f);
-    p.text(badge, z, UiFont{ 11 }, dark ? kDarkBadgeText : t_.badgeText, Align::Center, false);
+    p.text(badge, z, UiFont{ 11 }, dark ? t_.stripBadgeText : t_.badgeText, Align::Center, false);
     rx = badge.left - 6 * s;
   }
 
@@ -169,11 +167,11 @@ void Ui::viewTabs(Painter& p) {
     if (!t.renaming && ch.right > ch.left) hit(true, ch, id + ":close");
     if (dark) {
       // The dark face runs to the strip's bottom, where a 1 DIP body-coloured
-      // seam joins the active tab to the light body: a hard edge, no border.
-      p.win7Tab(r, t.active, hover, t_.tabActive, t_.tabInactive, t_.tabActive, kDarkSheen, kDarkTabEdge, kDarkTopSheen);
+      // seam joins the active tab to the body: a hard edge, no border.
+      p.win7Tab(r, t.active, hover, t_.tabActive, t_.tabInactive, t_.tabActive, t_.tabSheen, t_.tabEdge, kDarkTopSheen);
       if (t.active && p.live()) p.fillRect(D2D1::RectF(r.left + one, r.bottom - one, r.right - one, r.bottom), t_.body);
     } else {
-      p.win7Tab(r, t.active, hover, t_.tabActive, t_.tabInactive, t_.body);
+      p.win7Tab(r, t.active, hover, t_.tabActive, t_.tabInactive, t_.body, t_.tabSheen, t_.tabEdge);
     }
     if (t.active && p.live()) {
       // --tabOnMark, the accent line, along the top inside the radii.
@@ -182,7 +180,7 @@ void Ui::viewTabs(Painter& p) {
     if (t.renaming) {
       D2D1_RECT_F er = D2D1::RectF(r.left + 6 * s, r.top + 5 * s, r.right - 6 * s, r.bottom - 4 * s);
       hit(true, shown(er), id + ":rename");
-      // The rename box keeps its white Win7 face, so its text stays dark on the dark strip.
+      // The rename box keeps the edit face (white under Aero), so on the dark strip its text is the card's.
       rename_.draw(p, er, UiFont{ 12 }, dark ? t_.toastText : t_.tabText, false, caretOn_);
     } else {
       bool showClose = hover;
