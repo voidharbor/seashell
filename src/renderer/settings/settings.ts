@@ -64,11 +64,22 @@ export interface Settings {
    * the chrome below it keeps its light faces.
    */
   tabStrip: TabStripMode
+  /**
+   * The native shell's chrome theme, its own key: `theme` is the Electron
+   * app's, which the native build never honoured, so a saved `theme` (the
+   * Electron default is `nautical`) must not restyle the window. `system`
+   * is Aero while Windows apps are light and Aero Dark while they are dark.
+   */
+  nativeTheme: NativeThemeKey
 }
 
 export type TabStripMode = 'system' | 'light' | 'dark'
 
 export const TAB_STRIP_ORDER: readonly TabStripMode[] = ['system', 'light', 'dark']
+
+export type NativeThemeKey = 'system' | 'aero' | 'aeroDark' | 'mac' | 'macDark' | 'nautical' | 'hacker' | 'homebrew'
+
+export const NATIVE_THEME_ORDER: readonly NativeThemeKey[] = ['system', 'aero', 'aeroDark', 'mac', 'macDark', 'nautical', 'hacker', 'homebrew']
 
 export const DEFAULT_SETTINGS: Settings = {
   attentionGlow: true,
@@ -82,6 +93,7 @@ export const DEFAULT_SETTINGS: Settings = {
   crt: 'theme',
   accent: null,
   tabStrip: 'system',
+  nativeTheme: 'aero',
 }
 
 /** Allowed values per enum setting, so nothing out of localStorage can paint. */
@@ -91,6 +103,7 @@ const ENUMS = {
   palette: PALETTE_ORDER,
   crt: ['theme', 'on', 'off'] as const,
   tabStrip: TAB_STRIP_ORDER,
+  nativeTheme: NATIVE_THEME_ORDER,
 } satisfies Record<string, readonly string[]>
 
 const ACCENT_KEYS: readonly string[] = ACCENTS.map((a) => a.key)
