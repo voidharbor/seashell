@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ALL_TOKEN_KEYS, colorizationToTokens, resolveTheme, themeTokens, type ChromeTheme, type ChromeTokens } from '../../src/core/controller/colorization.js'
@@ -202,5 +202,29 @@ describe('the theme setting', () => {
     click(c, 'sheet:settings:accent:default')
     expect(c.model().tokens.accent).toBe('#D0A63A')
     expect(c.uiState().settings.nativeTheme).toBe('nautical')
+  })
+})
+
+describe('tokens.h', () => {
+  const h = readFileSync(join(__dirname, '../../native/shell/src/ui/tokens.h'), 'utf8')
+  it('declares and parses every key, its default the Aero value', () => {
+    const decl = new Map<string, string>()
+    for (const line of h.split('\n')) {
+      const m = /^\s*uint32_t\s+([^;]+);/.exec(line)
+      if (!m) continue
+      for (const part of m[1]!.split(',')) {
+        const [name, value] = part.split('=').map((x) => x.trim())
+        decl.set(name!, value!)
+      }
+    }
+    const aero = themeTokens('aero', null) as unknown as Record<string, string>
+    for (const k of ALL_TOKEN_KEYS) {
+      const want = `0x${aero[k]!.slice(1)}`
+      expect(decl.get(k), `tokens.h ${k}`).toBe(want)
+      expect(h, `fromModel ${k}`).toContain(`rgb("${k}", t.${k})`)
+    }
+    expect(decl.size).toBe(ALL_TOKEN_KEYS.length)
+    expect(h).toMatch(/float glyphGlow = 0\.5f;/)
+    expect(h).toContain('tokens.find("glyphGlow")')
   })
 })
