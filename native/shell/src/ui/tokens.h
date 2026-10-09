@@ -75,7 +75,7 @@ struct Tokens {
   uint32_t btnText = 0x1E1E1E, btnDisabledText = 0x838383;
 
   float radius = 6;                 // --paneRadius, --cardRadius
-  float glyphGlow = 0.5f;           // the strip glyphs' white glow on glass, an alpha (0 on the dark strip)
+  float glyphGlow = 0.65f;          // the strip glyphs' white glow on glass, an alpha (0 on the dark strip)
 
   static Tokens fromModel(const std::map<std::string, std::string>& tokens) {
     Tokens t;

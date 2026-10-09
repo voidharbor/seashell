@@ -39,7 +39,7 @@ void glassButton(Painter& p, D2D1_RECT_F r, bool hover, bool down, bool dark) {
 
 // A chrome glyph in frameText. On glass it sits on the Win7 caption glow, as
 // the caption text does, so it reads over any wallpaper; glow is the tokens'
-// glyphGlow (0.5: 0.85 was too bright a white behind every glyph). The opaque
+// glyphGlow (0.65: the old full-white glow was too bright behind every glyph). The opaque
 // strip needs none, and neither does a dark strip, whose dark wash carries its
 // light glyphs (a white glow would wash them out): viewTabs passes 0 for both.
 void stripGlyph(Painter& p, float glow, D2D1_RECT_F r, uint32_t cp, uint32_t ink, float dip, float alpha = 1) {

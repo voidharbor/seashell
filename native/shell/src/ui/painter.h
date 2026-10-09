@@ -65,7 +65,7 @@ public:
   // The Win7 caption glow behind text on glass: a white rect blurred by
   // blurDip through the D2D Gaussian blur (stacked soft rects without it).
   // The strip passes the tokens' glyphGlow as alpha.
-  void glow(D2D1_RECT_F r, float blurDip = 4, float alpha = 0.5f);
+  void glow(D2D1_RECT_F r, float blurDip = 4, float alpha = 0.65f);
   float textWidth(const std::wstring& s, UiFont f) const;   // device pixels
   // The caret index (UTF-16) nearest to x within s laid out from x0.
   size_t hitIndex(const std::wstring& s, UiFont f, float x0, float x) const;

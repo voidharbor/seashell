@@ -181,8 +181,12 @@ const DARK_STRIP: Readonly<Partial<TokenTable>> = Object.freeze({
  */
 export type ChromeTokens = TokenTable & { stripDark: '0' | '1'; radius: string; glyphGlow: string }
 
-/** The glyph glow on light glass: 0.85 read as too bright a white behind the strip's glyphs. */
-const GLYPH_GLOW = '0.5'
+/**
+ * The glyph glow on light glass. The old glow painted full white whatever its
+ * alpha (painter.cpp), too bright behind the strip's glyphs; 0.5 let the moon
+ * and menu glyphs sink into a dark wallpaper.
+ */
+const GLYPH_GLOW = '0.65'
 
 const DARK_TEXT = 0x1e1e1e
 const LIGHT_TEXT = 0xffffff

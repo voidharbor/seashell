@@ -118,12 +118,12 @@ const AERO_LITERALS = {
 
 describe('Aero', () => {
   it('is the 784beb5 table, with the literals as the new keys and the softer glyph glow', () => {
-    expect(themeTokens('aero', null)).toEqual({ ...SPEC_784, ...AERO_LITERALS, stripDark: '0', radius: '6', glyphGlow: '0.5' })
+    expect(themeTokens('aero', null)).toEqual({ ...SPEC_784, ...AERO_LITERALS, stripDark: '0', radius: '6', glyphGlow: '0.65' })
     expect(themeTokens('aero', '#C8881798')).toEqual(themeTokens('aero', null))
     expect(colorizationToTokens(null)).toEqual(themeTokens('aero', null))
   })
   it('derives a non-default colorization exactly as 784beb5 did', () => {
-    expect(themeTokens('aero', '#FF0078D7')).toEqual({ ...BLUE_784, ...AERO_LITERALS, stripDark: '0', radius: '6', glyphGlow: '0.5' })
+    expect(themeTokens('aero', '#FF0078D7')).toEqual({ ...BLUE_784, ...AERO_LITERALS, stripDark: '0', radius: '6', glyphGlow: '0.65' })
   })
   it('darkens only the strip under the dark tab strip, and drops the glow there', () => {
     const light = themeTokens('aero', '#FF0078D7')
@@ -148,7 +148,7 @@ describe('Aero Dark and the ported themes', () => {
     expect(themeTokens('hacker', null)).toMatchObject({ accent: '#00FF41', radius: '0', glassTint: '#8C050505' })
     expect(themeTokens('homebrew', null)).toMatchObject({ accent: '#28FE14', radius: '4' })
     expect(themeTokens('macDark', null)).toMatchObject({ body: '#2A2A2C', radius: '10', stripDark: '1', glyphGlow: '0' })
-    expect(themeTokens('mac', null)).toMatchObject({ body: '#F2F2F5', radius: '10', stripDark: '0', glyphGlow: '0.5' })
+    expect(themeTokens('mac', null)).toMatchObject({ body: '#F2F2F5', radius: '10', stripDark: '0', glyphGlow: '0.65' })
     // The colorization does not reach a ported theme.
     expect(themeTokens('mac', '#FF0078D7')).toEqual(themeTokens('mac', null))
   })
@@ -224,7 +224,7 @@ describe('tokens.h', () => {
       expect(h, `fromModel ${k}`).toContain(`rgb("${k}", t.${k})`)
     }
     expect(decl.size).toBe(ALL_TOKEN_KEYS.length)
-    expect(h).toMatch(/float glyphGlow = 0\.5f;/)
+    expect(h).toMatch(/float glyphGlow = 0\.65f;/)
     expect(h).toContain('tokens.find("glyphGlow")')
   })
 })

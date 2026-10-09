@@ -430,7 +430,8 @@ void Painter::glow(D2D1_RECT_F r, float blurDip, float alpha) {
     if (SUCCEEDED(dc->CreateEffect(CLSID_D2D1Flood, flood.GetAddressOf())) &&
         SUCCEEDED(dc->CreateEffect(CLSID_D2D1Crop, crop.GetAddressOf())) &&
         SUCCEEDED(dc->CreateEffect(CLSID_D2D1GaussianBlur, gauss.GetAddressOf()))) {
-      flood->SetValue(D2D1_FLOOD_PROP_COLOR, D2D1::Vector4F(1, 1, 1, alpha));
+      // Premultiplied: (1, 1, 1, alpha) paints full white whatever the alpha.
+      flood->SetValue(D2D1_FLOOD_PROP_COLOR, D2D1::Vector4F(alpha, alpha, alpha, alpha));
       crop->SetInputEffect(0, flood.Get());
       crop->SetValue(D2D1_CROP_PROP_RECT, D2D1::Vector4F(r.left, r.top, r.right, r.bottom));
       gauss->SetInputEffect(0, crop.Get());
