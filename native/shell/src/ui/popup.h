@@ -1,6 +1,7 @@
-// A popup menu drawn by the Painter with redesign spec 6.3's menu values:
-// #f0f0f0 face, 1 px #979797 border, highlight #dcebfc with a 1 px #7da2ce
-// border and 3 px radius, separators #e0e0e0 over #ffffff, a 2 px drop shadow.
+// A popup menu drawn by the Painter with redesign spec 6.3's menu values (the
+// tokens' menu* faces; Aero's: #f0f0f0 face, 1 px #979797 border, highlight
+// #dcebfc with a 1 px #7da2ce border and 3 px radius, separators #e0e0e0 over
+// #ffffff), a 2 px drop shadow.
 // The menu's contents come from the model; the popup keeps only the keyboard
 // highlight. It registers `base` (the whole menu, base = prefix without its
 // trailing ':') and `prefix + id` for each item, and takes Up, Down, Enter and
@@ -57,7 +58,7 @@ public:
   bool key(UINT msg, WPARAM w, Mods m);
   std::function<void(D2D1_RECT_F, const std::string&)> hit;   // Ui::hit for the body
   std::function<void(const nlohmann::json&)> emit;             // Wire::sendEvent
-  uint32_t noteText = 0x6D6D6D;                                // the notes' and the title's colour (the tokens' badgeText)
+  uint32_t noteText = 0x6D6D6D;                                // the notes' and the title's colour (the tokens' badgeText, or menuGray)
 
 private:
   void step(int dir);

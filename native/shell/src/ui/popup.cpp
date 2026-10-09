@@ -5,8 +5,6 @@
 namespace {
 const float kItemDip = 22, kSepDip = 7, kPadDip = 3, kGutterDip = 28, kTextDip = 33, kRightDip = 24, kMinWidthDip = 180;
 const float kTitleDip = 22, kSwatchDip = 12, kNoteGapDip = 16, kNoteFontDip = 11;
-const uint32_t kFace = 0xF0F0F0, kBorder = 0x979797, kHi = 0xDCEBFC, kHiBorder = 0x7DA2CE, kSep = 0xE0E0E0;
-const uint32_t kText = 0x1E1E1E, kGray = 0x6D6D6D;   // Win7 menu text and GrayText
 
 nlohmann::json modsJson(Mods m) { return { { "ctrl", m.ctrl }, { "alt", m.alt }, { "shift", m.shift } }; }
 }  // namespace
@@ -47,6 +45,7 @@ void Popup::draw(Painter& p, D2D1_RECT_F body, float bodyTop, const std::string&
   if (prefix_.empty() || items_.empty()) return;
   float s = p.scale(), d = p.dpiScale();
   float one = std::max(1.f, std::round(d));
+  const Tokens& t = p.tokens();
   UiFont f{ 12 }, nf{ kNoteFontDip };
   float labelW = 0;
   for (const PopupItem& it : items_) {
@@ -67,10 +66,10 @@ void Popup::draw(Painter& p, D2D1_RECT_F body, float bodyTop, const std::string&
   D2D1_RECT_F r = D2D1::RectF(x, y, x + w, y + h);
   if (hit) hit(r, base());
   // The 2 px drop shadow, then the face and its border.
-  p.fillRect(D2D1::RectF(r.left + 2 * one, r.top + 2 * one, r.right + 2 * one, r.bottom + 2 * one), 0x000000, 0.12f);
-  p.fillRect(D2D1::RectF(r.left + one, r.top + one, r.right + one, r.bottom + one), 0x000000, 0.14f);
-  p.fillRect(r, kFace);
-  p.strokeRect(r, kBorder);
+  p.fillRect(D2D1::RectF(r.left + 2 * one, r.top + 2 * one, r.right + 2 * one, r.bottom + 2 * one), t.shadow, 0.12f);
+  p.fillRect(D2D1::RectF(r.left + one, r.top + one, r.right + one, r.bottom + one), t.shadow, 0.14f);
+  p.fillRect(r, t.menuBg);
+  p.strokeRect(r, t.menuBorder);
   // The header line, above the gutter.
   float gTop = r.top + one;
   if (!title_.empty()) {
@@ -80,8 +79,8 @@ void Popup::draw(Painter& p, D2D1_RECT_F body, float bodyTop, const std::string&
   }
   // The icon gutter's edge, as Win7 menus draw it.
   float gx = std::round(r.left + kPadDip * s + kGutterDip * s);
-  p.fillRect(D2D1::RectF(gx, gTop, gx + one, r.bottom - one), kSep);
-  p.fillRect(D2D1::RectF(gx + one, gTop, gx + 2 * one, r.bottom - one), 0xFFFFFF);
+  p.fillRect(D2D1::RectF(gx, gTop, gx + one, r.bottom - one), t.menuSep);
+  p.fillRect(D2D1::RectF(gx + one, gTop, gx + 2 * one, r.bottom - one), t.menuSepShine);
   float iy = r.top + kPadDip * s + titleH;
   for (size_t i = 0; i < items_.size(); i++) {
     const PopupItem& it = items_[i];
@@ -90,19 +89,19 @@ void Popup::draw(Painter& p, D2D1_RECT_F body, float bodyTop, const std::string&
     iy += ih;
     if (it.separator) {
       float sy = std::round((ir.top + ir.bottom) / 2 - one);
-      p.fillRect(D2D1::RectF(gx + 2 * one + 3 * s, sy, ir.right, sy + one), kSep);
-      p.fillRect(D2D1::RectF(gx + 2 * one + 3 * s, sy + one, ir.right, sy + 2 * one), 0xFFFFFF);
+      p.fillRect(D2D1::RectF(gx + 2 * one + 3 * s, sy, ir.right, sy + one), t.menuSep);
+      p.fillRect(D2D1::RectF(gx + 2 * one + 3 * s, sy + one, ir.right, sy + 2 * one), t.menuSepShine);
       continue;
     }
     std::string target = prefix_ + it.id;
     if (hit) hit(ir, target);
     bool hot = it.enabled && (hoverTarget == target || (hoverTarget.rfind(prefix_, 0) != 0 && kb_ == (int)i));
-    if (hot) p.roundedRect(ir, 3, kHi, 1, kHiBorder, 1);
+    if (hot) p.roundedRect(ir, 3, t.menuHi, 1, t.menuHiBorder, 1);
     // The gutter: a selected item's frame, then its colour square or, with none, a check.
     float gl = r.left + kPadDip * s, cx = (gl + gx) / 2, cy = (ir.top + ir.bottom) / 2;
     if (it.selected) {
       float half = std::round((ir.bottom - ir.top) / 2 - 2 * s);
-      p.roundedRect(D2D1::RectF(std::round(cx - half), std::round(cy - half), std::round(cx + half), std::round(cy + half)), 3, kHi, 1, kHiBorder, 1);
+      p.roundedRect(D2D1::RectF(std::round(cx - half), std::round(cy - half), std::round(cx + half), std::round(cy + half)), 3, t.menuHi, 1, t.menuHiBorder, 1);
     }
     float sh = std::round(kSwatchDip * s / 2);
     D2D1_RECT_F sq = D2D1::RectF(std::round(cx) - sh, std::round(cy) - sh, std::round(cx) + sh, std::round(cy) + sh);
@@ -110,16 +109,16 @@ void Popup::draw(Painter& p, D2D1_RECT_F body, float bodyTop, const std::string&
       p.fillRect(sq, it.swatch, it.enabled ? 1.f : 0.45f);
       p.strokeRect(sq, mixRgb(it.swatch, 0x000000, 0.6f), 1, it.enabled ? 1.f : 0.45f);
     } else if (it.emptySwatch) {
-      p.strokeRect(sq, kGray, 1);
+      p.strokeRect(sq, t.menuGray, 1);
     } else if (it.selected) {
-      p.glyph(sq, 0x2713, kText, 11);
+      p.glyph(sq, 0x2713, t.menuText, 11);
     }
     // The note ends 8 DIP in from the item's right (no submenu arrow takes that room here).
     float noteW = it.note.empty() ? 0 : std::ceil(p.textWidth(it.note, nf));
     float noteRight = ir.right - 8 * s, noteLeft = noteRight - noteW;
     float textRight = noteW > 0 ? noteLeft - kNoteGapDip * s : ir.right - 4 * s;
     p.text(D2D1::RectF(r.left + kTextDip * s, ir.top, std::max(r.left + kTextDip * s, textRight), ir.bottom), it.label, f,
-           it.enabled ? kText : kGray, Align::Left, true);
+           it.enabled ? t.menuText : t.menuGray, Align::Left, true);
     if (noteW > 0) p.text(D2D1::RectF(noteLeft, ir.top, noteRight + 1, ir.bottom), it.note, nf, noteText, Align::Right, false);
   }
 }

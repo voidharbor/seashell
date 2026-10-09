@@ -243,10 +243,11 @@ void EditWidget::draw(Painter& p, D2D1_RECT_F r, UiFont f, uint32_t textColor, b
   dpiScale_ = p.dpiScale();
   uiScale_ = p.scale() / p.dpiScale();
   if (!p.live()) return;
-  // A Win7 text box: white face, #abadb3 border (the accent when focused), a
-  // red tint when the find query has no match.
-  p.fillRect(r, miss ? 0xFFD9D9 : 0xFFFFFF);
-  p.strokeRect(r, miss ? 0xE04040 : focused_ ? 0x3C7FB1 : 0xABADB3);
+  // A Win7 text box: the edit face (white under Aero), its border (the focus
+  // blue when focused), a red tint when the find query has no match.
+  const Tokens& t = p.tokens();
+  p.fillRect(r, miss ? t.editMissBg : t.editBg);
+  p.strokeRect(r, miss ? t.editMissBorder : focused_ ? t.editFocus : t.editBorder);
   float pad = p.px(4);
   D2D1_RECT_F inner = D2D1::RectF(r.left + pad, r.top + 1, r.right - pad, r.bottom - 1);
   float width = inner.right - inner.left;
@@ -257,7 +258,7 @@ void EditWidget::draw(Painter& p, D2D1_RECT_F r, UiFont f, uint32_t textColor, b
   if (full - scroll_ < width) scroll_ = std::max(0.f, full - width);
   p.pushClip(inner);
   if (value_.empty()) {
-    if (!placeholder_.empty()) p.text(inner, placeholder_, f, 0x6D6D6D, Align::Left, true);
+    if (!placeholder_.empty()) p.text(inner, placeholder_, f, t.editPlaceholder, Align::Left, true);
   } else {
     D2D1_RECT_F tr = D2D1::RectF(inner.left - scroll_, inner.top, inner.left - scroll_ + full + p.px(8), inner.bottom);
     if (hasSelection() && focused_) {

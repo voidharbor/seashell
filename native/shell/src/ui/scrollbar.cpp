@@ -48,9 +48,10 @@ void ScrollBar::draw(Painter& p, const ScrollState& s, const std::string& hoverT
   }
   if (!p.live()) return;
   float one = std::max(1.f, std::round(p.dpiScale()));
+  const Tokens& t = p.tokens();
   // The track and its 1 px inset line.
-  p.fillRect(bar_, 0xF0F0F0);
-  p.strokeRect(track, 0xE3E3E3);
+  p.fillRect(bar_, t.scrollTrack);
+  p.strokeRect(track, t.scrollLine);
   // The arrows: 6.3's button face under the pointer, the face's top colour otherwise.
   auto button = [&](D2D1_RECT_F r, const std::string& id, Painter::Dir dir) {
     bool hover = hoverTarget == id;
@@ -58,7 +59,7 @@ void ScrollBar::draw(Painter& p, const ScrollState& s, const std::string& hoverT
     else p.win7Button(r, BtnState::Normal);
     float a = std::round(std::min(r.right - r.left, r.bottom - r.top) * 0.42f);
     float x = std::round((r.left + r.right - a) / 2), y = std::round((r.top + r.bottom - a) / 2);
-    p.arrow(D2D1::RectF(x, y, x + a, y + a), dir, hover ? 0x1C4E7C : 0x4D4D4D);
+    p.arrow(D2D1::RectF(x, y, x + a, y + a), dir, hover ? t.scrollArrowHot : t.scrollArrow);
   };
   button(up, base + ":up", Painter::Dir::Up);
   button(down, base + ":down", Painter::Dir::Down);
@@ -66,11 +67,11 @@ void ScrollBar::draw(Painter& p, const ScrollState& s, const std::string& hoverT
   bool hot = s.dragging || hoverTarget == base + ":thumb";
   D2D1_RECT_F tr = inset(th, one, 0);
   if (hot) {
-    p.roundedRect(tr, 2, 0xDCEBFC, 1, 0x7DA2CE, 1);
+    p.roundedRect(tr, 2, t.scrollThumbHot, 1, t.scrollThumbHotBorder, 1);
   } else {
-    D2D1_GRADIENT_STOP stops[] = { { 0.f, c(0xF0F0F0) }, { 1.f, c(0xE3E3E3) } };
+    D2D1_GRADIENT_STOP stops[] = { { 0.f, c(t.scrollThumbTop) }, { 1.f, c(t.scrollThumbBottom) } };
     p.gradientH(tr, stops, 2, 2);
-    p.roundedRect(tr, 2, 0, 0, 0xA0A0A0, 1);
+    p.roundedRect(tr, 2, 0, 0, t.scrollThumbBorder, 1);
   }
   // Three grip lines across the middle, each with a light line under it.
   if (th.bottom - th.top >= 14 * scale_) {
@@ -78,8 +79,8 @@ void ScrollBar::draw(Painter& p, const ScrollState& s, const std::string& hoverT
     float cx = std::round((th.left + th.right) / 2);
     for (int i = -1; i <= 1; i++) {
       float y = cy + i * 2 * one - one;
-      p.fillRect(D2D1::RectF(cx - half, y, cx + half, y + one), hot ? 0x5B7FA6 : 0x8A8A8A);
-      p.fillRect(D2D1::RectF(cx - half, y + one, cx + half, y + 2 * one), 0xFFFFFF, 0.8f);
+      p.fillRect(D2D1::RectF(cx - half, y, cx + half, y + one), hot ? t.scrollGripHot : t.scrollGrip);
+      p.fillRect(D2D1::RectF(cx - half, y + one, cx + half, y + 2 * one), t.scrollGripShine, 0.8f);
     }
   }
 }

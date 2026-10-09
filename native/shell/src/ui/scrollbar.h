@@ -1,7 +1,8 @@
 // The Win7 scrollbar (redesign spec 6.3): 17 DIP wide, arrow buttons with the
 // button face, track #f0f0f0 with a 1 px inset #e3e3e3 line, thumb #f0f0f0 to
 // #e3e3e3 with a #a0a0a0 border, 2 px radius and three grip lines; hover thumb
-// #dcebfc with a #7da2ce border. One per scrolling view; the view owns the offset.
+// #dcebfc with a #7da2ce border (Aero's values of the tokens' scroll* faces).
+// One per scrolling view; the view owns the offset.
 //
 // Units: ScrollState is in DIP (the model's, uiScale already in), the bar's
 // rect in device pixels of the body; layout's `scale` converts (the DPI scale).
