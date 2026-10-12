@@ -5,8 +5,8 @@
 # so the distro needs none. The native shell runs this before the first core
 # spawn, unless SEASHELL_CORE_DIR is set:
 #   wsl.exe -d <distro> -e sh <this file> <mnt path of resources/core> <version>
-# The version stays put while the bundle changes, so the BUILD file (the sha256
-# of index.cjs, written by pack-native.ps1) is compared too. Prints one line:
+# The version stays put while the bundle changes, so the BUILD file (a sha256
+# over index.cjs and node/, written by pack-native.ps1) is compared too. Prints one line:
 # "staged <dst>" after a copy, "current <dst>" when nothing changed.
 set -eu
 src="${1:?usage: stage-core.sh <mnt path of resources/core> <version>}"

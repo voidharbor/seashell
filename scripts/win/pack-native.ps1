@@ -74,8 +74,13 @@ Copy-Item -Force "$node\bin\node" "$core\node\bin\node"
 Copy-Item -Force "$node\LICENSE" "$core\node\LICENSE"
 Copy-Item -Force "$node\VERSION" "$core\node\VERSION"
 Copy-Item -Recurse -Force "$node\lib" "$core\node\lib"
-# stage-core.sh re-copies when BUILD differs: the version stays while the bundle changes.
-$hash = (Get-FileHash -Algorithm SHA256 "$core\index.cjs").Hash.ToLowerInvariant()
+# stage-core.sh re-copies when BUILD differs: the version stays while the
+# bundle or the node beside it changes, so BUILD is one sha256 over the
+# sha256s of index.cjs and every file under node\.
+$hashed = @(Get-Item "$core\index.cjs") + @(Get-ChildItem -Recurse -File "$core\node" | Sort-Object FullName)
+$joined = ($hashed | ForEach-Object { (Get-FileHash -Algorithm SHA256 $_.FullName).Hash }) -join "`n"
+$sha = [Security.Cryptography.SHA256]::Create()
+$hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::ASCII.GetBytes($joined))).Replace('-', '').ToLowerInvariant()
 [IO.File]::WriteAllText("$core\BUILD", "$hash`n")
 
 $version = ([IO.File]::ReadAllText("$core\VERSION")).Trim()
