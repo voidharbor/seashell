@@ -40,7 +40,7 @@ $built = "$Root\shell-build\Release"
 $bundle = "$Worktree\out\core"
 $pty = "$Worktree\node_modules\node-pty"
 $node = "$Worktree\out\node"
-foreach ($need in @("$built\SeaShell.exe", "$bundle\index.cjs", "$bundle\VERSION", "$pty\package.json", "$pty\build\Release\pty.node", "$Root\scripts\win\stage-core.sh", "$node\bin\node", "$node\LICENSE", "$node\VERSION")) {
+foreach ($need in @("$built\SeaShell.exe", "$bundle\index.cjs", "$bundle\VERSION", "$pty\package.json", "$pty\build\Release\pty.node", "$Root\scripts\win\stage-core.sh", "$node\bin\node", "$node\LICENSE", "$node\VERSION", "$node\lib\libatomic.so.1")) {
   if (-not (Test-Path $need)) { [Console]::Error.WriteLine("pack-native: missing $need"); exit 3 }
 }
 # Checked before anything is written, so a -Zip without the scripts packs nothing.
@@ -73,6 +73,7 @@ New-Item -ItemType Directory -Force -Path "$core\node\bin" | Out-Null
 Copy-Item -Force "$node\bin\node" "$core\node\bin\node"
 Copy-Item -Force "$node\LICENSE" "$core\node\LICENSE"
 Copy-Item -Force "$node\VERSION" "$core\node\VERSION"
+Copy-Item -Recurse -Force "$node\lib" "$core\node\lib"
 # stage-core.sh re-copies when BUILD differs: the version stays while the bundle changes.
 $hash = (Get-FileHash -Algorithm SHA256 "$core\index.cjs").Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$core\BUILD", "$hash`n")

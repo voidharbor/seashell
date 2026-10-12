@@ -3,6 +3,8 @@
  * with the headless controller in front of it. Envelopes in on stdin, out on
  * stdout; stderr is the log.
  */
+// First: takes the bundled node's LD_LIBRARY_PATH out of process.env before anything copies it.
+import './node-env.js'
 import { createShim } from './electron-shim.js'
 import { startStdio } from './stdio-bridge.js'
 import { Controller } from './controller/controller.js'

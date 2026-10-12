@@ -3,6 +3,11 @@
 # into <worktree>/out/node (bin/node, LICENSE, VERSION), checked against
 # nodejs.org's SHASUMS256.txt. pack-native.ps1 ships it as resources\core\node
 # and the shell spawns the core with it, so the distro needs no node of its own.
+# That node also needs libatomic.so.1, which minimal distros (Ubuntu Base,
+# slim Debian) do not have, so lib/ carries the one from Ubuntu's libatomic1
+# package (apt-get download, checked against apt's signed index; GCC runtime
+# library exception) and the shell points LD_LIBRARY_PATH at it for node only.
+# Needs a Debian-family build host for apt-get and dpkg-deb.
 # The version defaults to the node on PATH, the one npm built node-pty with;
 # the script ends by loading node-pty under the fetched node and spawning a pty.
 # Run from WSL: scripts/win/fetch-node.sh [worktree] [vX.Y.Z]
@@ -23,10 +28,24 @@ rm -rf "$OUT" "$OUT.tmp"
 mkdir -p "$OUT.tmp"
 tar -xJf "$CACHE/$NAME.tar.xz" -C "$OUT.tmp" --strip-components=1 "$NAME/bin/node" "$NAME/LICENSE"
 echo "$VER" > "$OUT.tmp/VERSION"
+ATOMIC="$CACHE/libatomic1"
+rm -rf "$ATOMIC"
+mkdir -p "$ATOMIC"
+(cd "$ATOMIC" && apt-get download -q libatomic1 >/dev/null)
+dpkg-deb -x "$ATOMIC"/libatomic1_*_amd64.deb "$ATOMIC/x"
+mkdir -p "$OUT.tmp/lib"
+cp -L "$ATOMIC/x/usr/lib/x86_64-linux-gnu/libatomic.so.1" "$OUT.tmp/lib/libatomic.so.1"
+# Its doc folder is a link into the gcc-N-base package, which holds the copyright.
+base="$(readlink "$ATOMIC/x/usr/share/doc/libatomic1")"
+(cd "$ATOMIC" && apt-get download -q "$base" >/dev/null)
+dpkg-deb -x "$ATOMIC/${base}"_*_amd64.deb "$ATOMIC/x"
+cp "$ATOMIC/x/usr/share/doc/$base/copyright" "$OUT.tmp/lib/libatomic1.copyright"
+basename "$ATOMIC"/libatomic1_*_amd64.deb > "$OUT.tmp/lib/libatomic1.source"
 mv -T "$OUT.tmp" "$OUT"
 
-# node-pty's ABI has to match: load it and run one pty under the fetched node.
-"$OUT/bin/node" -e '
+# node-pty's ABI has to match: load it and run one pty under the fetched node,
+# with the loader path the shell gives it.
+LD_LIBRARY_PATH="$OUT/lib" "$OUT/bin/node" -e '
 const pty = require(process.argv[1])
 const p = pty.spawn("/bin/sh", ["-c", "echo pty-ok"], { cols: 40, rows: 5 })
 let out = ""

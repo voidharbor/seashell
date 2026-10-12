@@ -290,7 +290,7 @@ bool CoreProc::start() {
   // The staged core carries its own node (stage-core.sh, fetch-node.sh), the
   // build node-pty was made for, so the distro needs none. A dev run naming
   // its bundle uses SEASHELL_NODE, else the first node on the distro's PATH.
-  std::wstring node;
+  std::wstring node, nodeLib;
   if (coreDir.empty()) {
     if (stagedDir_.empty()) stagedDir_ = stageCore(distro, stagedHow_, lastError_);
     if (stagedDir_.empty()) return false;
@@ -298,6 +298,10 @@ bool CoreProc::start() {
     how = stagedHow_;
     while (coreDir.size() > 1 && coreDir.back() == L'/') coreDir.pop_back();
     node = coreDir + L"/node/bin/node";
+    // The libraries the bundled node needs and a minimal distro may lack
+    // (libatomic). The core takes both variables out of its env at once
+    // (src/core/node-env.ts), so the panes never see them.
+    nodeLib = coreDir + L"/node/lib";
   } else {
     node = envW(L"SEASHELL_NODE");
     if (node.empty()) node = L"node";
@@ -336,6 +340,10 @@ bool CoreProc::start() {
     L"SEASHELL_INSTANCE=" + instanceName(),
     L"SEASHELL_WSL_DISTRO=" + distro,
   };
+  if (!nodeLib.empty()) {
+    args.push_back(L"LD_LIBRARY_PATH=" + nodeLib);
+    args.push_back(L"SEASHELL_NODE_LIB=" + nodeLib);
+  }
   std::wstring cdp = envW(L"SEASHELL_CDP_PORT");
   if (!cdp.empty()) args.push_back(L"SEASHELL_CDP_PORT=" + cdp);
   // Under the test driver the core accepts the driver's test:* sends (coreSend; Task 14).
