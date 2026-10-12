@@ -1,8 +1,10 @@
 #!/bin/sh
 # Stage the core bundle from the Windows release layout into the distro's own
 # filesystem (spec 4.5), so node and node-pty load from ext4, not from /mnt/c.
-# The native shell runs it before the first core spawn, unless SEASHELL_CORE_DIR
-# is set: wsl.exe -d Ubuntu-24.04 -e sh <this file> <mnt path of resources/core> <version>
+# The bundle carries its own node (node/bin/node, scripts/win/fetch-node.sh),
+# so the distro needs none. The native shell runs this before the first core
+# spawn, unless SEASHELL_CORE_DIR is set:
+#   wsl.exe -d <distro> -e sh <this file> <mnt path of resources/core> <version>
 # The version stays put while the bundle changes, so the BUILD file (the sha256
 # of index.cjs, written by pack-native.ps1) is compared too. Prints one line:
 # "staged <dst>" after a copy, "current <dst>" when nothing changed.
@@ -21,6 +23,7 @@ current() {
   [ -f "$dst/VERSION" ] && [ "$(cat "$dst/VERSION")" = "$version" ] || return 1
   [ -f "$dst/index.cjs" ] || return 1
   if [ -f "$src/BUILD" ]; then cmp -s "$src/BUILD" "$dst/BUILD" || return 1; fi
+  if [ -f "$src/node/bin/node" ]; then [ -x "$dst/node/bin/node" ] || return 1; fi
   return 0
 }
 if current; then echo "current $dst"; exit 0; fi
@@ -29,6 +32,10 @@ if current; then echo "current $dst"; exit 0; fi
 rm -rf "$dst.tmp"
 mkdir -p "$dst.tmp"
 cp -r "$src/." "$dst.tmp/"
+# drvfs may hand the copies any mode; node and the pty helper must run.
+for f in "$dst.tmp/node/bin/node" "$dst.tmp/node_modules/node-pty/build/Release/spawn-helper"; do
+  if [ -f "$f" ]; then chmod 755 "$f"; fi
+done
 # A running core keeps its open files after the rename; only new spawns see the new copy.
 if [ -e "$dst" ]; then
   rm -rf "$dst.old"

@@ -1,7 +1,9 @@
 # Assemble release\win-native (spec 4.5): the shell, its DLLs, stage-core.sh
-# and resources\core (the bundle, VERSION, BUILD and the Linux node-pty). The
-# bundle and node-pty come from the worktree over \\wsl.localhost, because the
-# build tree's node_modules is the Windows install and out\ is never synced.
+# and resources\core (the bundle, VERSION, BUILD, the Linux node-pty and the
+# Linux node it was built for, out\node from scripts/win/fetch-node.sh). The
+# bundle, node-pty and node come from the worktree over \\wsl.localhost, because
+# the build tree's node_modules is the Windows install and out\ is never synced.
+# -Worktree is a build-time path only: nothing packed refers to it.
 # Refuses while release\win-native\SeaShell.exe runs (checked by path), so a
 # scratch instance is never overwritten under itself.
 # -Zip also writes release\SeaShell-<VERSION>-win-native.zip: a top-level
@@ -25,7 +27,8 @@ if ($running.Count -gt 0) {
 $built = "$Root\shell-build\Release"
 $bundle = "$Worktree\out\core"
 $pty = "$Worktree\node_modules\node-pty"
-foreach ($need in @("$built\SeaShell.exe", "$bundle\index.cjs", "$bundle\VERSION", "$pty\package.json", "$pty\build\Release\pty.node", "$Root\scripts\win\stage-core.sh")) {
+$node = "$Worktree\out\node"
+foreach ($need in @("$built\SeaShell.exe", "$bundle\index.cjs", "$bundle\VERSION", "$pty\package.json", "$pty\build\Release\pty.node", "$Root\scripts\win\stage-core.sh", "$node\bin\node", "$node\LICENSE", "$node\VERSION")) {
   if (-not (Test-Path $need)) { [Console]::Error.WriteLine("pack-native: missing $need"); exit 3 }
 }
 # Checked before anything is written, so a -Zip without the scripts packs nothing.
@@ -53,6 +56,10 @@ Copy-Item -Force "$pty\build\Release\pty.node" "$core\node_modules\node-pty\buil
 if (Test-Path "$pty\build\Release\spawn-helper") {
   Copy-Item -Force "$pty\build\Release\spawn-helper" "$core\node_modules\node-pty\build\Release\spawn-helper"
 }
+New-Item -ItemType Directory -Force -Path "$core\node\bin" | Out-Null
+Copy-Item -Force "$node\bin\node" "$core\node\bin\node"
+Copy-Item -Force "$node\LICENSE" "$core\node\LICENSE"
+Copy-Item -Force "$node\VERSION" "$core\node\VERSION"
 # stage-core.sh re-copies when BUILD differs: the version stays while the bundle changes.
 $hash = (Get-FileHash -Algorithm SHA256 "$core\index.cjs").Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$core\BUILD", "$hash`n")
@@ -60,7 +67,8 @@ $hash = (Get-FileHash -Algorithm SHA256 "$core\index.cjs").Hash.ToLowerInvariant
 $version = ([IO.File]::ReadAllText("$core\VERSION")).Trim()
 $files = @(Get-ChildItem -Recurse -File $dst)
 $mb = [math]::Round((($files | Measure-Object Length -Sum).Sum) / 1MB, 1)
-Write-Output "packed $dst (core $version, build $($hash.Substring(0, 12)), $($files.Count) files, $mb MB)"
+$nodeVersion = ([IO.File]::ReadAllText("$core\node\VERSION")).Trim()
+Write-Output "packed $dst (core $version, build $($hash.Substring(0, 12)), node $nodeVersion, $($files.Count) files, $mb MB)"
 
 if ($Zip) {
   $stageRoot = "$Root\release\zip-stage"
