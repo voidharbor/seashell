@@ -4,6 +4,9 @@
 # bundle, node-pty and node come from the worktree over \\wsl.localhost, because
 # the build tree's node_modules is the Windows install and out\ is never synced.
 # -Worktree is a build-time path only: nothing packed refers to it.
+# The MSVC runtime (msvcp140, vcruntime140, vcruntime140_1) is copied in from
+# the Build Tools redist folder (-CrtDir, else the newest one found), so a PC
+# without the Visual C++ redistributable still starts SeaShell.exe.
 # Refuses while release\win-native\SeaShell.exe runs (checked by path), so a
 # scratch instance is never overwritten under itself.
 # -Zip also writes release\SeaShell-<VERSION>-win-native.zip: a top-level
@@ -12,6 +15,7 @@
 param(
   [string]$Worktree = '\\wsl.localhost\Ubuntu-24.04\Users\joshwald\seashell-wt\redesign',
   [string]$Root = 'C:\seashell-build\redesign',
+  [string]$CrtDir = '',
   [switch]$Zip
 )
 $ErrorActionPreference = 'Stop'
@@ -24,6 +28,14 @@ if ($running.Count -gt 0) {
   exit 4
 }
 
+if (-not $CrtDir) {
+  $CrtDir = Get-ChildItem -Directory -Path 'C:\Program Files*\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT' -ErrorAction SilentlyContinue |
+    Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+}
+$crt = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
+foreach ($c in $crt) {
+  if (-not $CrtDir -or -not (Test-Path "$CrtDir\$c")) { [Console]::Error.WriteLine("pack-native: no $c in the MSVC redist folder '$CrtDir' (give -CrtDir)"); exit 3 }
+}
 $built = "$Root\shell-build\Release"
 $bundle = "$Worktree\out\core"
 $pty = "$Worktree\node_modules\node-pty"
@@ -42,6 +54,7 @@ if ($Zip) {
 New-Item -ItemType Directory -Force -Path $dst | Out-Null
 Copy-Item -Force "$built\SeaShell.exe" $exe
 Get-ChildItem -Path $built -Filter *.dll | ForEach-Object { Copy-Item -Force $_.FullName "$dst\$($_.Name)" }
+foreach ($c in $crt) { Copy-Item -Force "$CrtDir\$c" "$dst\$c" }
 
 $res = "$dst\resources"
 $core = "$res\core"
