@@ -10,6 +10,7 @@
 #include "ui/ui.h"
 #include "window.h"
 #include "version.h"
+#include "wsl_distro.h"
 #include <dwmapi.h>
 #include <shobjidl.h>
 #include <windowsx.h>
@@ -688,6 +689,18 @@ int App::main(HINSTANCE hinst) {
   if (!mutex_) { log("error: CreateMutex %lu", GetLastError()); return 1; }
   if (GetLastError() == ERROR_ALREADY_EXISTS) return signalFirstInstance(inst) ? 0 : 1;
 
+  // No WSL or no distro to run in: say so before any window, never a blank one.
+  const DistroPick& distro = wslDistroPick();
+  if (distro.name.empty()) {
+    std::wstring text = L"SeaShell runs its terminals in WSL 2 and found no Linux distribution to use.\n\n" + distro.error +
+                        L"\n\nInstall one from PowerShell with: wsl --install\n"
+                        L"Or set SEASHELL_WSL_DISTRO to the name of the distro to use. Then start SeaShell again.";
+    if (testMode_) log("error: no WSL distro (test mode, no MessageBox)");
+    else MessageBoxW(nullptr, text.c_str(), L"SeaShell", MB_OK | MB_ICONERROR);
+    CloseHandle(mutex_);
+    return 2;
+  }
+
   SetCurrentProcessExplicitAppUserModelID(L"dev.seashell.app");
   // OleInitialize (an apartment-threaded CoInitializeEx plus OLE) so the body can take drops.
   HRESULT hr = OleInitialize(nullptr);
@@ -738,7 +751,12 @@ int App::main(HINSTANCE hinst) {
   wire_.onPtyData = [this](const std::string& paneId, const std::string& bytes) { onPtyData(paneId, bytes); };
   wire_.onGridCmd = [this](const nlohmann::json& cmd) { onGridCmd(cmd); };
   wire_.onShellCmd = [this](const nlohmann::json& cmd) { onShellCmd(cmd); };
-  startCore();
+  if (!startCore()) {
+    std::wstring text = L"SeaShell could not start its core in the WSL distro \"" + wslDistro() + L"\".\n\n" + core_.lastError() +
+                        L"\n\nCheck that the distro starts (wsl -d " + wslDistro() + L"), or pick another with SEASHELL_WSL_DISTRO.";
+    if (testMode_) log("error: the first core start failed (test mode, no MessageBox)");
+    else MessageBoxW(Window::instance().hwnd(), text.c_str(), L"SeaShell", MB_OK | MB_ICONERROR);
+  }
   SetTimer(nullptr, 0, kBlinkMs, blinkTick);
 
   MSG msg;

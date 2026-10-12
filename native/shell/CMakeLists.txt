@@ -28,6 +28,11 @@ target_include_directories(width-test PRIVATE src)
 target_link_libraries(width-test PRIVATE vterm utf8proc::utf8proc)
 target_compile_options(width-test PRIVATE /W3 /utf-8 /EHsc)
 
+# Unit tests for the distro pick (wsl_distro.h); exits 1 on a failure.
+add_executable(distro-test tools/distro-test.cpp src/wsl_distro.cpp)
+target_include_directories(distro-test PRIVATE src)
+target_compile_options(distro-test PRIVATE /W3 /utf-8 /EHsc)
+
 # Feeds a VT corpus file into a Grid and prints its screen for scripts/vt-parity.mjs.
 add_executable(grid-test tools/grid-test.cpp src/grid.cpp src/grid_store.cpp src/width.cpp)
 target_include_directories(grid-test PRIVATE src)

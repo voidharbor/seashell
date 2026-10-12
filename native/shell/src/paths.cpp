@@ -1,4 +1,5 @@
 #include "paths.h"
+#include "wsl_distro.h"
 #include <windows.h>
 #include <shlobj.h>
 #include <nlohmann/json.hpp>
@@ -6,8 +7,6 @@
 #include <cmath>
 #include <fstream>
 #include <sstream>
-
-static const wchar_t* kDistro = L"Ubuntu-24.04";
 
 std::wstring envW(const wchar_t* name) {
   DWORD n = GetEnvironmentVariableW(name, nullptr, 0);
@@ -83,7 +82,7 @@ std::wstring toWindowsPath(const std::string& linuxPath) {
   }
   std::replace(p.begin(), p.end(), L'/', L'\\');
   if (p.empty() || p[0] != L'\\') p = L"\\" + p;
-  return std::wstring(L"\\\\wsl.localhost\\") + kDistro + p;
+  return std::wstring(wslUncPrefix()) + wslDistro() + p;
 }
 
 std::wstring instanceName() {

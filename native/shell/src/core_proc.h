@@ -11,6 +11,12 @@
 #include <mutex>
 #include <string>
 
+// CreateProcessW with CREATE_NO_WINDOW that inherits exactly the three stdio
+// handles given, nothing else the shell holds open.
+bool spawnHidden(const std::wstring& exe, const std::wstring& cmd, HANDLE in, HANDLE out, HANDLE err,
+                 PROCESS_INFORMATION& pi, DWORD& lastError);
+std::wstring wslExe();   // %SystemRoot%\System32\wsl.exe
+
 class CoreProc {
 public:
   ~CoreProc();
@@ -19,6 +25,8 @@ public:
   bool alive() const; DWORD pid() const;
   void stop(DWORD graceMs);             // sends app:beforeQuit, waits graceMs for exit, then TerminateProcess
   std::wstring commandLine() const;     // for the log
+  // Why the last start() failed, in words for a message box ("" after a good start).
+  std::wstring lastError() const { return lastError_; }
 
   // The quit drain without blocking the UI thread: sends app:beforeQuit and
   // marks this run's exit as expected (never a crash, never relaunched).
@@ -37,6 +45,7 @@ private:
   std::wstring cmd_;
   std::wstring stagedDir_;              // staged once per shell process; relaunches reuse it
   std::string stagedHow_;               // "staged" (copied) or "current" (already there)
+  std::wstring lastError_;
   std::atomic<bool> expected_{ false };
   LPARAM gen_ = 0;
   ULONGLONG started_ = 0;

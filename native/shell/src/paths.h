@@ -10,7 +10,7 @@ std::wstring fromUtf8(const std::string& s);
 std::wstring userDataWin();                           // SEASHELL_USER_DATA, default %APPDATA%\seashell
 std::string userDataLinux();                          // C:\a\b to /mnt/c/a/b
 std::string toLinuxPath(const std::wstring& winPath);  // C:\x to /mnt/c/x, \\wsl.localhost\<distro>\x to /x
-std::wstring toWindowsPath(const std::string& linuxPath);   // /mnt/c/x to C:\x, else \\wsl.localhost\Ubuntu-24.04\x
+std::wstring toWindowsPath(const std::string& linuxPath);   // /mnt/c/x to C:\x, else \\wsl.localhost\<distro>\x (wsl_distro.h)
 std::wstring instanceName();                          // SEASHELL_INSTANCE, default "default"
 
 // The window's last normal (unmaximized) rect plus whether it was maximized.
