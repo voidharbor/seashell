@@ -26,6 +26,26 @@ seconds it stops to ask something. That's how one person ships like six.
 
 ## Install
 
+### Windows
+
+Download `SeaShell-0.6.0-win-native.zip` from the
+[0.6.0 release](https://github.com/voidharbor/seashell/releases/tag/v0.6.0), unzip it anywhere,
+open the `SeaShell` folder and run `SeaShell.exe`. The exe is not signed, so SmartScreen may stop
+it the first time: click More info, then Run anyway.
+
+It needs Windows 10 or 11 (x64) and WSL 2 with a Linux distro that has glibc 2.34 or newer
+(Ubuntu 22.04, Debian 12 or later). `wsl --install` sets one up. SeaShell uses your default
+distro; set `SEASHELL_WSL_DISTRO` to use another. The first launch copies SeaShell's core and the
+Node it runs on into `~/.cache/seashell-win/core/` inside the distro, so the distro does not need
+Node of its own.
+
+To keep it in `%LOCALAPPDATA%\Programs\SeaShell`, run
+`powershell -ExecutionPolicy Bypass -File .\install-native.ps1 -Live` from the unzipped folder.
+That copy checks GitHub for a newer release when it starts. No shortcut is made.
+
+### macOS
+
+The macOS and Linux builds stay on [0.5.0](https://github.com/voidharbor/seashell/releases/tag/v0.5.0).
 Download the `.dmg` from [Releases](https://github.com/voidharbor/seashell/releases), open it,
 and drag SeaShell to Applications. The build is universal — it runs natively on Apple Silicon
 and Intel, no Rosetta.
