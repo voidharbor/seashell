@@ -1,7 +1,10 @@
 # Install the native shell by a folder swap (Phase 3 plan Decision 1): move
 # -Target aside to <Target>.electron-<stamp> (or .native-<stamp> when it is not
-# the Electron build) and copy -Source in its place. -Rollback moves the newest
-# backup back. Nothing touches shortcuts, the registry or %APPDATA%\seashell.
+# the Electron build) and copy -Source in its place; with no folder at -Target
+# yet, a fresh install just copies it in. -Rollback moves the newest backup
+# back. Nothing touches shortcuts, the registry or %APPDATA%\seashell.
+# -Source defaults to the folder this script sits in when that holds
+# SeaShell.exe (the release zip's SeaShell\ folder), else <build tree>\release\win-native.
 #
 # Guards, in this order, each printing one line and exiting with its code:
 #   2  -Target or -Source is not a plain drive-letter path (UNC, \\?\, \\.\ or a
@@ -13,20 +16,23 @@
 #   3  a process runs from -Target (by ExecutablePath through Win32_Process,
 #      as written and resolved, never by name), or a SeaShell.exe has an
 #      unreadable or unresolvable path (fail closed).
-#   4  -Source lacks one of the six release files, or lies inside -Target.
+#   4  -Source lacks one of the seven release files, or lies inside -Target.
 # Other exits: 5 nothing to do, a name is taken, or -Rollback finds two newest
 # backups with the same stamp (nothing was changed), 6 a step failed and the
 # previous state was restored, 7 a step failed and the restore failed too (the
 # line names where everything is).
 # -DryRun evaluates the guards, prints what it would do and changes nothing.
 param(
-  [string]$Source = 'C:\seashell-build\redesign\release\win-native',
+  [string]$Source = '',
   [string]$Target = "$env:LOCALAPPDATA\Programs\SeaShell",
   [switch]$Live,
   [switch]$DryRun,
   [switch]$Rollback
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Source) {
+  $Source = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'SeaShell.exe') -PathType Leaf) { $PSScriptRoot } else { Join-Path $PSScriptRoot '..\..\release\win-native' }
+}
 
 # Where a path really is: the deepest part that exists, opened with no access
 # (CreateFileW, OPEN_EXISTING, never creating) and resolved through every
@@ -221,8 +227,8 @@ if ($Rollback) {
 
 Test-InUse $Target $Target
 
-# Guard (4): the six files pack-native.ps1 leaves in release\win-native.
-$need = @('SeaShell.exe', 'utf8proc.dll', 'resources\core\index.cjs', 'resources\core\VERSION', 'resources\core\BUILD', 'resources\stage-core.sh')
+# Guard (4): the seven files pack-native.ps1 leaves in release\win-native.
+$need = @('SeaShell.exe', 'utf8proc.dll', 'resources\core\index.cjs', 'resources\core\VERSION', 'resources\core\BUILD', 'resources\core\node\bin\node', 'resources\stage-core.sh')
 foreach ($n in $need) {
   if (-not (Test-Path -LiteralPath "$Source\$n" -PathType Leaf)) { Write-Output "install-native: refusing, $Source lacks $n"; exit 4 }
 }
@@ -231,19 +237,28 @@ if ($Source -ieq $Target -or $Source.StartsWith("$Target\", [StringComparison]::
   exit 4
 }
 
-if (-not (Test-Path -LiteralPath $Target -PathType Container)) { Write-Output "install-native: refusing, there is no folder at $Target to back up; nothing was changed"; exit 5 }
-$kind = if (Test-Path -LiteralPath "$Target\resources\app.asar") { 'electron' } else { 'native' }
-$backup = "$Target.$kind-$stamp"
-Assert-Free $backup
+# No folder there yet: a fresh install, nothing to back up.
+$fresh = -not (Test-Path -LiteralPath $Target)
+if (-not $fresh -and -not (Test-Path -LiteralPath $Target -PathType Container)) { Write-Output "install-native: refusing, $Target is a file, not a folder; nothing was changed"; exit 5 }
+$backup = ''
+if (-not $fresh) {
+  $kind = if (Test-Path -LiteralPath "$Target\resources\app.asar") { 'electron' } else { 'native' }
+  $backup = "$Target.$kind-$stamp"
+  Assert-Free $backup
+}
 if ($DryRun) {
-  Write-Output "would install $Source over $Target (backup $backup)"
+  if ($fresh) { Write-Output "would install $Source to $Target (new, nothing to back up)" }
+  else { Write-Output "would install $Source over $Target (backup $backup)" }
   exit 0
 }
 
-try { Move-Item -LiteralPath $Target -Destination $backup }
-catch { Write-Output "install-native: failed moving $Target to $backup, nothing was changed: $($_.Exception.Message)"; exit 6 }
+if (-not $fresh) {
+  try { Move-Item -LiteralPath $Target -Destination $backup }
+  catch { Write-Output "install-native: failed moving $Target to $backup, nothing was changed: $($_.Exception.Message)"; exit 6 }
+}
 
 try {
+  if ($fresh) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
   Copy-Item -LiteralPath $Source -Destination $Target -Recurse -Force
   $want = (Get-FileHash -Algorithm SHA256 -LiteralPath "$Source\SeaShell.exe").Hash
   $got = (Get-FileHash -Algorithm SHA256 -LiteralPath "$Target\SeaShell.exe").Hash
@@ -263,6 +278,7 @@ catch {
     try { Remove-Item -LiteralPath $Target -Recurse -Force } catch { Start-Sleep -Seconds 1 }
   }
   if (Test-Path -LiteralPath $Target) { Write-Output "install-native: install failed ($why) and the partial $Target could not be removed; the previous install is at $backup"; exit 7 }
+  if ($fresh) { Write-Output "install-native: install failed, nothing was installed: $why"; exit 6 }
   try { Move-Item -LiteralPath $backup -Destination $Target }
   catch { Write-Output "install-native: install failed ($why) and moving $backup back failed too; the previous install is at $backup"; exit 7 }
   Write-Output "install-native: install failed, previous install restored at ${Target}: $why"
@@ -270,5 +286,10 @@ catch {
 }
 
 $short = if ($build.Length -ge 12) { $build.Substring(0, 12) } else { $build }
+if ($fresh) {
+  $uninstall = Join-Path $PSScriptRoot 'uninstall-native.ps1'
+  Write-Output "installed $version $short at $Target; uninstall: powershell -ExecutionPolicy Bypass -File `"$uninstall`" -Target `"$Target`"$liveFlag"
+  exit 0
+}
 Write-Output "installed $version $short; rollback: powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Rollback -Target `"$Target`"$liveFlag"
 exit 0
