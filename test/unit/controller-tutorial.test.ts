@@ -31,7 +31,7 @@ describe('tutorial', () => {
     expect(copy).not.toMatch(/preview/i)
     expect(STEPS('win32')[6]!.keys.map(([chord]) => chord)).toEqual(['Ctrl+Shift+J', 'Ctrl+Shift+]  Ctrl+Shift+['])
     expect(copy).toContain('Aero Glass in this build; the other themes return later')
-    expect(copy).toContain('the same zsh you get in WSL,')
+    expect(copy).toContain('the same shell you get in WSL,')
     expect(copy).not.toContain('Terminal.app')
     expect(JSON.stringify(STEPS('darwin'))).toContain('the same zsh you get in Terminal.app,')
     const f = freshDeps()

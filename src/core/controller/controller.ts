@@ -2727,7 +2727,9 @@ export class Controller {
     // Title bar contents as PaneView.tsx:140-220 draws them.
     const bytes = p.metrics?.footprintBytes ?? 0
     const showMem = isTerm(p) && bytes >= 200 * 1024 * 1024
-    const badge = p.kind === 'file' ? 'file' : p.kind === 'web' ? 'web' : p.metrics?.foregroundProcess || (p.command === 'zsh' ? 'zsh' : p.command)
+    // A pane's login shell is `command: 'zsh'` whatever the shell is; the badge names the real one (bash on a stock distro).
+    const shell = (this.paths?.defaultShell || '/bin/zsh').split('/').pop() || 'zsh'
+    const badge = p.kind === 'file' ? 'file' : p.kind === 'web' ? 'web' : p.metrics?.foregroundProcess || (p.command === 'zsh' ? shell : p.command)
     return {
       id: p.id,
       kind: p.kind,

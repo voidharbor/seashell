@@ -44,6 +44,17 @@ describe('controller: panes over time', () => {
     expect(c.model().status.swapWarn).toBe(true)
     expect(c.model().status.panes).toBe('1 pane')
   })
+  it('an idle pane is badged with the login shell it runs, bash included', async () => {
+    const f = fakeDeps()
+    f.handlers['app:getPaths'] = () => ({ home: '/root', hostname: 'pc', userData: '/tmp/ud', defaultShell: '/bin/bash', cwdOfLaunch: '/root', platform: 'win32', host: 'native' })
+    const c = new Controller(f.deps, { home: '/root', version: '0.6.0', chords: [] })
+    await c.boot(GEO)
+    expect(c.model().panes[0]!.badge).toBe('bash')
+    const zsh = fakeDeps()
+    const z = new Controller(zsh.deps, { home: '/Users/joshwald', version: '0.6.0', chords: [] })
+    await z.boot(GEO)
+    expect(z.model().panes[0]!.badge).toBe('zsh')
+  })
   it('attention: bell on an unfocused busy pane is waiting, PROMPT after BUSY is done and expires', async () => {
     const f = fakeDeps()
     const c = new Controller(f.deps, { home: '/Users/joshwald', version: '0.6.0', chords: [] })

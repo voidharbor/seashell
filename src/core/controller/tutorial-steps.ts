@@ -37,7 +37,7 @@ export function STEPS(platform: string): TutorialStep[] {
       title: 'Welcome to SeaShell',
       body: [
         'A terminal window manager. One window holds tabs, each tab tiles up to six ' +
-          'panes, and every pane is a real login shell: the same zsh you get in ' +
+          `panes, and every pane is a real login shell: the same ${mac ? 'zsh' : 'shell'} you get in ` +
           `${mac ? 'Terminal.app' : 'WSL'}, with your dotfiles, your PATH and your history.`,
       ],
       keys: [
