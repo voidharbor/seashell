@@ -179,6 +179,10 @@ bool Window::create(HINSTANCE hinst, bool noActivate) {
                           b.x, b.y, b.width, b.height, nullptr, nullptr, hinst, nullptr);
   if (!hwnd_) { App::log("error: CreateWindowEx host %lu", GetLastError()); return false; }
   dpi_ = GetDpiForWindow(hwnd_);
+  // Rounded corners from DWM (Windows 11): a window that draws its own frame
+  // is left square by default.
+  DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+  DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof corner);
   readRefreshHz();
   RECT br = bodyRect();
   body_ = CreateWindowExW(0, kBodyClass, nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,

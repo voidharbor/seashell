@@ -230,11 +230,11 @@ void Ui::viewSidebar(Painter& p) {
       ULONGLONG el = it == flashSince_.end() ? kFlashFadeMs : now - it->second;
       float t = std::min(1.f, (float)el / (float)kFlashFadeMs);
       float a = 0.2f + 0.4f * (1 - t) * (1 - t);   // ease-out from 0.6, then held at 0.2 until the core clears it
-      p.roundedRect(pill, 2, kFlash, a, kFlash, std::min(1.f, a + 0.2f));
+      p.roundedRect(pill, std::min(t_.radius, 6.f), kFlash, a, kFlash, std::min(1.f, a + 0.2f));
     } else if (r.selected) {
-      p.roundedRect(pill, 2, t_.selection, hover ? 0.32f : 0.25f, t_.selection, 1);
+      p.roundedRect(pill, std::min(t_.radius, 6.f), t_.selection, hover ? 0.32f : 0.25f, t_.selection, 1);
     } else if (hover) {
-      p.roundedRect(pill, 2, t_.selection, 0.1f, t_.selection, 0.4f);
+      p.roundedRect(pill, std::min(t_.radius, 6.f), t_.selection, 0.1f, t_.selection, 0.4f);
     }
     float alpha = r.ignored ? 0.45f : 1.f;
     if (r.isDir) p.twisty(twisty, r.expanded, hover ? t_.titleText : t_.badgeText, alpha);

@@ -167,6 +167,6 @@ void Ui::viewPaneDrop(Painter& p) {
   if (!dropZone(POINT{ (LONG)move_.x, (LONG)(move_.y - bodyTop()) }, &pane, &where, &zone)) return;
   D2D1_RECT_F z = D2D1::RectF(zone.left + 4 * s, zone.top + 4 * s, zone.right - 4 * s, zone.bottom - 4 * s);
   if (z.right <= z.left || z.bottom <= z.top) return;
-  p.roundedRect(z, 6, t_.accent, 0.3f, t_.accent, 1.f);
-  p.roundedRect(D2D1::RectF(z.left + p.px(1), z.top + p.px(1), z.right - p.px(1), z.bottom - p.px(1)), 5, 0, 0, t_.accent, 1.f);   // a 2 DIP edge
+  p.roundedRect(z, t_.radius, t_.accent, 0.3f, t_.accent, 1.f);
+  p.roundedRect(D2D1::RectF(z.left + p.px(1), z.top + p.px(1), z.right - p.px(1), z.bottom - p.px(1)), std::max(0.f, t_.radius - 1), 0, 0, t_.accent, 1.f);   // a 2 DIP edge
 }

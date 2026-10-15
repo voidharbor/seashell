@@ -218,6 +218,35 @@ void Painter::strokeRect(D2D1_RECT_F r, uint32_t rgb, float widthDip, float alph
   rt_->DrawRectangle(inset(r, w / 2, w / 2), brush(rgb, alpha), w);
 }
 
+void Painter::cornerMask(D2D1_RECT_F r, float radiusDip, uint32_t rgb) {
+  float rad = radiusDip * scale();
+  if (!rt_ || rad < 1 || r.right - r.left < 2 * rad || r.bottom - r.top < 2 * rad) return;
+  ID2D1Factory* fac = nullptr;
+  rt_->GetFactory(&fac);
+  if (!fac) return;
+  // The rect less its rounded self: four corner slivers in one geometry.
+  ComPtr<ID2D1RectangleGeometry> box;
+  ComPtr<ID2D1RoundedRectangleGeometry> round;
+  ComPtr<ID2D1PathGeometry> corners;
+  ComPtr<ID2D1GeometrySink> sink;
+  bool ok = SUCCEEDED(fac->CreateRectangleGeometry(r, box.GetAddressOf())) &&
+            SUCCEEDED(fac->CreateRoundedRectangleGeometry(D2D1::RoundedRect(r, rad, rad), round.GetAddressOf())) &&
+            SUCCEEDED(fac->CreatePathGeometry(corners.GetAddressOf())) && SUCCEEDED(corners->Open(sink.GetAddressOf())) &&
+            SUCCEEDED(box->CombineWithGeometry(round.Get(), D2D1_COMBINE_MODE_EXCLUDE, nullptr, sink.Get())) && SUCCEEDED(sink->Close());
+  fac->Release();
+  if (ok) rt_->FillGeometry(corners.Get(), brush(rgb, 1));
+}
+
+void Painter::roundedStroke(D2D1_RECT_F r, float radiusDip, uint32_t rgb, float widthDip, float alpha) {
+  if (!rt_) return;
+  float rad = radiusDip * scale();
+  if (rad < 1) { strokeRect(r, rgb, widthDip, alpha); return; }
+  float w = std::max(1.f, std::round(widthDip * dpi_));
+  // The stroke's centre line sits inside the mask's curve, so the two radii match on screen.
+  float inner = std::max(0.f, rad - w / 2);
+  rt_->DrawRoundedRectangle(D2D1::RoundedRect(inset(r, w / 2, w / 2), inner, inner), brush(rgb, alpha), w);
+}
+
 void Painter::roundedRect(D2D1_RECT_F r, float radiusDip, uint32_t fill, float fillAlpha, uint32_t stroke, float strokeAlpha) {
   if (!rt_) return;
   float rad = radiusDip * scale();

@@ -34,6 +34,11 @@ public:
 
   void fillRect(D2D1_RECT_F r, uint32_t rgb, float alpha = 1);
   void strokeRect(D2D1_RECT_F r, uint32_t rgb, float widthDip = 1, float alpha = 1);
+  // A rounded frame over content already painted (a pane over its grid): the
+  // corners outside radiusDip are covered in rgb (the body colour), then the
+  // edge is stroked widthDip wide inside r. radiusDip 0 is a square frame.
+  void cornerMask(D2D1_RECT_F r, float radiusDip, uint32_t rgb);
+  void roundedStroke(D2D1_RECT_F r, float radiusDip, uint32_t rgb, float widthDip = 1, float alpha = 1);
   void roundedRect(D2D1_RECT_F r, float radiusDip, uint32_t fill, float fillAlpha, uint32_t stroke, float strokeAlpha);
   void gradientV(D2D1_RECT_F r, const D2D1_GRADIENT_STOP* stops, UINT n, float radiusDip = 0);
   void gradientH(D2D1_RECT_F r, const D2D1_GRADIENT_STOP* stops, UINT n, float radiusDip = 0);   // left to right

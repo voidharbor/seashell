@@ -110,15 +110,19 @@ void Ui::viewPanes(Painter& p) {
              Align::Center, true);
     }
 
-    // The frame: the pane's color or panelBorder, full strength when focused.
-    p.strokeRect(r, edge, 1, pm.focused ? 1.f : 0.55f);
+    if (pm.kind == "term" && (coreDead_ || pm.exit)) viewExitOverlay(p, pm, g);
+
+    // The frame, rounded by the theme's radius: the corners outside it take
+    // the body colour over whatever the grid drew there, then the edge (the
+    // pane's color or panelBorder, full strength when focused).
+    p.cornerMask(r, t_.radius, t_.body);
+    p.roundedStroke(r, t_.radius, edge, 1, pm.focused ? 1.f : 0.55f);
     bool on = false;
     float level = attentionLevel(pm, now, &on);
     if (on && p.live()) {
       uint32_t c = hexColor(pm.color, pm.attention == "waiting" ? kWaiting : kDone);
-      p.strokeRect(r, c, 2, 0.25f + 0.75f * level);
+      p.roundedStroke(r, t_.radius, c, 2, 0.25f + 0.75f * level);
     }
-    if (pm.kind == "term" && (coreDead_ || pm.exit)) viewExitOverlay(p, pm, g);
   }
 }
 
