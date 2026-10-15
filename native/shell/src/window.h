@@ -35,6 +35,7 @@ public:
   static constexpr UINT WM_APP_PTY_FEED = WM_APP + 4;   // batched pty bytes ready (Task 11)
   // dwData of a WM_COPYDATA envelope from a second instance ('SSH1').
   static constexpr ULONG_PTR kCopyDataEnvelope = 0x53534831;
+  void extendFrame();   // the glass margin over the strip; none for the flat frame (Ui::flatFrame)
 
 private:
   static LRESULT CALLBACK hostProc(HWND h, UINT msg, WPARAM w, LPARAM l);
@@ -43,7 +44,6 @@ private:
   LRESULT onBody(HWND h, UINT msg, WPARAM w, LPARAM l);
   LRESULT hitTest(POINT screen) const;
   int borderPx() const;
-  void extendFrame();
   void relayout();
   void paintStrip();
   void paintBody();

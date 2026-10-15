@@ -87,6 +87,11 @@ void Ui::setModel(UiModel&& m) {
   bool hadModel = haveModel_;
   haveModel_ = true;
   t_ = Tokens::fromModel(m_.tokens);
+  if (flatFrame() != lastFlat_) {
+    // Graphite came or went: the glass frame goes or comes back with it.
+    lastFlat_ = flatFrame();
+    Window::instance().extendFrame();
+  }
   chords_.set(m_.chords);
   if (!m_.restore) restoreFocus_ = 0;
   // Attention start times, for the four-cycle 'done' glow.
@@ -238,6 +243,9 @@ void Ui::send(const char* type, const std::string& target, float xDip, float yDi
 
 std::wstring Ui::tooltipFor(const std::string& target) const {
   if (target == "web:new" && m_.tabFull) return L"Tab is full (6 panes)";
+  if (target == "caption:min") return L"Minimize";
+  if (target == "caption:max") return IsZoomed(Window::instance().hwnd()) ? L"Restore Down" : L"Maximize";
+  if (target == "caption:close") return L"Close";
   if (startsWith(target, "sheet:")) return sheetTooltip(target);
   // FindBar.tsx's titles.
   if (target == "find:case") return L"Match case";
@@ -295,7 +303,9 @@ void CALLBACK Ui::tipTick(HWND, UINT, UINT_PTR id, DWORD) {
 
 void Ui::mouseLeave(bool strip) {
   if (!hover_.empty() && hoverStrip_ == strip) setHover("", strip, POINT{ -1, -1 });
-  if (strip && !pressed_.empty() && hoverStrip_) pressed_.clear();
+  // A tab press that may yet become a drag keeps going when the pointer
+  // leaves the strip (drag.cpp takes the capture once it moves far enough).
+  if (strip && !pressed_.empty() && hoverStrip_ && move_.kind == MoveDrag::None) pressed_.clear();
 }
 
 void Ui::captionPress() {
@@ -357,6 +367,7 @@ void Ui::closeMenuOnPress(const std::string& target, float xDip, float yDip, int
 // Without this a lost capture (Alt+Tab, a modal loop) would leave the drag on,
 // and every later pointer move would resize the panes with no button down.
 void Ui::cancelDrag() {
+  if (move_.kind != MoveDrag::None) endMove(false, false);
   if (sbScroll_.dragging) {
     sbScroll_.dragging = false;
     Window::instance().invalidateBody();
@@ -376,6 +387,13 @@ void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
   }
   if (target == "strip:left" || target == "strip:right") {   // the driver's click; a press steps in Ui::mouse
     stripStep(target == "strip:left" ? -1 : 1);
+    return;
+  }
+  if (startsWith(target, "caption:")) {
+    // The flat frame's buttons do what the DWM ones would.
+    HWND h = Window::instance().hwnd();
+    WPARAM sc = target == "caption:min" ? SC_MINIMIZE : target == "caption:close" ? SC_CLOSE : IsZoomed(h) ? SC_RESTORE : SC_MAXIMIZE;
+    PostMessageW(h, WM_SYSCOMMAND, sc, 0);
     return;
   }
   if (target == "web:new" && m_.tabFull) return;   // dimmed: the tab already holds six panes
@@ -505,6 +523,9 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
     return true;
   }
 
+  // A tab or pane drag owns the pointer once it is live (drag.cpp).
+  if (moveMouse(msg, pt)) return true;
+
   if (msg == WM_MOUSEMOVE) {
     setHover(target, inStrip, pt);
     if (!pressed_.empty() && !inStrip) win.invalidateBody();
@@ -612,6 +633,7 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
     }
     pressed_ = target;
     pressedButton_ = 0;
+    if (msg == WM_LBUTTONDOWN) armMove(target, pt);   // a tab or a pane's title can be dragged
     // Tabs select and panes focus on press (app.tsx onMouseDown); the rest act on click.
     if (startsWith(target, "tab:") || startsWith(target, "pane:")) {
       if (!coreDead_ && !endsWith(target, ":close") && !endsWith(target, ":restart")) send("down", target, xd, yd, 0, mods);
@@ -643,6 +665,7 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
 
 bool Ui::key(UINT msg, WPARAM w, LPARAM l, Mods m) {
   Window& win = Window::instance();
+  if (moveKey(msg, w)) return true;
   if (modal() && !m_.restore) return sheetKey(msg, w, l, m);
   if (modal()) {
     if (msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_SYSCHAR) return false;   // Alt+F4 still closes
@@ -778,7 +801,8 @@ void Ui::drawStrip(ID2D1RenderTarget* rt) {
   else {
     // No composition: the opaque frame. The DWM caption buttons sit under the
     // client pixels, so their 138 DIP stay at alpha 0 or they would be covered.
-    strip.right = std::max(0.f, strip.right - 138 * dpi());
+    // The flat frame (Graphite) has no DWM buttons: it paints them itself.
+    if (!flatFrame()) strip.right = std::max(0.f, strip.right - 138 * dpi());
     p.fillRect(strip, t_.frame);   // the dark strip's and Aero Dark's frame token is #1F1F1F
   }
   viewTabs(p);
@@ -787,6 +811,11 @@ void Ui::drawStrip(ID2D1RenderTarget* rt) {
 bool Ui::onGlass() const {
   auto comp = m_.tokens.find("composition");
   return comp == m_.tokens.end() || comp->second != "0";
+}
+
+bool Ui::flatFrame() const {
+  auto it = m_.tokens.find("flatFrame");
+  return it != m_.tokens.end() && it->second == "1";
 }
 
 bool Ui::stripDark() const {
@@ -803,6 +832,7 @@ void Ui::drawBody(ID2D1RenderTarget* rt) {
   viewStatus(p);
   viewUpdate(p);
   viewDrawer(p);
+  viewPaneDrop(p);
 }
 
 void Ui::drawOverlays(ID2D1RenderTarget* rt) {

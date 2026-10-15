@@ -202,7 +202,10 @@ bool Window::create(HINSTANCE hinst, bool noActivate) {
 }
 
 void Window::extendFrame() {
-  MARGINS m{ 0, 0, stripHeightPx(), 0 };
+  if (!hwnd_) return;
+  // Graphite paints the whole strip and draws its own caption buttons: no
+  // glass, so no frame to extend (and no DWM buttons in it).
+  MARGINS m{ 0, 0, Ui::instance().flatFrame() ? 0 : stripHeightPx(), 0 };
   HRESULT hr = DwmExtendFrameIntoClientArea(hwnd_, &m);
   if (FAILED(hr)) App::log("error: DwmExtendFrameIntoClientArea 0x%08lx", (unsigned long)hr);
 }
@@ -347,7 +350,7 @@ LRESULT CALLBACK Window::bodyProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
 LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
   // DWM first: its caption buttons in the extended frame hit, hover and paint.
   LRESULT dwm = 0;
-  bool dwmHandled = DwmDefWindowProc(h, msg, w, l, &dwm) != FALSE;
+  bool dwmHandled = !Ui::instance().flatFrame() && DwmDefWindowProc(h, msg, w, l, &dwm) != FALSE;
   if (msg == WM_NCHITTEST && dwmHandled && dwm != HTNOWHERE) return dwm;
 
   switch (msg) {
@@ -397,6 +400,9 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
       break;
     case WM_NCMOUSEMOVE:
       Ui::instance().mouseLeave(true);
+      break;
+    case WM_CAPTURECHANGED:
+      if ((HWND)l != h) Ui::instance().cancelDrag();   // a tab drag lost the pointer (Alt+Tab, a modal loop)
       break;
     case WM_MOUSELEAVE:
       Ui::instance().mouseLeave(true);

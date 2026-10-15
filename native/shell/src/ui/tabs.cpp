@@ -1,7 +1,9 @@
 // The tab strip: the menu button, the tabs, new tab, new web preview, the zoom
 // badge, sleep and settings. The DWM caption buttons own the right 138 DIP;
-// nothing is drawn there. Everything not under a control is strip:empty, which
-// drags the window.
+// nothing is drawn there, except on the flat frame (Graphite), where the
+// shell draws its own three there. Everything not under a control is
+// strip:empty, which drags the window. A tab being dragged (drag.cpp) is
+// drawn under the pointer, its slot in the row left empty.
 //
 // Overflow (Phase 2 Task 16): when the tabs at their 100 DIP minimum do not
 // fit, the tab row scrolls (stripScroll_, the shell's own view state) between
@@ -51,6 +53,48 @@ void stripGlyph(Painter& p, float glow, D2D1_RECT_F r, uint32_t cp, uint32_t ink
 }
 }  // namespace
 
+// The flat frame's minimize, maximize (restore while maximized) and close,
+// 46 DIP each across the strip's full height in the DWM buttons' 138, with
+// Windows 11's faces: a faint lift under the pointer, close red.
+void Ui::viewCaption(Painter& p, float W, float H) {
+  float d = dpi();
+  float bw = std::round(kCaptionDip / 3 * d);
+  float one = std::max(1.f, std::round(d));
+  bool zoomed = IsZoomed(Window::instance().hwnd()) != FALSE;
+  const char* ids[3] = { "caption:min", "caption:max", "caption:close" };
+  for (int i = 0; i < 3; i++) {
+    D2D1_RECT_F b = D2D1::RectF(W - (float)(3 - i) * bw, 0, W - (float)(2 - i) * bw, H);
+    hit(true, b, ids[i]);
+    if (!p.live()) continue;
+    bool hot = hovered(ids[i]), down = pressed(ids[i]);
+    bool red = i == 2 && (hot || down);
+    if (red) p.fillRect(b, 0xC42B1C, down ? 0.8f : 1.f);
+    else if (hot || down) p.fillRect(b, 0xFFFFFF, down ? 0.06f : 0.1f);
+    uint32_t ink = red ? 0xFFFFFF : t_.frameText;
+    // The glyphs on whole pixels: a 10 DIP box at the button's centre.
+    float g = std::round(5 * d);
+    float cx = std::round((b.left + b.right) / 2), cy = std::round((b.top + b.bottom) / 2);
+    if (i == 0) {
+      p.fillRect(D2D1::RectF(cx - g, cy, cx + g, cy + one), ink);
+    } else if (i == 1 && !zoomed) {
+      p.strokeRect(D2D1::RectF(cx - g, cy - g, cx + g, cy + g), ink);
+    } else if (i == 1) {
+      float o = std::round(2 * d);   // the back window, up and to the right
+      p.fillRect(D2D1::RectF(cx - g + o, cy - g, cx + g, cy - g + one), ink);
+      p.fillRect(D2D1::RectF(cx + g - one, cy - g, cx + g, cy + g - o), ink);
+      p.strokeRect(D2D1::RectF(cx - g, cy - g + o, cx + g - o, cy + g), ink);
+    } else if (p.rt()) {
+      ID2D1SolidColorBrush* br = nullptr;
+      p.rt()->CreateSolidColorBrush(D2D1::ColorF(((ink >> 16) & 0xFF) / 255.f, ((ink >> 8) & 0xFF) / 255.f, (ink & 0xFF) / 255.f, 1.f), &br);
+      if (br) {
+        p.rt()->DrawLine(D2D1::Point2F(cx - g, cy - g), D2D1::Point2F(cx + g, cy + g), br, one);
+        p.rt()->DrawLine(D2D1::Point2F(cx + g, cy - g), D2D1::Point2F(cx - g, cy + g), br, one);
+        br->Release();
+      }
+    }
+  }
+}
+
 void Ui::viewTabs(Painter& p) {
   Window& win = Window::instance();
   RECT rc{};
@@ -58,6 +102,8 @@ void Ui::viewTabs(Painter& p) {
   float W = (float)rc.right, H = (float)win.stripHeightPx();
   float s = p.scale(), d = dpi();
   hit(true, D2D1::RectF(0, 0, W, H), "strip:empty");
+  bool flat = flatFrame();
+  if (flat) viewCaption(p, W, H);
   float tabTop = std::max(2.f * d, H - kTabHDip * s);
   float btnTop = tabTop + 2 * s, btnBottom = H - 3 * s;
   uint32_t ink = t_.frameText;
@@ -154,18 +200,24 @@ void Ui::viewTabs(Painter& p) {
     if (over) { r.left = std::max(r.left, viewL); r.right = std::min(r.right, viewR); }
     return r;
   };
-  for (const TabModel& t : m_.tabs) {
-    D2D1_RECT_F r = D2D1::RectF(std::round(x), tabTop, std::round(x + tw), H);
-    x = r.right + gap;
-    if (over && (r.right <= viewL || r.left >= viewR)) continue;   // scrolled out of the row
+  auto closeRect = [&](D2D1_RECT_F r) {
+    return D2D1::RectF(r.right - 22 * s, (r.top + r.bottom) / 2 - 8 * s, r.right - 6 * s, (r.top + r.bottom) / 2 + 8 * s);
+  };
+  stripTabX0_ = x;   // tab 0's left edge, the scroll in: the drag's slots (drag.cpp)
+  stripTabW_ = tw;
+  // One tab's face, mark, label and close button at r.
+  auto drawTab = [&](const TabModel& t, D2D1_RECT_F r, bool hover) {
     std::string id = "tab:" + t.id;
-    D2D1_RECT_F rh = shown(r);
-    hit(true, rh, id);
-    D2D1_RECT_F close = D2D1::RectF(r.right - 22 * s, (r.top + r.bottom) / 2 - 8 * s, r.right - 6 * s, (r.top + r.bottom) / 2 + 8 * s);
-    bool hover = hovered(id) || hovered(id + ":close") || hovered(id + ":rename");
-    D2D1_RECT_F ch = shown(close);
-    if (!t.renaming && ch.right > ch.left) hit(true, ch, id + ":close");
-    if (dark) {
+    D2D1_RECT_F close = closeRect(r);
+    if (flat) {
+      // Graphite: no face but the active tab's, which joins the pane title
+      // below it; only its top corners round. A hovered tab lifts faintly.
+      if ((t.active || hover) && p.live()) {
+        p.pushClip(r);
+        p.roundedRect(D2D1::RectF(r.left, r.top, r.right, r.bottom + 8 * s), 6, t.active ? t_.tabActive : t_.tabSheen, t.active ? 1.f : 0.6f, 0, 0);
+        p.popClip();
+      }
+    } else if (dark) {
       // The dark face runs to the strip's bottom, where a 1 DIP body-coloured
       // seam joins the active tab to the body: a hard edge, no border.
       p.win7Tab(r, t.active, hover, t_.tabActive, t_.tabInactive, t_.tabActive, t_.tabSheen, t_.tabEdge, kDarkTopSheen);
@@ -173,7 +225,14 @@ void Ui::viewTabs(Painter& p) {
     } else {
       p.win7Tab(r, t.active, hover, t_.tabActive, t_.tabInactive, t_.body, t_.tabSheen, t_.tabEdge);
     }
-    if (t.active && p.live()) {
+    float labelLeft = r.left + 10 * s;
+    if (flat && t.active && p.live()) {
+      // The accent as a dot before the label.
+      float cy = std::round((r.top + r.bottom) / 2), rr = 3 * s;
+      p.roundedRect(D2D1::RectF(labelLeft, cy - rr, labelLeft + 2 * rr, cy + rr), 3, t_.accent, 1, 0, 0);
+    }
+    if (flat && t.active) labelLeft += 12 * s;
+    if (!flat && t.active && p.live()) {
       // --tabOnMark, the accent line, along the top inside the radii.
       p.fillRect(D2D1::RectF(r.left + 6 * s, r.top + std::round(d), r.right - 6 * s, r.top + std::round(d) + std::round(2 * d)), t_.accent);
     }
@@ -183,15 +242,35 @@ void Ui::viewTabs(Painter& p) {
       // The rename box keeps the edit face (white under Aero), so on the dark strip its text is the card's.
       rename_.draw(p, er, UiFont{ 12 }, dark ? t_.toastText : t_.tabText, false, caretOn_);
     } else {
-      bool showClose = hover;
-      D2D1_RECT_F label = D2D1::RectF(r.left + 10 * s, r.top + 1 * s, (showClose ? close.left : r.right - 8 * s) - 2 * s, r.bottom);
-      p.text(label, fromUtf8(t.name), UiFont{ 12, t.active }, t_.tabText, Align::Left, true);
+      bool showClose = hover && !movingTab(t.id);
+      D2D1_RECT_F label = D2D1::RectF(labelLeft, r.top + 1 * s, (showClose ? close.left : r.right - 8 * s) - 2 * s, r.bottom);
+      // The flat strip's inactive tabs read a step quieter than the active one.
+      uint32_t ink = flat && !t.active ? mixRgb(t_.tabText, t_.frame, 0.68f) : t_.tabText;
+      p.text(label, fromUtf8(t.name), UiFont{ 12, t.active }, ink, Align::Left, true);
       if (showClose) {
         bool hc = hovered(id + ":close");
         if (hc) p.roundedRect(close, 3, 0xC75050, 1, 0x8C2C2C, 1);   // the Win7 close red
-        p.glyph(close, 0x2715, hc ? 0xFFFFFF : t_.tabText, 9);
+        p.glyph(close, 0x2715, hc ? 0xFFFFFF : ink, 9);
       }
     }
+  };
+  const TabModel* moving = nullptr;
+  for (const TabModel& t : m_.tabs) {
+    D2D1_RECT_F r = D2D1::RectF(std::round(x), tabTop, std::round(x + tw), H);
+    x = r.right + gap;
+    if (movingTab(t.id)) moving = &t;   // drawn under the pointer, after the rest
+    if (over && (r.right <= viewL || r.left >= viewR)) continue;   // scrolled out of the row
+    std::string id = "tab:" + t.id;
+    D2D1_RECT_F rh = shown(r);
+    hit(true, rh, id);
+    bool hover = hovered(id) || hovered(id + ":close") || hovered(id + ":rename");
+    D2D1_RECT_F ch = shown(closeRect(r));
+    if (!t.renaming && ch.right > ch.left) hit(true, ch, id + ":close");
+    if (moving != &t) drawTab(t, r, hover);
+  }
+  if (moving) {
+    float l = std::round(movingTabLeft(viewL, viewR));
+    drawTab(*moving, D2D1::RectF(l, tabTop, l + std::round(tw), H), true);
   }
   if (over) {
     p.popClip();

@@ -70,6 +70,10 @@ public:
   // The tab strip's scroll (shell view state): device pixels, and its range.
   float stripScroll() const { return stripScroll_; }
   float stripScrollMax() const { return stripMax_; }
+  // Graphite (tokens.flatFrame '1'): no glass anywhere. The strip is painted
+  // edge to edge and the caption buttons are the shell's own (caption:min,
+  // caption:max, caption:close), so Window::extendFrame extends no frame.
+  bool flatFrame() const;
 
 private:
   Ui();
@@ -103,8 +107,22 @@ private:
   bool stripWheel(POINT clientPx, int delta);
   void stripRepeat(bool start);
   static void CALLBACK stripRepeatTick(HWND, UINT, UINT_PTR, DWORD);
+  void viewCaption(Painter& p, float W, float H); // tabs.cpp: the flat frame's own minimize, maximize and close
   bool onGlass() const;                          // tokens.composition is not '0': the strip is DWM glass
   bool stripDark() const;                        // tokens.stripDark is '1': the dark tab strip (Task 12b); nothing below the strip reads it
+  // Tab and pane drags (drag.cpp): armed by a left press on a tab or on a
+  // pane's title, live once the pointer passes the system drag distance. A
+  // tab takes each slot it crosses into (tab:<id>:move:<index>); a pane
+  // dropped on another pane sends pane:<id>:moveTo:<targetId>:<where> on the
+  // release, where = swap (the target's middle) or its nearest edge.
+  void armMove(const std::string& target, POINT clientPx);
+  bool moveMouse(UINT msg, POINT clientPx);      // true: the drag took the message
+  void endMove(bool drop, bool revert);          // the release drops; Escape reverts a tab; a lost capture does neither
+  bool moveKey(UINT msg, WPARAM w);              // Escape ends a live drag
+  bool movingTab(const std::string& id) const;   // tabs.cpp draws this tab under the pointer, its slot left empty
+  float movingTabLeft(float viewL, float viewR) const;
+  bool dropZone(POINT bodyPx, std::string* pane, std::string* where, D2D1_RECT_F* zone) const;
+  void viewPaneDrop(Painter& p);                 // the dragged pane dimmed and the drop zone over its target
   void viewPanes(Painter& p);                    // panes.cpp
   void viewExitOverlay(Painter& p, const PaneModel& pm, D2D1_RECT_F grid);   // panes.cpp
   void viewDividers(Painter& p);                 // dividers.cpp
@@ -197,4 +215,20 @@ private:
   float stripLastPitch_ = 0, stripLastViewW_ = 0;
   UINT_PTR stripTimer_ = 0;
   bool stripTimerFast_ = false;
+  // The tab row as the last layout placed it, device pixels: tab 0's left
+  // edge (scroll included) and one tab's width; the drag's slot math.
+  float stripTabX0_ = 0, stripTabW_ = 0;
+  bool lastFlat_ = false;                        // the flat frame the window was last extended for
+  struct MoveDrag {
+    enum Kind { None, Tab, Pane };
+    Kind kind = None;
+    std::string id;                              // the tab's or the pane's
+    POINT start{};                               // the press, client pixels
+    bool live = false;                           // past SM_CXDRAG or SM_CYDRAG
+    float grab = 0;                              // a tab: the press's x less the tab's left edge
+    float x = 0, y = 0;                          // the pointer, client pixels
+    int origIndex = -1, sentIndex = -1;          // a tab's slot at the press and the last one sent
+    std::string dropPane, dropWhere;             // a pane: where the release would drop it
+  };
+  MoveDrag move_;
 };
