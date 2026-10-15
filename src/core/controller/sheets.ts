@@ -378,6 +378,27 @@ export function projectsSheet(st: ProjectsSheetState, now: number, uiScale = 1):
 // ---------------------------------------------------------------------------
 
 /** The card's width at uiScale 1 (`.tut__card`: min(560px, 86%)). */
+export const CLOSE_TAB_SHEET_WIDTH = 380
+
+/**
+ * The question before a tab with a live shell closes (its X, `tab.close`, its
+ * last pane's X): Enter is the default Close tab, Escape keeps it.
+ */
+export function closeTabSheet(name: string, panes: number, uiScale = 1): SheetModel {
+  const what = panes === 1 ? 'Its pane and whatever is running in it' : `Its ${panes} panes and whatever is running in them`
+  return {
+    kind: 'closeTab',
+    title: 'Close tab?',
+    width: CLOSE_TAB_SHEET_WIDTH * uiScale,
+    sections: [{ title: name, fields: [{ id: 'note', kind: 'note', label: `${what} will be stopped.` }] }],
+    buttons: [
+      { id: 'keep', label: 'Keep it', isDefault: false, disabled: false },
+      { id: 'close', label: 'Close tab', isDefault: true, disabled: false },
+    ],
+    focusField: null,
+  }
+}
+
 export const TUTORIAL_SHEET_WIDTH = 560
 
 /**

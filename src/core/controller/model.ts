@@ -253,7 +253,7 @@ export interface SheetSection {
 
 /** One sheet at a time: it dims the window like the restore card and takes the keyboard. */
 export interface SheetModel {
-  kind: 'settings' | 'projects' | 'tutorial'
+  kind: 'settings' | 'projects' | 'tutorial' | 'closeTab'
   title: string
   /** The card's width, DIP (uiScale in); the shell caps it at 88 percent of the body. */
   width: number

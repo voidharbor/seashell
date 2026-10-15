@@ -11,6 +11,8 @@ describe('controller: commands', () => {
     expect(c.model().tabs).toHaveLength(2)
     expect(c.model().tabs[1]!.active).toBe(true)
     c.command('tab.close')
+    expect(c.model().sheet?.kind).toBe('closeTab') // it asks first
+    c.event({ type: 'click', target: 'sheet:closeTab:btn:close', x: 0, y: 0, button: 0, mods: { ctrl: false, alt: false, shift: false } })
     await new Promise((r) => setImmediate(r))
     expect(c.model().tabs).toHaveLength(1)
     expect(f.sent.some(([ch]) => ch === 'pty:kill')).toBe(true)

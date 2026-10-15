@@ -52,7 +52,8 @@ describe('drawer', () => {
     c.event({ type: 'up', target: 'drawer:grip', x: 0, y: 0, button: 0, mods })
     expect(c.model().drawer.height).toBe(800)
     c.command('pane.close')
-    await Promise.resolve(); await Promise.resolve()
+    c.event({ type: 'click', target: 'sheet:closeTab:btn:close', x: 0, y: 0, button: 0, mods: { ctrl: false, alt: false, shift: false } }) // its only pane: the tab asks first
+    await new Promise((r) => setImmediate(r))
     const kills = f.sent.filter(([ch]) => ch === 'pty:kill').map(([, p]) => (p as { paneId: string }).paneId)
     expect(kills).toContain(`drawer:${pane.id}`)
     expect(f.grid().some((g) => g.op === 'dispose' && g.paneId === `drawer:${pane.id}`)).toBe(true)

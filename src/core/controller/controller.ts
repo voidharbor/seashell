@@ -73,7 +73,7 @@ import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-sta
 import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
 import { mem, statusModel } from './status.js'
 import { colorizationToTokens, isColorization, resolveTheme, themeTokens, withAccent } from './colorization.js'
-import { accentOptionId, cleanNewPaneCommand, paletteOverride, SETTINGS_CHECKS, settingsSheet, tabStripApplies, tutorialSheet } from './sheets.js'
+import { accentOptionId, cleanNewPaneCommand, closeTabSheet, paletteOverride, SETTINGS_CHECKS, settingsSheet, tabStripApplies, tutorialSheet } from './sheets.js'
 import { STEPS, type TutorialStep } from './tutorial-steps.js'
 import { Projects } from './projects.js'
 import { ACCENTS, PALETTE_ORDER, type PaletteKey } from '../../renderer/theme/tokens.js'
@@ -96,6 +96,7 @@ import type {
   UiEvent,
   UiModel,
   UpdateBannerModel,
+  SheetModel,
 } from './model.js'
 
 export interface ControllerDeps {
@@ -257,7 +258,9 @@ export class Controller {
   /** The grip drag: the grid area's bottom edge, measured at the press (`app.tsx:267-292`). */
   private drawerDrag: { bottom: number } | null = null
   /** The open sheet (one at a time); null while none is up. */
-  private sheetKind: 'settings' | 'projects' | 'tutorial' | null = null
+  private sheetKind: 'settings' | 'projects' | 'tutorial' | 'closeTab' | null = null
+  /** The tab the closeTab sheet asks about. */
+  private closingTabId: string | null = null
   /** The tutorial's steps for this platform, its step shown and its check (Tutorial.tsx state). */
   private readonly steps: TutorialStep[]
   private tutorialStep = 0
@@ -398,7 +401,7 @@ export class Controller {
         this.newTab()
         break
       case 'tab.close':
-        if (tab) void this.closeTab(tab.id)
+        if (tab) this.closeTab(tab.id)
         break
       case 'tab.next':
         this.dispatch({ type: 'tab.cycle', delta: 1 })
@@ -911,8 +914,14 @@ export class Controller {
   /** `app.tsx:415-432`: a terminal pane is reaped, never just forgotten. */
   private async closePane(paneId: string): Promise<void> {
     if (this.closing.has(paneId)) return
-    const pane = this.activeTab()?.panes[paneId]
-    if (!pane) return
+    const tab = this.activeTab()
+    const pane = tab?.panes[paneId]
+    if (!tab || !pane) return
+    // The tab's last pane going is the tab going: it asks as tab.close does.
+    if (Object.keys(tab.panes).length === 1 && isTerm(pane) && pane.status !== 'exited') {
+      this.closeTab(tab.id)
+      return
+    }
     if (isTerm(pane)) {
       this.closing.add(paneId)
       try {
@@ -956,8 +965,24 @@ export class Controller {
     for (const p of previews) this.dispatch({ type: 'pane.close', paneId: p.id })
   }
 
+  /**
+   * A tab with a live shell asks first (the closeTab sheet: Enter closes,
+   * Escape keeps); one with nothing running closes at once.
+   */
+  private closeTab(tabId: string): void {
+    const tab = this.s.tabs.find((t) => t.id === tabId)
+    if (!tab) return
+    const live = Object.values(tab.panes).some((p) => isTerm(p) && p.status !== 'exited')
+    if (!live) {
+      void this.reapTab(tabId)
+      return
+    }
+    this.closingTabId = tabId
+    if (!this.openSheet('closeTab')) this.closingTabId = null
+  }
+
   /** `app.tsx:434-457`. */
-  private async closeTab(tabId: string): Promise<void> {
+  private async reapTab(tabId: string): Promise<void> {
     const tab = this.s.tabs.find((t) => t.id === tabId)
     if (!tab) return
     await Promise.all(
@@ -1109,7 +1134,7 @@ export class Controller {
     if (!tab) return
     const sub = parts[2]
     if (sub === 'close') {
-      if (type === 'click') void this.closeTab(id)
+      if (type === 'click') this.closeTab(id)
       return
     }
     if (sub === 'move') {
@@ -2347,10 +2372,11 @@ export class Controller {
   // ---------------------------------------------------------------------------
 
   /** False when the restore card is up: it is modal and answers first (app.tsx shows no sheet over it). */
-  private openSheet(kind: 'settings' | 'projects' | 'tutorial'): boolean {
+  private openSheet(kind: 'settings' | 'projects' | 'tutorial' | 'closeTab'): boolean {
     if (this.restoreCandidate) return false
     if (this.sbMenu) this.sbMenu = null
     this.popover = null
+    if (kind !== 'closeTab') this.closingTabId = null
     this.sheetKind = kind
     this.emit()
     return true
@@ -2359,7 +2385,19 @@ export class Controller {
   private closeSheet(): void {
     if (this.sheetKind === null) return
     this.sheetKind = null
+    this.closingTabId = null
     this.emit()
+  }
+
+  /** The closeTab sheet's model; the sheet goes if its tab went first (a pane exit, a restore). */
+  private closeTabModel(uiScale: number): SheetModel | null {
+    const tab = this.s.tabs.find((t) => t.id === this.closingTabId)
+    if (!tab) {
+      this.sheetKind = null
+      this.closingTabId = null
+      return null
+    }
+    return closeTabSheet(tab.name, Object.keys(tab.panes).length, uiScale)
   }
 
   /** One preference changed from the sheet: saved and drawn at once (SettingsPanel.tsx `set`). */
@@ -2403,6 +2441,22 @@ export class Controller {
     if (this.sheetKind === null) return
     if (this.sheetKind === 'tutorial') {
       this.tutorialEvent(t, e)
+      return
+    }
+    if (this.sheetKind === 'closeTab') {
+      const base = 'sheet:closeTab'
+      if (e.type === 'key') {
+        if (e.key === 'Escape' && (t === base || t.startsWith(`${base}:`))) this.closeSheet()
+        return
+      }
+      if (e.type !== 'click') return
+      if (t === `${base}:btn:close`) {
+        const id = this.closingTabId
+        this.closeSheet()
+        if (id !== null) void this.reapTab(id)
+      } else if (t === 'sheet:close' || t === `${base}:btn:keep`) {
+        this.closeSheet()
+      }
       return
     }
     const base = `sheet:${this.sheetKind}`
@@ -2714,7 +2768,9 @@ export class Controller {
             ? this.projects.sheet(ui)
             : this.sheetKind === 'tutorial'
               ? tutorialSheet(this.steps, this.tutorialStep, this.tutorialDontShow, ui)
-              : null,
+              : this.sheetKind === 'closeTab'
+                ? this.closeTabModel(ui)
+                : null,
       update: this.updateModel(),
       popover: this.popoverModel(panes, ui),
     }
