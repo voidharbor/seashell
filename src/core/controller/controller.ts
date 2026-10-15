@@ -29,7 +29,7 @@ import {
   uid,
 } from '../../renderer/store.js'
 import { MAX_PANES_PER_TAB, type CellSize, type RowNode } from '../../renderer/layout/types.js'
-import { dfsPaneOrder } from '../../renderer/layout/tree.js'
+import { dfsPaneOrder, movePane, swapPanes } from '../../renderer/layout/tree.js'
 import { applyDividerDrag, type DividerSpec } from '../../renderer/layout/dividers.js'
 import { clampIndex, DEFAULT_ZOOM_INDEX, levelAt, zoomPercent } from '../../renderer/term/zoom.js'
 import { isPaneColorKey, PANE_COLORS, paneColorHex } from '../../renderer/panes/colors.js'
@@ -1112,6 +1112,11 @@ export class Controller {
       if (type === 'click') void this.closeTab(id)
       return
     }
+    if (sub === 'move') {
+      // The shell's tab drag: the tab takes slot parts[3] as the pointer crosses into it.
+      if (type === 'click') this.dispatch({ type: 'tab.move', tabId: id, toIndex: Number(parts[3]) })
+      return
+    }
     if (sub === 'rename') return
     // A tab selects on press (app.tsx onMouseDown); a double-click renames it.
     if (type === 'down' || type === 'click') {
@@ -1137,6 +1142,10 @@ export class Controller {
       if (type === 'click') this.restartPane(id)
       return
     }
+    if (sub === 'moveTo') {
+      if (type === 'click') this.dropPane(id, parts[3] ?? '', parts[4] ?? '')
+      return
+    }
     if (type === 'down' || type === 'click') {
       if (sub === 'grid' || sub === 'title') this.blurDrawer()
       if (this.activeTab()?.focusedPaneId !== id) this.dispatch({ type: 'pane.focus', paneId: id })
@@ -1145,6 +1154,25 @@ export class Controller {
       // Double-clicking a title bar fills the tab with that pane (PaneView.tsx:177-180).
       this.dispatch({ type: 'pane.zoom', paneId: id })
     }
+  }
+
+  /**
+   * A pane dragged by its title and dropped on another pane of the tab (the
+   * shell's `pane:<id>:moveTo:<targetId>:<where>`): `swap` trades their places
+   * and sizes; `left`, `right`, `top` or `bottom` docks it on that side of the
+   * target. A docked layout is no longer the auto-arranged one, so the tab
+   * stops being pristine (a close would otherwise re-run the arranger over it).
+   */
+  private dropPane(paneId: string, targetId: string, where: string): void {
+    const tab = this.activeTab()
+    if (!tab || paneId === targetId || !tab.panes[targetId] || tab.zoomedPaneId !== null) return
+    let tree: RowNode
+    if (where === 'swap') tree = swapPanes(tab.tree, paneId, targetId)
+    else if (where === 'left' || where === 'right' || where === 'top' || where === 'bottom') tree = movePane(tab.tree, paneId, targetId, where)
+    else return
+    if (tree === tab.tree) return
+    this.dispatch({ type: 'layout.setTree', tree, pristine: where === 'swap' && tab.pristine })
+    if (this.activeTab()?.focusedPaneId !== paneId) this.dispatch({ type: 'pane.focus', paneId })
   }
 
   private findEvent(what: string, type: UiEvent['type']): void {
@@ -2359,13 +2387,16 @@ export class Controller {
     const darkStrip = mode === 'dark' || (mode === 'system' && appsDark)
     if (c === null) {
       // The shell has not reported: the theme's table on glass, as at construction.
-      this.tokens = { ...themeTokens(theme, null, darkStrip), composition: '1' }
+      const tokens = themeTokens(theme, null, darkStrip)
+      this.tokens = { ...tokens, composition: tokens.flatFrame === '1' ? '0' : '1' }
       return
     }
     // A missing or malformed colorization (DWM off, a remote session) paints
     // the opaque strip, as composition off does (Review Focus 5).
-    const glass = c.composition && isColorization(c.argb)
-    this.tokens = { ...themeTokens(theme, c.argb, darkStrip), composition: glass ? '1' : '0' }
+    const tokens = themeTokens(theme, c.argb, darkStrip)
+    // Graphite (flatFrame) has no glass even where DWM could draw it.
+    const glass = c.composition && isColorization(c.argb) && tokens.flatFrame !== '1'
+    this.tokens = { ...tokens, composition: glass ? '1' : '0' }
   }
 
   private sheetEvent(t: string, e: UiEvent): void {

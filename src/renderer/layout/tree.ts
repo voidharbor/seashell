@@ -126,6 +126,56 @@ export function removePane(root: RowNode, paneId: string): RowNode {
   return { type: 'row', ratios: root.ratios, children: newChildren }
 }
 
+/** Where a dragged pane lands against another: beside it, above or below it. */
+export type DropEdge = 'left' | 'right' | 'top' | 'bottom'
+
+/**
+ * Trade two panes' places: each takes the other's slot and size. Returns
+ * `root` unchanged if either id is missing or they are the same pane.
+ */
+export function swapPanes(root: RowNode, a: string, b: string): RowNode {
+  if (a === b || !hasPane(root, a) || !hasPane(root, b)) return root
+  const swap = (p: PaneLeaf): PaneLeaf =>
+    p.paneId === a ? { type: 'pane', paneId: b } : p.paneId === b ? { type: 'pane', paneId: a } : p
+  return { type: 'row', ratios: root.ratios, children: root.children.map((c) => ({ ...c, children: c.children.map(swap) })) }
+}
+
+/**
+ * Move a pane next to another: above or below it in its column (`top`,
+ * `bottom`), or into a new column of its own left or right of the target's
+ * column (`left`, `right`). The pane leaves its old slot as a close would
+ * (removePane's proportional redistribution), then takes half of the
+ * target's share, so every other pane keeps its size. Returns `root`
+ * unchanged if either id is missing or they are the same pane.
+ */
+export function movePane(root: RowNode, paneId: string, targetId: string, edge: DropEdge): RowNode {
+  if (paneId === targetId || !hasPane(root, paneId) || !hasPane(root, targetId)) return root
+  const rest = removePane(root, paneId)
+  const loc = findPane(rest, targetId)
+  const col = loc ? rest.children[loc.colIndex] : undefined
+  if (!loc || !col) return root
+  const leaf: PaneLeaf = { type: 'pane', paneId }
+  if (edge === 'top' || edge === 'bottom') {
+    const at = edge === 'top' ? loc.paneIndex : loc.paneIndex + 1
+    const half = (col.ratios[loc.paneIndex] ?? 0) / 2
+    const ratios = [...col.ratios]
+    ratios[loc.paneIndex] = half
+    ratios.splice(at, 0, half)
+    const children = [...col.children]
+    children.splice(at, 0, leaf)
+    const moved: ColNode = { type: 'col', ratios, children }
+    return { type: 'row', ratios: rest.ratios, children: rest.children.map((c, i) => (i === loc.colIndex ? moved : c)) }
+  }
+  const at = edge === 'left' ? loc.colIndex : loc.colIndex + 1
+  const half = (rest.ratios[loc.colIndex] ?? 0) / 2
+  const ratios = [...rest.ratios]
+  ratios[loc.colIndex] = half
+  ratios.splice(at, 0, half)
+  const children = [...rest.children]
+  children.splice(at, 0, { type: 'col', ratios: [1], children: [leaf] })
+  return { type: 'row', ratios, children }
+}
+
 function sum(values: number[]): number {
   return values.reduce((a, b) => a + b, 0)
 }

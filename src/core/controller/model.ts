@@ -14,6 +14,14 @@
  * `find:close`, `restore:yes`, `restore:fresh`, `zoom:badge`, `sleep`,
  * `settings`, `empty:newtab`, `web:new`, `pane:new`.
  *
+ * Drags the shell tracks itself and reports as one `click` each: a tab
+ * dragged along the strip sends `tab:<id>:move:<index>` every time it crosses
+ * into a new slot; a pane dragged by its title and dropped on another sends
+ * `pane:<id>:moveTo:<targetId>:<where>` once, `where` being `swap`, `left`,
+ * `right`, `top` or `bottom`. With the Graphite theme the shell draws the
+ * caption buttons itself: `caption:min`, `caption:max`, `caption:close`
+ * (handled in the shell, never sent).
+ *
  * The file explorer (Phase 2): `sidebar:row:<path>` (click selects, a right
  * button click opens the menu at the event's point, dblclick toggles a
  * directory or opens a file), `sidebar:twisty:<path>` (click toggles without

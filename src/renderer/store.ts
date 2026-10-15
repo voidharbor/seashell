@@ -265,6 +265,7 @@ export type Action =
   | { type: 'tab.select'; tabId: string }
   | { type: 'tab.selectIndex'; index: number }
   | { type: 'tab.cycle'; delta: number }
+  | { type: 'tab.move'; tabId: string; toIndex: number }
   | { type: 'tab.rename'; tabId: string; name: string; home: string }
   | { type: 'tabs.replace'; tabs: TabState[] }
   | { type: 'tabs.append'; tabs: TabState[] }
@@ -409,6 +410,18 @@ export function reducer(state: AppState, action: Action): AppState {
       const i = state.tabs.findIndex((t) => t.id === state.activeTabId)
       const next = (i + action.delta + state.tabs.length) % state.tabs.length
       return { ...state, activeTabId: state.tabs[next]?.id ?? state.activeTabId }
+    }
+
+    /** A tab dragged along the strip: it takes slot `toIndex`, the rest close up around it. */
+    case 'tab.move': {
+      const from = state.tabs.findIndex((t) => t.id === action.tabId)
+      if (from < 0 || !Number.isFinite(action.toIndex)) return state
+      const to = Math.max(0, Math.min(state.tabs.length - 1, Math.trunc(action.toIndex)))
+      if (to === from) return state
+      const tabs = [...state.tabs]
+      const [tab] = tabs.splice(from, 1)
+      tabs.splice(to, 0, tab!)
+      return { ...state, tabs }
     }
 
     case 'pane.new': {
