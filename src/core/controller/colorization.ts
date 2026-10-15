@@ -181,6 +181,9 @@ const DARK_STRIP: Readonly<Partial<TokenTable>> = Object.freeze({
  */
 export type ChromeTokens = TokenTable & { stripDark: '0' | '1'; radius: string; glyphGlow: string }
 
+/** A theme's tokens; `flatFrame` '1' is no glass anywhere: the shell paints the whole strip and draws its own caption buttons (Graphite). */
+export type ThemeTokens = ChromeTokens & { flatFrame?: '1' }
+
 /**
  * The glyph glow on light glass. The old glow painted full white whatever its
  * alpha (painter.cpp), too bright behind the strip's glyphs; 0.5 let the moon
@@ -421,8 +424,68 @@ const AERO_DARK: Readonly<Omit<TokenTable, 'accent' | 'accentText'>> = Object.fr
   btnDisabledText: '#7A7A7A',
 })
 
+/**
+ * Graphite: flat dark grey with no glass, the 10/13 mockup. The strip is the
+ * frame colour edge to edge (flatFrame), the tabs flat, the active one
+ * joining the focused pane's title; the faces are Aero Dark's, cooled a step.
+ */
+const GRAPHITE: Readonly<Omit<TokenTable, 'accentText'>> = Object.freeze({
+  ...AERO_DARK,
+  frame: '#1C1D20',
+  frameText: '#C5C7CC',
+  tabActive: '#26272B',
+  tabInactive: '#1C1D20',
+  tabText: '#E4E5E7',
+  body: '#111214',
+  panel: '#18191B',
+  panelBorder: '#34353A',
+  titleBar: '#1D1E21',
+  titleText: '#E4E5E7',
+  badge: '#2E2F33',
+  badgeText: '#A8ABB2',
+  divider: '#2A2B2F',
+  statusBg: '#18191B',
+  statusText: '#C5C7CC',
+  toastBg: '#26272B',
+  toastText: '#F0F0F2',
+  accent: '#2563EB',
+  glassTint: '#FF1C1D20',
+  tabSheen: '#2E2F33',
+  tabEdge: '#2B2C30',
+  stripBadgeText: '#C5C7CC',
+  hoverFace: '#3A3B40',
+  titleSheen: '#2F3035',
+  statusSheen: '#18191B',
+  statusSep: '#34353A',
+  cardBorder: '#3A3B40',
+  tipBg: '#26272B',
+  tipBorder: '#45474D',
+  tipText: '#D0D2D6',
+  menuBg: '#232427',
+  menuBorder: '#3A3B40',
+  menuHi: '#2F3136',
+  menuHiBorder: '#45474D',
+  menuSep: '#34353A',
+  menuSepShine: '#1C1D20',
+  editBg: '#18191B',
+  editBorder: '#45474D',
+  checkTop: '#18191B',
+  checkBottom: '#26272B',
+  dotTrack: '#34353A',
+  scrollTrack: '#18191B',
+  scrollLine: '#222327',
+  scrollThumbTop: '#3A3B40',
+  scrollThumbBottom: '#34353A',
+  scrollThumbBorder: '#45474D',
+  btn0: '#323338',
+  btn1: '#2E2F34',
+  btn2: '#2A2B30',
+  btn3: '#27282C',
+  btnBorder: '#45474D',
+})
+
 /** The Electron themes the native shell ports (Retro CRT is its textures, so it stays behind). */
-type PortedTheme = Exclude<ChromeTheme, 'aero' | 'aeroDark'>
+type PortedTheme = Exclude<ChromeTheme, 'aero' | 'aeroDark' | 'graphite'>
 
 /** `#rgb` or `#rrggbb` to `#RRGGBB`. */
 const full = (hex: string): string => {
@@ -562,14 +625,17 @@ const PORTED: Readonly<Record<PortedTheme, Readonly<ChromeTokens>>> = Object.fre
 /**
  * The chrome's tokens for a theme. Aero is colorizationToTokens (the strip
  * dark or not by the Tab strip setting); Aero Dark takes the colorization's
- * accent over its fixed dark table; the ported themes are their own, the
- * accent included. The Settings accent goes on top afterwards (withAccent).
+ * accent over its fixed dark table; Graphite and the ported themes are their
+ * own, the accent included. The Settings accent goes on top afterwards (withAccent).
  */
-export function themeTokens(theme: ChromeTheme, argb: string | null | undefined, darkStrip?: boolean): ChromeTokens {
+export function themeTokens(theme: ChromeTheme, argb: string | null | undefined, darkStrip?: boolean): ThemeTokens {
   if (theme === 'aero') return colorizationToTokens(argb, false, darkStrip)
   if (theme === 'aeroDark') {
     const aero = colorizationToTokens(argb)
     return { ...AERO_DARK, accent: aero.accent, accentText: aero.accentText, stripDark: '1', radius: '6', glyphGlow: '0' }
+  }
+  if (theme === 'graphite') {
+    return { ...GRAPHITE, accentText: readableOn(GRAPHITE.accent), stripDark: '1', radius: '6', glyphGlow: '0', flatFrame: '1' }
   }
   return { ...PORTED[theme] }
 }

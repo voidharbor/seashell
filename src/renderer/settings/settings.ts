@@ -77,9 +77,9 @@ export type TabStripMode = 'system' | 'light' | 'dark'
 
 export const TAB_STRIP_ORDER: readonly TabStripMode[] = ['system', 'light', 'dark']
 
-export type NativeThemeKey = 'system' | 'aero' | 'aeroDark' | 'mac' | 'macDark' | 'nautical' | 'hacker' | 'homebrew'
+export type NativeThemeKey = 'system' | 'aero' | 'aeroDark' | 'graphite' | 'mac' | 'macDark' | 'nautical' | 'hacker' | 'homebrew'
 
-export const NATIVE_THEME_ORDER: readonly NativeThemeKey[] = ['system', 'aero', 'aeroDark', 'mac', 'macDark', 'nautical', 'hacker', 'homebrew']
+export const NATIVE_THEME_ORDER: readonly NativeThemeKey[] = ['system', 'aero', 'aeroDark', 'graphite', 'mac', 'macDark', 'nautical', 'hacker', 'homebrew']
 
 export const DEFAULT_SETTINGS: Settings = {
   attentionGlow: true,

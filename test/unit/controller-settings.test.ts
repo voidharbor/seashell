@@ -17,6 +17,7 @@ describe('settings sheet', () => {
       ['system', 'System', false],
       ['aero', 'Aero Glass', false],
       ['aeroDark', 'Aero Dark', false],
+      ['graphite', 'Graphite', false],
       ['mac', 'macOS Light', false],
       ['macDark', 'macOS Dark', false],
       ['nautical', 'Nautical', false],

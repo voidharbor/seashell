@@ -69,6 +69,11 @@ const NATIVE_THEMES: Record<NativeThemeKey, { label: string; name: string; note:
     name: 'Aero Dark, Windows 7 glass over dark surfaces',
     note: 'The Aero glass tab strip over Windows 11 dark surfaces, from the panes to the menus and dialogs, with the desktop colour as the accent.',
   },
+  graphite: {
+    label: 'Graphite',
+    name: 'Graphite, flat dark grey with no glass',
+    note: 'Flat dark grey from the tab strip to the status bar, no glass and no desktop colour, with SeaShell drawing its own window buttons.',
+  },
   mac: ported('mac'),
   macDark: ported('macDark'),
   nautical: ported('nautical'),

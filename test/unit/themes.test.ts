@@ -6,7 +6,7 @@ import { Controller } from '../../src/core/controller/controller.js'
 import { coerceUiState } from '../../src/core/controller/ui-state.js'
 import { fakeDeps, GEO } from './controller-fakes.js'
 
-const THEMES: readonly ChromeTheme[] = ['aero', 'aeroDark', 'mac', 'macDark', 'nautical', 'hacker', 'homebrew']
+const THEMES: readonly ChromeTheme[] = ['aero', 'aeroDark', 'graphite', 'mac', 'macDark', 'nautical', 'hacker', 'homebrew']
 
 const lum = (hex: string): number => {
   const n = Number.parseInt(hex.slice(-6), 16)
@@ -152,6 +152,17 @@ describe('Aero Dark and the ported themes', () => {
     // The colorization does not reach a ported theme.
     expect(themeTokens('mac', '#FF0078D7')).toEqual(themeTokens('mac', null))
   })
+  it('Graphite is flat dark grey, its own accent, no glass and no colorization', () => {
+    const t = themeTokens('graphite', '#FF881798')
+    expect(t).toMatchObject({ frame: '#1C1D20', tabActive: '#26272B', body: '#111214', accent: '#2563EB', stripDark: '1', glyphGlow: '0', flatFrame: '1' })
+    expect(themeTokens('graphite', '#FF0078D7')).toEqual(t)
+    for (const k of ['frame', 'body', 'panel', 'titleBar', 'toastBg', 'statusBg', 'menuBg', 'editBg', 'tipBg', 'scrollTrack', 'btn2', 'checkBottom'] as const) {
+      expect(lum(t[k]), k).toBeLessThan(0.05)
+    }
+    // Nothing in the table carries the plum.
+    for (const v of Object.values(t)) expect(v).not.toMatch(/881798/i)
+    expect(themeTokens('aeroDark', null).flatFrame).toBeUndefined()
+  })
   it('System resolves by the Windows app theme', () => {
     expect(resolveTheme('system', false)).toBe('aero')
     expect(resolveTheme('system', true)).toBe('aeroDark')
@@ -202,6 +213,20 @@ describe('the theme setting', () => {
     click(c, 'sheet:settings:accent:default')
     expect(c.model().tokens.accent).toBe('#D0A63A')
     expect(c.uiState().settings.nativeTheme).toBe('nautical')
+  })
+  it('Graphite turns the glass off even with DWM composition on', async () => {
+    const f = fakeDeps()
+    const c = new Controller(f.deps, { home: '/h', version: '0', chords: [] })
+    await c.boot(GEO)
+    c.command('app.settings')
+    click(c, 'sheet:settings:theme:graphite')
+    expect(c.uiState().settings.nativeTheme).toBe('graphite')
+    expect(c.model().tokens).toMatchObject({ flatFrame: '1', composition: '0' })
+    c.push('shell:colorization', { argb: '#FF881798', opaque: false, composition: true, appsDark: false })
+    expect(c.model().tokens).toMatchObject({ frame: '#1C1D20', flatFrame: '1', composition: '0' })
+    click(c, 'sheet:settings:theme:aero')
+    expect(c.model().tokens.composition).toBe('1')
+    expect(c.model().tokens.flatFrame).toBeUndefined()
   })
 })
 
