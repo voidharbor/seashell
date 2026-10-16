@@ -40,6 +40,7 @@ import { clearLastSession, loadLastSession, saveLastSession } from './state/last
 import { createSnapshotGate } from './state/snapshot-gate.js'
 import { sessionIdsForPanes } from './state/session-lookup.js'
 import { agentDepsFor } from './state/agent-deps.js'
+import { registerChangesIpc } from './changes/ipc.js'
 import { parsePsOutput } from './monitor/sweep-parse.js'
 import { bypassConsented, resumeModesForPanes } from './state/resume-mode.js'
 
@@ -421,6 +422,9 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
 
   // ------------------------------------------------------------- projects
   ipcMain.handle(CH.projectsList, async () => ({ projects: await loadProjects() }))
+
+  // ------------------------------------------------------------- changes
+  registerChangesIpc(platform.id, lookupClaudeHome)
 
   ipcMain.handle(CH.projectsSessionIds, async (_e, raw) => {
     const parsed = z

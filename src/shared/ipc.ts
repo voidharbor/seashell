@@ -1,4 +1,4 @@
-import type { OtherAgentKind } from './agents.js'
+import type { AgentKind, OtherAgentKind } from './agents.js'
 /**
  * The IPC contract between main and renderer.
  *
@@ -99,6 +99,12 @@ export const CH = {
   windowMaximized: 'window:maximized',
   /** Renderer to main: pop the application menu, which has no bar to live in there. */
   windowMenu: 'window:menu',
+
+  /** The changes panel: watch a pane's agent session, list what it changed, read one file. */
+  changesWatch: 'changes:watch',
+  changesList: 'changes:list',
+  changesFile: 'changes:file',
+  changesRelease: 'changes:release',
 } as const
 
 export type ChannelName = (typeof CH)[keyof typeof CH]
@@ -697,3 +703,59 @@ declare global {
     seashell: SeashellApi
   }
 }
+
+// ---------------------------------------------------------------------------
+// Changes: what an agent session in a pane created, edited and deleted
+// ---------------------------------------------------------------------------
+
+export interface ChangesWatchRequest {
+  paneId: string
+  kind: AgentKind
+  /** Unknown when the lookup could not tell it; the folder is still watched. */
+  sid?: string
+  cwd: string
+}
+
+/** One changed file. Contents never ride here: `changes:file` reads one at a time. */
+export interface ChangeEntry {
+  /** Absolute. */
+  path: string
+  /** Relative to the session cwd, or absolute when outside it. */
+  rel: string
+  change: 'created' | 'edited' | 'deleted'
+  added: number
+  removed: number
+  /** The agent's own record, the folder snapshot, or both. */
+  source: 'agent' | 'fs' | 'both'
+  /** When it last changed (or was first seen gone), ms. */
+  at: number
+}
+
+export interface ChangesListResponse {
+  paneId: string
+  agent: AgentKind
+  agentLabel: string
+  cwd: string
+  /** Newest first. */
+  entries: ChangeEntry[]
+  /** Why only the agent's own record is listed, or null when the folder is watched too. */
+  note: string | null
+}
+
+export type ChangesFileResponse = Result<
+  {
+    path: string
+    rel: string
+    change: ChangeEntry['change']
+    /** Text before the session touched it; null for a created file, or when unknown (see beforeKnown). */
+    before: string | null
+    /** Text now; null for a deleted file. */
+    after: string | null
+    beforeKnown: boolean
+    binary: boolean
+    truncated: boolean
+    /** A previewable image (after, or before when deleted). */
+    image?: { mime: string; base64: string }
+  },
+  'ENOENT'
+>
