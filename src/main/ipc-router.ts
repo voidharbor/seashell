@@ -27,6 +27,7 @@ import { statForOpen, type OpenTarget } from './fs/open-target.js'
 import { ensureNotes } from './links/notes.js'
 import { platform } from './platform/index.js'
 import { appInstanceId } from '../shared/wsl-shell.js'
+import { OTHER_AGENT_KINDS, type OtherAgentKind } from '../shared/agents.js'
 import { WINDOWS_IMAGE_SCRIPT, decodeBase64Output, saveClipboardImage } from './clipboard-image.js'
 import {
   MAX_NAME_LENGTH,
@@ -38,6 +39,7 @@ import {
 import { clearLastSession, loadLastSession, saveLastSession } from './state/last-session.js'
 import { createSnapshotGate } from './state/snapshot-gate.js'
 import { sessionIdsForPanes } from './state/session-lookup.js'
+import { agentDepsFor } from './state/agent-deps.js'
 import { parsePsOutput } from './monitor/sweep-parse.js'
 import { bypassConsented, resumeModesForPanes } from './state/resume-mode.js'
 
@@ -432,6 +434,9 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
               knownVerified: z.boolean().optional(),
               label: z.string().max(512).optional(),
               claude: z.boolean().optional(),
+              agent: z.enum(OTHER_AGENT_KINDS as [OtherAgentKind, ...OtherAgentKind[]]).optional(),
+              agentSid: z.string().max(64).optional(),
+              agentFlags: z.array(z.string().max(32)).max(8).optional(),
             })
           )
           .max(MAX_TERM_PANES),
@@ -460,6 +465,7 @@ export function registerIpc(ptyManager: PtyManager, opts: { watcher: DirWatcher 
       // shared with any Linux SeaShell in the same distro. wslhost panes carry
       // the native shell's id, which the platform names itself.
       appId: platform.paneAppId ?? (platform.id === 'win32' ? appInstanceId('win32', process.pid) : undefined),
+      agents: agentDepsFor(platform.id, sweepOnce),
       livePids:
         platform.id === 'win32'
           ? async () => {

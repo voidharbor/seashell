@@ -338,9 +338,10 @@ export function projectsSheet(st: ProjectsSheetState, now: number, uiScale = 1):
       id: 'describe',
       kind: 'note',
       label:
-        `${what} Layout, directories, names and colours, plus the claude session in each pane; ` +
-        "reopening resumes it with a visible `claude -r` in that pane's shell. Other running " +
-        'programs come back as a fresh shell.' +
+        `${what} Layout, directories, names and colours, plus the agent session in each pane ` +
+        '(Claude Code, Jarvis, Ultron or opencode); reopening resumes it with a visible ' +
+        "`claude -r`, `jarvis --session`, `ultron --session` or `opencode -s` in that pane's shell. " +
+        'Other running programs come back as a fresh shell.' +
         (existing ? ' A project with this name already exists and will be replaced.' : ''),
     },
   )

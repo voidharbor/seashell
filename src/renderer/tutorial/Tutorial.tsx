@@ -166,7 +166,7 @@ function buildSteps(platform: string): Step[] {
       'alongside what is already running (Add). ' +
       'A project reopens a shape, not a session. You get back the tabs, how they ' +
       'were split, each pane’s directory and what it was launched as, and a ' +
-      'claude pane resumes with a visible `claude -r`. What does not come back: ' +
+      'an agent pane (claude, jarvis, ultron, opencode) resumes its session visibly. What does not come back: ' +
       'the processes, which died with the app, and the scrollback, which is left ' +
       'out deliberately — a terminal buffer routinely holds keys and customer ' +
       'data, and that is not worth writing to a file to save you a scroll.',

@@ -1631,8 +1631,9 @@ export class Controller {
    */
   private async snapshot(force: boolean): Promise<void> {
     if (this.restoreCandidate || this.restoring || this.s.tabs.length === 0) return
-    const { lookup, proven } = await collectSaveLookup(this.s, this.deps.invoke.bind(this.deps))
+    const { lookup, proven, provenAgents } = await collectSaveLookup(this.s, this.deps.invoke.bind(this.deps))
     if (Object.keys(proven).length > 0) this.dispatch({ type: 'panes.sessionIds', ids: proven })
+    if (Object.keys(provenAgents).length > 0) this.dispatch({ type: 'panes.agents', agents: provenAgents })
     const tabs = snapshotTabs(this.s, lookup)
     try {
       if (!shouldOfferRestore(tabs)) {

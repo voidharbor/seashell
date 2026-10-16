@@ -1,4 +1,5 @@
-import type { PaneMetrics, SystemMetrics } from '../shared/ipc.js'
+import type { PaneAgentVerdict, PaneMetrics, SystemMetrics } from '../shared/ipc.js'
+import type { OtherAgentKind } from '../shared/agents.js'
 import { k } from './platform.js'
 import type { PaneColorKey } from './panes/colors.js'
 import { cleanPaneTitle } from './panes/paneTitle.js'
@@ -13,8 +14,9 @@ import { clampIndex } from './term/zoom.js'
 import { foregroundProgram } from './projects/serialize.js'
 
 /** What a pane was launched as. Panes are always rooted at `/bin/zsh -l`; this
- *  records what the user asked for so a restart reproduces it. */
-export type PaneCommand = 'zsh' | 'claude' | 'cmd'
+ *  records what the user asked for so a restart reproduces it. The agents
+ *  besides claude are in src/shared/agents.ts. */
+export type PaneCommand = 'zsh' | 'claude' | 'cmd' | OtherAgentKind
 
 /**
  * What a pane contains.
@@ -49,6 +51,14 @@ export interface PaneState {
    *  serialised, so a project file has no mode field to lie in. The launch
    *  command maps it through a fixed flag table; see projects/serialize.ts. */
   claudeResumeMode?: string
+  /** For a jarvis, ultron or opencode pane (`command` names it): the session
+   *  to resume, validated against that agent's allowlist at every boundary. */
+  agentSessionId?: string
+  /** That agent's launcher flags worth keeping (src/shared/agents.ts). */
+  agentFlags?: string[]
+  /** A lookup has proven the agent running in this pane since it started, so
+   *  a later lookup that finds none means the user left it. Runtime only. */
+  agentSeen?: boolean
   /** kind 'file' — absolute path being previewed. */
   filePath?: string
   /** kind 'file' — render the source rather than the rich form (markdown/image). */
@@ -297,6 +307,8 @@ export type Action =
   | { type: 'explorer.reveal'; path: string | null; isDir?: boolean }
   | { type: 'metrics'; panes: PaneMetrics[]; system: SystemMetrics | null }
   | { type: 'panes.sessionIds'; ids: Readonly<Record<string, string>> }
+  /** The other agents a lookup proved running (src/main/state/agents.ts). */
+  | { type: 'panes.agents'; agents: Readonly<Record<string, PaneAgentVerdict>> }
   | { type: 'toast'; message: string | null }
 
 /**
@@ -646,7 +658,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return mapPane(state, action.paneId, (p) => {
         // A restarted pane starts its command over; whether claude ran in the
         // last run says nothing about this one.
-        const { exit: _drop, claudeSeen: _seen, ...rest } = p
+        const { exit: _drop, claudeSeen: _seen, agentSeen: _agentSeen, ...rest } = p
         return {
           ...rest,
           status: 'starting',
@@ -808,6 +820,41 @@ export function reducer(state: AppState, action: Action): AppState {
           if (!p || p.claudeSessionId === sid) continue
           panes ??= { ...t.panes }
           panes[id] = { ...p, claudeSessionId: sid }
+        }
+        if (!panes) return t
+        tabsChanged = true
+        return { ...t, panes }
+      })
+      return tabsChanged ? { ...state, tabs } : state
+    }
+
+    // A live agent proven in a pane: the pane is that agent now, on that
+    // session when one could be told, with its launcher flags.
+    case 'panes.agents': {
+      let tabsChanged = false
+      const tabs = state.tabs.map((t) => {
+        let panes: Record<string, PaneState> | null = null
+        for (const [id, v] of Object.entries(action.agents)) {
+          const p = t.panes[id]
+          if (!p || p.kind !== 'term' || p.command === 'cmd' || v.source !== 'process') continue
+          const flags = v.flags ?? []
+          if (
+            p.command === v.kind &&
+            p.agentSessionId === v.sid &&
+            p.agentSeen === true &&
+            (p.agentFlags ?? []).join(' ') === flags.join(' ')
+          ) {
+            continue
+          }
+          panes ??= { ...t.panes }
+          const { agentSessionId: _sid, agentFlags: _flags, claudeSessionId: _claude, ...rest } = p
+          panes[id] = {
+            ...rest,
+            command: v.kind,
+            ...(v.sid ? { agentSessionId: v.sid } : {}),
+            ...(flags.length > 0 ? { agentFlags: [...flags] } : {}),
+            agentSeen: true,
+          }
         }
         if (!panes) return t
         tabsChanged = true

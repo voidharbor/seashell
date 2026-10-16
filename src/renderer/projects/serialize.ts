@@ -1,5 +1,13 @@
-import type { PaneMetrics, ProjectsSessionIdsResponse, SavedPane, SavedTab } from '../../shared/ipc.js'
+import type { PaneAgentVerdict, PaneMetrics, ProjectsSessionIdsResponse, SavedPane, SavedTab } from '../../shared/ipc.js'
 import { claudeTitleFromLabel } from '../../shared/claude-title.js'
+import {
+  agentLaunchText,
+  cleanAgentFlags,
+  isOtherAgentKind,
+  isValidAgentSessionId,
+  OTHER_AGENT_KINDS,
+  type OtherAgentKind,
+} from '../../shared/agents.js'
 import type { AppState, PaneCommand, PaneState, TabState } from '../store.js'
 import { createInitialTree } from '../layout/tree.js'
 import type { RowNode } from '../layout/types.js'
@@ -41,6 +49,7 @@ export type SerializablePane = Omit<
   | 'claudeResumeMode'
   // An observation about this run of the pane, not about what it is.
   | 'claudeSeen'
+  | 'agentSeen'
 >
 
 /**
@@ -55,10 +64,12 @@ export type SerializablePane = Omit<
  * `vim somefile` is the shape of the problem: the foreground process is `vim`,
  * but retyping just `vim` opens an empty buffer, not the file — the argument
  * was never observable. So this is kept to programs that mean something useful
- * with no arguments at all, which today is one.
+ * with no arguments at all: claude and opencode. (jarvis and ultron run as
+ * `node`, which names nothing; main's process lane proves those.)
  */
 const RESTORABLE_FOREGROUND: Readonly<Record<string, PaneCommand>> = {
   claude: 'claude',
+  opencode: 'opencode',
 }
 
 /**
@@ -100,6 +111,8 @@ export function foregroundProgram(metrics: PaneMetrics | undefined): string | nu
 export function savedCommandFor(pane: PaneState, claudeRunning = false): PaneCommand {
   if (pane.kind !== 'term' || pane.command === 'cmd') return pane.command
   if (claudeRunning) return 'claude'
+  // Another agent's pane is settled by `savedAgentFor` before this runs; what
+  // reaches here is a pane that is not (or no longer) running one.
 
   const fg = foregroundProgram(pane.metrics)
   if (fg !== null && Object.hasOwn(RESTORABLE_FOREGROUND, fg)) return RESTORABLE_FOREGROUND[fg]!
@@ -129,8 +142,66 @@ const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
  * sent none, so every pane where claude was typed by hand saved as a shell).
  * A 'cmd' pane keeps its command: retyping it is what the user asked for.
  */
-export function paneToSaved(pane: PaneState, sessionId?: string, claudeRunning = false): SavedPane {
-  const command = savedCommandFor(pane, claudeRunning)
+/**
+ * What a jarvis, ultron or opencode pane saves as, or null when it is not
+ * one. `verdict` is main's answer for the pane: undefined when no lookup was
+ * made (the pane keeps what it carries), else its verdict or null for none.
+ * `checked` says main read the process table this time, so a pane once seen
+ * running its agent and now running none has really left it. A claude proven
+ * in the pane outranks everything here.
+ */
+export function savedAgentFor(
+  pane: PaneState,
+  verdict: PaneAgentVerdict | null | undefined,
+  claudeRunning = false,
+  checked = false
+): { kind: OtherAgentKind; sid?: string; flags: string[] } | null {
+  if (pane.kind !== 'term' || pane.command === 'cmd' || claudeRunning) return null
+  const own = (): { kind: OtherAgentKind; sid?: string; flags: string[] } | null =>
+    isOtherAgentKind(pane.command)
+      ? {
+          kind: pane.command,
+          ...(isValidAgentSessionId(pane.command, pane.agentSessionId) ? { sid: pane.agentSessionId } : {}),
+          flags: cleanAgentFlags(pane.command, pane.agentFlags ?? []),
+        }
+      : null
+  if (verdict === undefined) return own()
+  if (verdict === null || !isOtherAgentKind(verdict.kind)) return null
+  if (verdict.source === 'carried' && checked && pane.agentSeen === true) return null
+  return {
+    kind: verdict.kind,
+    ...(isValidAgentSessionId(verdict.kind, verdict.sid) ? { sid: verdict.sid } : {}),
+    flags: cleanAgentFlags(verdict.kind, verdict.flags ?? []),
+  }
+}
+
+/** What a save knows about the other agents; see `saveLookupFrom`. */
+export interface AgentLookup {
+  verdicts: ReadonlyMap<string, PaneAgentVerdict>
+  /** main read the process table, so a missing live agent means none. */
+  checked: boolean
+}
+
+export function paneToSaved(
+  pane: PaneState,
+  sessionId?: string,
+  claudeRunning = false,
+  agents?: AgentLookup
+): SavedPane {
+  const agent = savedAgentFor(pane, agents ? (agents.verdicts.get(pane.id) ?? null) : undefined, claudeRunning, agents?.checked)
+  if (agent) {
+    return {
+      label: pane.label,
+      labelIsCustom: pane.labelIsCustom,
+      kind: pane.kind,
+      command: agent.kind,
+      cwd: pane.cwd,
+      ...(agent.sid === undefined ? {} : { agentSessionId: agent.sid }),
+      ...(agent.flags.length === 0 ? {} : { agentFlags: agent.flags }),
+      ...(pane.color === undefined ? {} : { color: pane.color }),
+    }
+  }
+  const command = savedCommandFor(isOtherAgentKind(pane.command) ? { ...pane, command: 'zsh' } : pane, claudeRunning)
   // Only a claude terminal pane records a session to resume; the id itself
   // must be UUID-shaped or it does not get written at all.
   const sid =
@@ -154,7 +225,8 @@ export function paneToSaved(pane: PaneState, sessionId?: string, claudeRunning =
 export function tabToSaved(
   tab: TabState,
   sessionIds?: ReadonlyMap<string, string>,
-  claudeRunning?: ReadonlySet<string>
+  claudeRunning?: ReadonlySet<string>,
+  agents?: AgentLookup
 ): SavedTab {
   return {
     id: tab.id,
@@ -170,7 +242,7 @@ export function tabToSaved(
         // No lookup at all (it failed or was never made) is not a verdict:
         // the pane keeps the id it was last proven on. A lookup that ran and
         // left the pane out did decide, and is followed.
-        paneToSaved(p, sessionIds ? sessionIds.get(id) : p.claudeSessionId, claudeRunning?.has(id) ?? false),
+        paneToSaved(p, sessionIds ? sessionIds.get(id) : p.claudeSessionId, claudeRunning?.has(id) ?? false, agents),
       ])
     ),
     sessionIdsVerified: true,
@@ -180,15 +252,60 @@ export function tabToSaved(
 export function stateToTabs(
   state: AppState,
   sessionIds?: ReadonlyMap<string, string>,
-  claudeRunning?: ReadonlySet<string>
+  claudeRunning?: ReadonlySet<string>,
+  agents?: AgentLookup
 ): SavedTab[] {
-  return state.tabs.map((t) => tabToSaved(t, sessionIds, claudeRunning))
+  return state.tabs.map((t) => tabToSaved(t, sessionIds, claudeRunning, agents))
 }
 
 /** What a save knows from main's session lookup; see `saveLookupFrom`. */
 export interface SaveLookup {
   ids: ReadonlyMap<string, string>
   running: ReadonlySet<string>
+  /** Undefined from a main that predates the other agents: every pane then
+   *  keeps the agent it carries. */
+  agents?: AgentLookup
+}
+
+/** One terminal pane as the session lookup is asked about it: claude's id
+ *  for a claude pane, the agent and its session for another agent's. */
+export function lookupPaneFor(p: PaneState): {
+  paneId: string
+  cwd: string
+  knownSid?: string
+  knownVerified?: boolean
+  claude: boolean
+  agent?: OtherAgentKind
+  agentSid?: string
+  agentFlags?: string[]
+} {
+  if (isOtherAgentKind(p.command)) {
+    const flags = cleanAgentFlags(p.command, p.agentFlags ?? [])
+    return {
+      paneId: p.id,
+      cwd: p.cwd,
+      claude: false,
+      agent: p.command,
+      ...(isValidAgentSessionId(p.command, p.agentSessionId) ? { agentSid: p.agentSessionId } : {}),
+      ...(flags.length > 0 ? { agentFlags: flags } : {}),
+    }
+  }
+  return {
+    paneId: p.id,
+    cwd: p.cwd,
+    ...(p.claudeSessionId ? { knownSid: p.claudeSessionId, knownVerified: true } : {}),
+    claude: savedCommandFor(p) === 'claude',
+  }
+}
+
+/** The verdicts a lookup proved from a live process, for `panes.agents`. */
+export function provenAgents(res: ProjectsSessionIdsResponse | null): Record<string, PaneAgentVerdict> {
+  const out: Record<string, PaneAgentVerdict> = {}
+  if (!res || typeof res.agents !== 'object' || res.agents === null) return out
+  for (const [id, v] of Object.entries(res.agents)) {
+    if (v && v.source === 'process' && isOtherAgentKind(v.kind)) out[id] = v
+  }
+  return out
 }
 
 /**
@@ -217,9 +334,26 @@ export function saveLookupFrom(
   for (const p of panes.slice(asked)) {
     if (p.claudeSessionId !== undefined) ids.set(p.id, p.claudeSessionId)
   }
+  let agents: AgentLookup | undefined
+  if (typeof res.agents === 'object' && res.agents !== null) {
+    const verdicts = new Map<string, PaneAgentVerdict>()
+    for (const [id, v] of Object.entries(res.agents)) if (v && isOtherAgentKind(v.kind)) verdicts.set(id, v)
+    // A pane past the cap was never asked: it keeps its own agent.
+    for (const p of panes.slice(asked)) {
+      if (!isOtherAgentKind(p.command)) continue
+      verdicts.set(p.id, {
+        kind: p.command,
+        ...(isValidAgentSessionId(p.command, p.agentSessionId) ? { sid: p.agentSessionId } : {}),
+        ...(p.agentFlags ? { flags: cleanAgentFlags(p.command, p.agentFlags) } : {}),
+        source: 'carried',
+      })
+    }
+    agents = { verdicts, checked: res.agentsChecked === true }
+  }
   return {
     ids,
     running: new Set(Object.keys(res.sources).filter((id) => res.sources[id] === 'process')),
+    ...(agents ? { agents } : {}),
   }
 }
 
@@ -293,7 +427,12 @@ export function launchCommandText(pane: {
   commandText?: string
   claudeSessionId?: string
   claudeResumeMode?: string
+  agentSessionId?: string
+  agentFlags?: string[]
 }): string | null {
+  // jarvis, ultron, opencode: a fixed program, a fixed flag table and an id
+  // that passed the agent's own allowlist (src/shared/agents.ts).
+  if (isOtherAgentKind(pane.command)) return agentLaunchText(pane.command, pane.agentSessionId, pane.agentFlags)
   if (pane.command === 'claude') {
     const flag = pane.claudeResumeMode ? RESUME_MODE_FLAGS[pane.claudeResumeMode] : undefined
     if (!pane.claudeSessionId || !SESSION_ID_RE.test(pane.claudeSessionId)) {
@@ -371,7 +510,10 @@ export interface RestoreLookupPane {
   knownSid?: string
   knownVerified: boolean
   label?: string
-  claude: true
+  claude: boolean
+  agent?: OtherAgentKind
+  agentSid?: string
+  agentFlags?: string[]
 }
 
 export interface RestorePlan {
@@ -398,6 +540,18 @@ export function planRestore(saved: SavedTab[], mintId: (prefix: string) => strin
       tabs.push(tab)
       for (const pane of Object.values(tab.panes)) {
         if (pane.kind !== 'term') continue
+        if (isOtherAgentKind(pane.command)) {
+          lookup.push({
+            paneId: pane.id,
+            cwd: pane.cwd,
+            knownVerified: verified,
+            claude: false,
+            agent: pane.command,
+            ...(pane.agentSessionId ? { agentSid: pane.agentSessionId } : {}),
+            ...(pane.agentFlags ? { agentFlags: pane.agentFlags } : {}),
+          })
+          continue
+        }
         const label = pane.labelIsCustom ? undefined : pane.label
         const titled = label !== undefined && claudeTitleFromLabel(label) !== null
         if (pane.command === 'claude' || (pane.command === 'zsh' && !verified && titled)) {
@@ -426,13 +580,24 @@ export function planRestore(saved: SavedTab[], mintId: (prefix: string) => strin
 export function applyRestoreIds(
   tabs: TabState[],
   lookup: readonly RestoreLookupPane[],
-  ids: Readonly<Record<string, string>> | null
+  ids: Readonly<Record<string, string>> | null,
+  agents?: Readonly<Record<string, PaneAgentVerdict>>
 ): void {
   const asked = new Map(lookup.map((l) => [l.paneId, l]))
   for (const tab of tabs) {
     for (const pane of Object.values(tab.panes)) {
       const req = asked.get(pane.id)
       if (!req) continue
+      if (req.agent && pane.command === req.agent) {
+        // The same rule as claude's: a failed lookup keeps only a verified
+        // id; an answer keeps only what main still stands behind.
+        const v = ids === null ? undefined : agents?.[pane.id]
+        const sid =
+          ids === null ? (req.knownVerified ? req.agentSid : undefined) : v && v.kind === req.agent ? v.sid : undefined
+        if (isValidAgentSessionId(req.agent, sid)) pane.agentSessionId = sid
+        else delete pane.agentSessionId
+        continue
+      }
       const sid = ids === null ? (req.knownVerified ? req.knownSid : undefined) : ids[pane.id]
       if (sid && SESSION_ID_RE.test(sid)) {
         pane.claudeSessionId = sid
@@ -444,18 +609,29 @@ export function applyRestoreIds(
   }
 }
 
+/** The commands a saved pane may come back as; anything else is a shell. */
+const SAVED_COMMANDS: ReadonlySet<string> = new Set(['zsh', 'claude', 'cmd', ...OTHER_AGENT_KINDS])
+
 export function savedToPane(id: string, sp: SavedPane): PaneState {
+  const command: PaneCommand = SAVED_COMMANDS.has(sp.command) ? sp.command : 'zsh'
   return {
     id,
     kind: sp.kind,
     cwd: sp.cwd,
     label: sp.label,
     labelIsCustom: sp.labelIsCustom ?? false,
-    command: sp.command,
+    command,
     // A project file is user data: an id that is not UUID-shaped is dropped
     // here, and the pane restores as a fresh claude instead.
     ...(typeof sp.claudeSessionId === 'string' && SESSION_ID_RE.test(sp.claudeSessionId)
       ? { claudeSessionId: sp.claudeSessionId }
+      : {}),
+    // The same for the other agents, each against its own allowlist.
+    ...(isOtherAgentKind(command) && isValidAgentSessionId(command, sp.agentSessionId)
+      ? { agentSessionId: sp.agentSessionId }
+      : {}),
+    ...(isOtherAgentKind(command) && cleanAgentFlags(command, sp.agentFlags).length > 0
+      ? { agentFlags: cleanAgentFlags(command, sp.agentFlags) }
       : {}),
     ...(sp.commandText === undefined ? {} : { commandText: sp.commandText }),
     ...(isPaneColorKey(sp.color) ? { color: sp.color } : {}),

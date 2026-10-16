@@ -54,7 +54,8 @@ import {
   planRestore,
   saveLookupFrom,
   type SaveLookup,
-  savedCommandFor,
+  lookupPaneFor,
+  provenAgents,
   stateToTabs,
   tabToSaved,
 } from './projects/serialize.js'
@@ -492,12 +493,7 @@ export function App(): React.JSX.Element {
   > => {
     const termPanes = state.tabs.flatMap((t) => Object.values(t.panes).filter((p) => p.kind === 'term'))
     const asked = Math.min(termPanes.length, MAX_TERM_PANES)
-    const livePanes = termPanes.slice(0, asked).map((p) => ({
-      paneId: p.id,
-      cwd: p.cwd,
-      ...(p.claudeSessionId ? { knownSid: p.claudeSessionId, knownVerified: true } : {}),
-      claude: savedCommandFor(p) === 'claude',
-    }))
+    const livePanes = termPanes.slice(0, asked).map(lookupPaneFor)
     let res: ProjectsSessionIdsResponse | null = null
     try {
       res = await window.seashell.projects.sessionIds({ panes: livePanes })
@@ -510,6 +506,8 @@ export function App(): React.JSX.Element {
         ([id]) => r.sources[id] === 'process' || r.sources[id] === 'registry'
       )
       if (proven.length > 0) dispatch({ type: 'panes.sessionIds', ids: Object.fromEntries(proven) })
+      const agents = provenAgents(r)
+      if (Object.keys(agents).length > 0) dispatch({ type: 'panes.agents', agents })
     }
     return saveLookupFrom(termPanes, asked, res)
   }, [state])
@@ -535,9 +533,9 @@ export function App(): React.JSX.Element {
       const tabs =
         scope === 'tab'
           ? activeTab
-            ? [tabToSaved(activeTab, found?.ids, found?.running)]
+            ? [tabToSaved(activeTab, found?.ids, found?.running, found?.agents)]
             : []
-          : stateToTabs(state, found?.ids, found?.running)
+          : stateToTabs(state, found?.ids, found?.running, found?.agents)
       if (tabs.length === 0) {
         dispatch({ type: 'toast', message: 'Nothing to save' })
         return
@@ -594,7 +592,7 @@ export function App(): React.JSX.Element {
       if (state.tabs.length === 0) return
 
       const found = await collectSessionIds()
-      const tabs = stateToTabs(state, found?.ids, found?.running)
+      const tabs = stateToTabs(state, found?.ids, found?.running, found?.agents)
       try {
         if (!shouldOfferRestore(tabs)) {
           if (force || lastSnapshotRef.current !== '') {
@@ -662,16 +660,18 @@ export function App(): React.JSX.Element {
     // worse than a cold one.
     if (lookup.length > 0) {
       let ids: Record<string, string> | null = null
+      let agents: ProjectsSessionIdsResponse['agents']
       try {
         const res = await window.seashell.projects.sessionIds({
           panes: lookup.slice(0, MAX_TERM_PANES),
           ...(releasing.length > 0 ? { releasing: releasing.slice(0, MAX_TERM_PANES) } : {}),
         })
         ids = res.ids
+        agents = res.agents
       } catch {
         /* applyRestoreIds keeps only verified ids when the lookup fails */
       }
-      applyRestoreIds(restored, lookup, ids)
+      applyRestoreIds(restored, lookup, ids, agents)
     }
 
     // Every claude pane relaunches in a permission mode it can work in: the

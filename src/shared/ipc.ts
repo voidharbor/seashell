@@ -1,3 +1,4 @@
+import type { OtherAgentKind } from './agents.js'
 /**
  * The IPC contract between main and renderer.
  *
@@ -434,7 +435,9 @@ export interface SavedPane {
   label: string
   labelIsCustom: boolean
   kind: 'term' | 'file' | 'web'
-  command: 'zsh' | 'claude' | 'cmd'
+  /** What the pane was running: a plain shell, a typed command, or one of the
+   *  agents in src/shared/agents.ts. */
+  command: 'zsh' | 'claude' | 'cmd' | OtherAgentKind
   commandText?: string
   cwd: string
   color?: string
@@ -444,6 +447,13 @@ export interface SavedPane {
    *  session registry at save time. Restore types `claude -r <id>` visibly
    *  into the pane's shell; a dead id fails soft into that same shell. */
   claudeSessionId?: string
+  /** For a jarvis, ultron or opencode pane: the session to resume, checked
+   *  against that agent's id allowlist (src/shared/agents.ts) at every
+   *  boundary. claude keeps `claudeSessionId`, which older files carry. */
+  agentSessionId?: string
+  /** The launcher flags worth keeping (jarvis: `--effort <level>`,
+   *  `--business`), rebuilt from a fixed table on load. */
+  agentFlags?: string[]
 }
 
 export interface SavedTab {
@@ -510,6 +520,11 @@ export interface ProjectsSessionIdsRequest {
     label?: string
     /** Whether the pane is running claude, as far as the renderer knows. */
     claude?: boolean
+    /** The other agent the pane was saved or proven running, with the
+     *  session it carries; never mixed into the claude lanes above. */
+    agent?: OtherAgentKind
+    agentSid?: string
+    agentFlags?: string[]
   }[]
   /** Live panes about to be killed (a project opening over the window); the
    *  sessions in them count as free rather than as live elsewhere. */
@@ -523,6 +538,21 @@ export interface ProjectsSessionIdsResponse {
   /** paneId -> claude session id. */
   ids: Record<string, string>
   sources: Record<string, SessionIdSource>
+  /** paneId -> the other agent in the pane: proven from the live process
+   *  ('process', `sid` only when it could be told without guessing), or the
+   *  pane's carried session still free to resume ('carried'). Absent from a
+   *  build that predates it, and for a pane with no such agent. */
+  agents?: Record<string, PaneAgentVerdict>
+  /** main read the process table for the other agents this time, so a pane
+   *  it reports no live agent in has none. */
+  agentsChecked?: boolean
+}
+
+export interface PaneAgentVerdict {
+  kind: OtherAgentKind
+  sid?: string
+  flags?: string[]
+  source: 'process' | 'carried'
 }
 
 export interface ProjectsResumeModesRequest {

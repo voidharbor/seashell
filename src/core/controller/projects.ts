@@ -199,14 +199,15 @@ export class Projects {
   async saveProject(name: string, id?: string, scope: SaveScope = 'window'): Promise<void> {
     const state = this.host.state()
     const active = state.tabs.find((t) => t.id === state.activeTabId)
-    const { lookup, proven } = await collectSaveLookup(state, this.host.invoke)
+    const { lookup, proven, provenAgents } = await collectSaveLookup(state, this.host.invoke)
     if (Object.keys(proven).length > 0) this.host.dispatch({ type: 'panes.sessionIds', ids: proven })
+    if (Object.keys(provenAgents).length > 0) this.host.dispatch({ type: 'panes.agents', agents: provenAgents })
     const tabs =
       scope === 'tab'
         ? active
-          ? [tabToSaved(active, lookup?.ids, lookup?.running)]
+          ? [tabToSaved(active, lookup?.ids, lookup?.running, lookup?.agents)]
           : []
-        : stateToTabs(state, lookup?.ids, lookup?.running)
+        : stateToTabs(state, lookup?.ids, lookup?.running, lookup?.agents)
     if (tabs.length === 0) {
       this.host.toast('Nothing to save')
       return

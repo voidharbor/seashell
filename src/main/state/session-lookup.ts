@@ -1,8 +1,10 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { SessionIdSource } from '../../shared/ipc.js'
+import type { PaneAgentVerdict, SessionIdSource } from '../../shared/ipc.js'
 import { claudeTitleFromLabel } from '../../shared/claude-title.js'
+import { cleanAgentFlags, isValidAgentSessionId, type OtherAgentKind } from '../../shared/agents.js'
+import { findPaneAgents, lookupPaneAgents, type AgentLookupDeps, type PaneAgent } from './agents.js'
 
 export { claudeTitleFromLabel }
 
@@ -32,6 +34,12 @@ export { claudeTitleFromLabel }
  *
  * The pickers are [pure] and deps-injected for tests; the fs wrapper at the
  * bottom feeds them the real registry, pid files and transcripts.
+ *
+ * The other agents (jarvis, ultron, opencode; src/shared/agents.ts) answer in
+ * `agents`, from two lanes of their own: **process** (the agent under the
+ * pane's shell, and its session picked in agents.ts) and **carried** (the
+ * pane's saved session, kept while no process anywhere holds it and no other
+ * pane carries it too). A pane runs one agent: the one nearest its shell.
  */
 
 /** claude session ids are UUIDs. Anything else in a registry entry or a
@@ -373,6 +381,11 @@ export interface LookupPane {
   /** Whether the pane is running claude, as far as the renderer knows. Only
    *  claude panes compete for the cwd lane; undefined counts as yes. */
   claude?: boolean
+  /** Another agent the pane carries (saved, or proven earlier), its session
+   *  and its flags. These never enter the claude lanes. */
+  agent?: OtherAgentKind
+  agentSid?: string
+  agentFlags?: string[]
 }
 
 export interface ResolveInputs {
@@ -389,6 +402,54 @@ export interface ResolveInputs {
 export interface ResolveResult {
   ids: Record<string, string>
   sources: Record<string, SessionIdSource>
+  agents?: Record<string, PaneAgentVerdict>
+  agentsChecked?: boolean
+}
+
+/**
+ * The other agents' verdicts. [pure]
+ *
+ * `live` is the agent nearest each pane's shell (claude panes already taken
+ * out); `liveSids` every session a live process of each agent is on. A pane
+ * with a live agent answers from it. A pane with none keeps the agent it
+ * carries, and its session only while no process holds it, no claude runs in
+ * the pane, and no other pane carries the same one.
+ */
+export function resolveAgentVerdicts(
+  panes: readonly LookupPane[],
+  live: ReadonlyMap<string, PaneAgent>,
+  liveSids: ReadonlyMap<OtherAgentKind, ReadonlySet<string>>,
+  claudePanes: ReadonlySet<string>
+): Record<string, PaneAgentVerdict> {
+  const out: Record<string, PaneAgentVerdict> = {}
+  const carriers = new Map<string, number>()
+  for (const p of panes) {
+    if (p.agent && isValidAgentSessionId(p.agent, p.agentSid) && !live.has(p.paneId)) {
+      const key = `${p.agent}\0${p.agentSid}`
+      carriers.set(key, (carriers.get(key) ?? 0) + 1)
+    }
+  }
+  for (const p of panes) {
+    const hit = live.get(p.paneId)
+    if (hit) {
+      out[p.paneId] = {
+        kind: hit.kind,
+        ...(hit.sid && isValidAgentSessionId(hit.kind, hit.sid) ? { sid: hit.sid } : {}),
+        ...(hit.flags.length > 0 ? { flags: hit.flags } : {}),
+        source: 'process',
+      }
+      continue
+    }
+    if (!p.agent || claudePanes.has(p.paneId)) continue
+    const flags = cleanAgentFlags(p.agent, p.agentFlags ?? [])
+    const sid = p.agentSid
+    const free =
+      isValidAgentSessionId(p.agent, sid) &&
+      !(liveSids.get(p.agent)?.has(sid) ?? false) &&
+      (carriers.get(`${p.agent}\0${sid}`) ?? 0) === 1
+    out[p.paneId] = { kind: p.agent, ...(free ? { sid } : {}), ...(flags.length > 0 ? { flags } : {}), source: 'carried' }
+  }
+  return out
 }
 
 /** Runs the lanes in trust order; see the top of this file. [pure] */
@@ -501,6 +562,12 @@ export interface LookupDeps {
    *  (win32). Registry entries are credited to a pane only when they carry it;
    *  see `entryBelongsTo`. */
   appId?: string
+  /** The other agents' lanes: absent where processes cannot be read (win32,
+   *  whose panes live inside WSL behind a UNC path). `processTable` gives the
+   *  same sweep's parents and process names. */
+  agents?: Omit<AgentLookupDeps, 'parents' | 'childrenOf' | 'commOf'> & {
+    processTable: () => Promise<{ parents: ReadonlyMap<number, number>; comm: ReadonlyMap<number, string> } | null>
+  }
 }
 
 /**
@@ -628,6 +695,11 @@ export async function sessionIdsForPanes(
   )
 
   let processIds: Record<string, string> = {}
+  let liveAgents = new Map<string, PaneAgent>()
+  let agentsChecked = false
+  let agentLiveSids = new Map<OtherAgentKind, Set<string>>()
+  /** Panes whose nearest agent is claude: they never keep another agent. */
+  const claudeNearest = new Set<string>()
   const liveSids = new Set<string>(
     entries
       .filter((e) => typeof e.pid === 'number' && e.pid > 0 && alive(e.pid))
@@ -652,15 +724,39 @@ export async function sessionIdsForPanes(
         children
       )
       for (const [pid, c] of live) if (!released.has(pid)) liveSids.add(c.sid)
-      processIds = pickProcessSessionIds(
-        panes.map((p) => ({ paneId: p.paneId, shellPid: deps.shellPidOf(p.paneId) })),
-        children,
-        live
-      )
+      const shells = panes.map((p) => ({ paneId: p.paneId, shellPid: deps.shellPidOf(p.paneId) }))
+      processIds = pickProcessSessionIds(shells, children, live)
+
+      if (deps.agents) {
+        const table = await deps.agents.processTable()
+        if (table) {
+          const carried = new Set(panes.flatMap((p) => (p.agent && p.agentSid ? [p.agent] : [])))
+          const found = await lookupPaneAgents(
+            shells,
+            { ...deps.agents, parents: table.parents, childrenOf: children, commOf: (pid) => table.comm.get(pid) },
+            { wantLiveSids: carried, releasedPids: released }
+          )
+          agentLiveSids = found.liveSids
+          // One agent per pane, the one nearest its shell; claude wins a tie.
+          const claudeDepth = findPaneAgents(shells, children, (pid) => (live.has(pid) ? { kind: 'claude' } : null))
+          for (const [paneId, hit] of found.panes) {
+            const c = claudeDepth.get(paneId)
+            if (c && c.depth <= hit.depth) continue
+            liveAgents.set(paneId, hit)
+            delete processIds[paneId]
+          }
+          for (const [paneId] of claudeDepth) if (!liveAgents.has(paneId)) claudeNearest.add(paneId)
+          agentsChecked = true
+        }
+      }
     }
   } catch {
     /* no process lane this time */
+    liveAgents = new Map()
+    agentsChecked = false
   }
+  // A pane running another agent is not a claude pane for the guessing lanes.
+  if (liveAgents.size > 0) panes = panes.map((p) => (liveAgents.has(p.paneId) ? { ...p, claude: false } : p))
 
   const needTitles = new Set(
     panes
@@ -676,7 +772,7 @@ export async function sessionIdsForPanes(
   const listable = panes.filter((p) => p.knownSid === undefined && p.knownVerified !== true && p.claude !== false)
   for (const cwd of new Set(listable.map((p) => p.cwd))) files.set(cwd, await listSessionFiles(cwd, home))
 
-  return resolveSessionIds({
+  const result = resolveSessionIds({
     panes,
     processIds,
     registryIds,
@@ -686,4 +782,11 @@ export async function sessionIdsForPanes(
     sidsTitled: (cwd, title) =>
       [...(titles.get(cwd)?.entries() ?? [])].filter(([, t]) => t.includes(title)).map(([sid]) => sid),
   })
+  const claudePanes = new Set([...claudeNearest, ...Object.keys(result.sources).filter((id) => result.sources[id] === 'process')])
+  const agents = resolveAgentVerdicts(panes, liveAgents, agentLiveSids, claudePanes)
+  return {
+    ...result,
+    ...(Object.keys(agents).length > 0 ? { agents } : {}),
+    ...(agentsChecked ? { agentsChecked } : {}),
+  }
 }

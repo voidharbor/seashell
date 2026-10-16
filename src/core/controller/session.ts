@@ -7,8 +7,9 @@
 import {
   applyLaunchModes,
   applyRestoreIds,
+  lookupPaneFor,
   planRestore,
-  savedCommandFor,
+  provenAgents,
   saveLookupFrom,
   stateToTabs,
   type SaveLookup,
@@ -16,6 +17,7 @@ import {
 import type { AppState, TabState } from '../../renderer/store.js'
 import {
   MAX_TERM_PANES,
+  type PaneAgentVerdict,
   type ProjectsResumeModesResponse,
   type ProjectsSessionIdsResponse,
   type SavedTab,
@@ -28,27 +30,24 @@ type Invoke = <T = unknown>(ch: string, p: unknown) => Promise<T>
 
 /** The tabs a snapshot writes, captured the way a named project is. */
 export function snapshotTabs(state: AppState, lookup: SaveLookup | undefined): SavedTab[] {
-  return stateToTabs(state, lookup?.ids, lookup?.running)
+  return stateToTabs(state, lookup?.ids, lookup?.running, lookup?.agents)
 }
 
 /**
  * Asks main which claude session each terminal pane is on right now
  * (`app.tsx:486-511`). `proven` is what main proved from a live process or
  * the registry, for the caller to dispatch as `panes.sessionIds` so the next
- * save can carry it. A failed lookup is no verdict: every pane keeps its id.
+ * save can carry it, and `provenAgents` the other agents (jarvis, ultron,
+ * opencode) main found running, for `panes.agents`. A failed lookup is no
+ * verdict: every pane keeps its id.
  */
 export async function collectSaveLookup(
   state: AppState,
   invoke: Invoke
-): Promise<{ lookup: SaveLookup | undefined; proven: Record<string, string> }> {
+): Promise<{ lookup: SaveLookup | undefined; proven: Record<string, string>; provenAgents: Record<string, PaneAgentVerdict> }> {
   const termPanes = state.tabs.flatMap((t) => Object.values(t.panes).filter((p) => p.kind === 'term'))
   const asked = Math.min(termPanes.length, MAX_TERM_PANES)
-  const livePanes = termPanes.slice(0, asked).map((p) => ({
-    paneId: p.id,
-    cwd: p.cwd,
-    ...(p.claudeSessionId ? { knownSid: p.claudeSessionId, knownVerified: true } : {}),
-    claude: savedCommandFor(p) === 'claude',
-  }))
+  const livePanes = termPanes.slice(0, asked).map(lookupPaneFor)
   let res: ProjectsSessionIdsResponse | null = null
   try {
     res = await invoke<ProjectsSessionIdsResponse>('projects:sessionIds', { panes: livePanes })
@@ -64,7 +63,7 @@ export async function collectSaveLookup(
       if (res.sources[id] === 'process' || res.sources[id] === 'registry') proven[id] = sid
     }
   }
-  return { lookup: saveLookupFrom(termPanes, asked, res), proven }
+  return { lookup: saveLookupFrom(termPanes, asked, res), proven, provenAgents: provenAgents(res) }
 }
 
 /**
@@ -85,16 +84,18 @@ export async function restoreSavedTabs(
 
   if (lookup.length > 0) {
     let ids: Record<string, string> | null = null
+    let agents: Record<string, PaneAgentVerdict> | undefined
     try {
       const res = await invoke<ProjectsSessionIdsResponse>('projects:sessionIds', {
         panes: lookup.slice(0, MAX_TERM_PANES),
         ...(releasing.length > 0 ? { releasing: releasing.slice(0, MAX_TERM_PANES) } : {}),
       })
       ids = res && typeof res.ids === 'object' ? res.ids : null
+      agents = res && typeof res.agents === 'object' && res.agents !== null ? res.agents : undefined
     } catch {
       /* applyRestoreIds keeps only verified ids when the lookup fails */
     }
-    applyRestoreIds(restored, lookup, ids)
+    applyRestoreIds(restored, lookup, ids, agents)
   }
 
   const claudePanes = restored.flatMap((t) =>
