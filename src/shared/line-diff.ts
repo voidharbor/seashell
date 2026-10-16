@@ -117,11 +117,19 @@ export function hunks(ops: readonly DiffOp[], context = 3): Hunk[] {
     if (d.op !== 'add') o += 1
     if (d.op !== 'del') n += 1
   }
+  // A line is kept when a change lies within `context` lines of it: one pass
+  // each way, so a long file with many changes stays linear.
   const keep = new Array<boolean>(numbered.length).fill(false)
-  numbered.forEach((l, i) => {
-    if (l.op === 'same') return
-    for (let j = Math.max(0, i - context); j <= Math.min(numbered.length - 1, i + context); j += 1) keep[j] = true
-  })
+  let since = Number.POSITIVE_INFINITY
+  for (let i = 0; i < numbered.length; i += 1) {
+    since = numbered[i]!.op === 'same' ? since + 1 : 0
+    if (since <= context) keep[i] = true
+  }
+  since = Number.POSITIVE_INFINITY
+  for (let i = numbered.length - 1; i >= 0; i -= 1) {
+    since = numbered[i]!.op === 'same' ? since + 1 : 0
+    if (since <= context) keep[i] = true
+  }
   const out: Hunk[] = []
   let cur: Hunk | null = null
   numbered.forEach((l, i) => {

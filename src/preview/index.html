@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- The page shows files an agent wrote. Nothing loads from anywhere but this
+     folder, nothing is sent anywhere, and rendered previews live in a frame
+     of their own (render.html). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; frame-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width">
+<title>Preview</title>
+<link rel="stylesheet" href="preview.css">
+</head>
+<body>
+<header id="bar"></header>
+<main id="body"><div class="note">Loading…</div></main>
+<script type="module" src="preview.js"></script>
+</body>
+</html>

@@ -26,7 +26,7 @@ type LangLoader = () => Promise<unknown>
 /** Curated rather than exhaustive: shiki's full bundle is ~200 grammars, and
  *  every one is a chunk in the packaged app. These are the languages actually
  *  worth carrying for this machine's work. */
-const LANGS: Record<string, LangLoader> = {
+export const LANGS: Record<string, LangLoader> = {
   typescript: () => import('shiki/langs/typescript.mjs'),
   tsx: () => import('shiki/langs/tsx.mjs'),
   javascript: () => import('shiki/langs/javascript.mjs'),

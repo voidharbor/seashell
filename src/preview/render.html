@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Loaded in a frame sandboxed with scripts and no same origin: whatever it
+     is given runs in an origin of its own, with no network, no forms and no
+     way into the page around it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<script>
+(function () {
+  var CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; form-action 'none'; base-uri 'none'";
+  var done = false;
+  window.addEventListener('message', function (e) {
+    if (done || e.source !== window.parent || !e.data || typeof e.data.seashellRender !== 'string') return;
+    done = true;
+    var html = e.data.seashellRender;
+    document.open();
+    document.write('<meta http-equiv="Content-Security-Policy" content="' + CSP + '">' + html);
+    document.close();
+    // After the write: opening the document dropped every listener before it.
+    // A link goes to the page around this frame, which asks the host to open
+    // http and https ones in the browser. Nothing navigates in here.
+    document.addEventListener('click', function (ev) {
+      var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+      if (!a) return;
+      ev.preventDefault();
+      var href = a.getAttribute('href') || '';
+      if (href.charAt(0) === '#') { var t = document.getElementById(href.slice(1)); if (t) t.scrollIntoView(); return; }
+      try { window.parent.postMessage({ seashellLink: new URL(href, 'https://invalid.invalid/').href }, '*'); } catch (err) {}
+    }, true);
+  });
+  window.parent.postMessage({ seashellRenderReady: true }, '*');
+})();
+</script>
+</head>
+<body></body>
+</html>
