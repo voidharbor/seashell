@@ -44,6 +44,7 @@ export function STEPS(platform: string): TutorialStep[] {
         [k('Cmd+T'), 'New tab'],
         [k('Cmd+D'), 'New pane'],
         [k('Cmd+Return'), 'Full-screen the focused pane, and back'],
+        [k('Cmd+E'), 'Show what the agent in the pane changed, beside it full screen'],
       ],
     },
     {

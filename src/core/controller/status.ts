@@ -28,12 +28,12 @@ const SWAP_WARN_BYTES = 2 * 1024 ** 3
 /** The shortcut hint at the right of the bar, in this platform's spelling. */
 export function statusHint(platform: string): string {
   if (keyPlatform(platform) === 'darwin') {
-    return '⌘D pane · ⌘T tab · ⌘=/- zoom · ⌘+/_ pane zoom · ⌘↩ full screen'
+    return '⌘D pane · ⌘T tab · ⌘=/- zoom · ⌘+/_ pane zoom · ⌘↩ full screen · ⌘E changes'
   }
   const k = (mac: string): string => chordLabel(mac, platform)
   // `platform.ts` paneZoomIn for every platform but the Mac.
   const paneZoomIn = 'Ctrl+Shift+='
-  return `${k('Cmd+D')} pane · ${k('Cmd+T')} tab · ${zoomLabel('=', platform)}/- zoom · ${paneZoomIn}/- pane zoom · ${k('Cmd+Return')} full screen`
+  return `${k('Cmd+D')} pane · ${k('Cmd+T')} tab · ${zoomLabel('=', platform)}/- zoom · ${paneZoomIn}/- pane zoom · ${k('Cmd+Return')} full screen · ${k('Cmd+E')} changes`
 }
 
 /**

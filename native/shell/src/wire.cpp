@@ -14,7 +14,7 @@ static const std::set<std::string> SHELL_CHANNELS = {
   "open:withDefaultApp", "open:revealInFinder", "open:externalHttp",
   "display:list", "display:colorization", "grid:cmd", "test:screenshot",
 };
-static const std::set<std::string> CORE_PUSH_TO_SHELL = { "pty:data", "ui:model", "grid:cmd", "shell:cmd" };
+static const std::set<std::string> CORE_PUSH_TO_SHELL = { "pty:data", "ui:model", "grid:cmd", "shell:cmd", "view:cmd" };
 // clang-format on
 
 using nlohmann::json;

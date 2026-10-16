@@ -927,6 +927,10 @@ export function App(): React.JSX.Element {
         case 'pane.zoom':
           dispatch({ type: 'pane.zoom' })
           break
+        case 'changes.toggle':
+          // The changes column of the focused pane (Part D wires the column itself).
+          dispatch({ type: 'pane.zoom' })
+          break
         case 'pane.clear': {
           // Nothing to clear in a text box, and clearing the pane behind it is
           // not what ⌘K in a draft box could possibly mean — throwing away a

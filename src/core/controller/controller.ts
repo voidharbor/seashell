@@ -71,6 +71,7 @@ import {
 import { ExplorerState, FLASH_MS, type Listing } from './explorer.js'
 import { defaultUiState, loadUiState, saveUiState, type UiState } from './ui-state.js'
 import { collectSaveLookup, restoreSavedTabs, snapshotTabs, SNAPSHOT_INTERVAL_MS } from './session.js'
+import { ChangesPanel, provenSessions } from './changes.js'
 import { mem, statusModel } from './status.js'
 import { colorizationToTokens, isColorization, resolveTheme, themeTokens, withAccent } from './colorization.js'
 import { accentOptionId, cleanNewPaneCommand, closeTabSheet, paletteOverride, SETTINGS_CHECKS, settingsSheet, tabStripApplies, tutorialSheet } from './sheets.js'
@@ -96,6 +97,7 @@ import type {
   UiEvent,
   UiModel,
   UpdateBannerModel,
+  ViewEvent,
   SheetModel,
 } from './model.js'
 
@@ -105,7 +107,7 @@ export interface ControllerDeps {
   /** shim.sendLocal */
   send(ch: string, p: unknown): void
   /** Write an `on` envelope to the shell. */
-  toShell(ch: 'ui:model' | 'grid:cmd' | 'shell:cmd', p: unknown): void
+  toShell(ch: 'ui:model' | 'grid:cmd' | 'shell:cmd' | 'view:cmd', p: unknown): void
   invokeShell<T = unknown>(ch: string, p: unknown): Promise<T>
   now(): number
   setTimer(fn: () => void, ms: number): () => void
@@ -273,6 +275,8 @@ export class Controller {
   private updateDismissed: string | null = null
   /** The Projects sheet's state and actions (projects.ts). */
   private readonly projects: Projects
+  /** The changes column of a zoomed agent pane (changes.ts). */
+  private readonly changes: ChangesPanel
   /** The open pane popover (`ColorPicker.tsx`, `LinkPicker.tsx`); its items are rebuilt from state on every model. */
   private popover: { kind: 'color' | 'link'; paneId: string } | null = null
   /** Each pane's attention as the last model saw it, for the ping on the way in (`app.tsx:216-233`). */
@@ -299,6 +303,32 @@ export class Controller {
       },
       mintId: uid,
       now: () => this.deps.now(),
+    })
+    this.changes = new ChangesPanel({
+      invoke: <T = unknown>(ch: string, p: unknown) => this.deps.invoke<T>(ch, p),
+      invokeShell: <T = unknown>(ch: string, p: unknown) => this.deps.invokeShell<T>(ch, p),
+      state: () => this.s,
+      now: () => this.deps.now(),
+      setTimer: (fn, ms) => this.deps.setTimer(fn, ms),
+      changed: () => this.emit(),
+      relayout: () => {
+        this.sync()
+        this.emit()
+      },
+      toast: (message) => this.toast(message),
+      viewCmd: (cmd) => this.deps.toShell('view:cmd', cmd),
+      reveal: (p, isDir) => this.reveal(p, isDir),
+      openWithDefaultApp: (p) => void this.openPath(p, 'os'),
+      tokens: () => withAccent({ ...this.tokens }, this.ui.settings.accent),
+      width: () => this.ui.changesWidth,
+      setWidth: (w, save) => {
+        if (w !== this.ui.changesWidth) {
+          this.ui = { ...this.ui, changesWidth: w }
+          this.sync()
+          this.emit()
+        }
+        if (save) this.saveUi()
+      },
     })
     this.last = this.build()
   }
@@ -429,6 +459,14 @@ export class Controller {
       case 'pane.zoom':
         this.dispatch({ type: 'pane.zoom' })
         break
+      // The changes column of the focused pane: zooms it first when it is not.
+      case 'changes.toggle': {
+        const id = tab?.focusedPaneId
+        if (!tab || !id || tab.panes[id]?.kind !== 'term') break
+        this.changes.toggle(id)
+        if (tab.zoomedPaneId !== id) this.dispatch({ type: 'pane.zoom', paneId: id })
+        break
+      }
       case 'pane.clear': {
         const id = this.editTargetId()
         if (id) this.grid({ paneId: id, op: 'clear' })
@@ -543,6 +581,12 @@ export class Controller {
       if (e.type === 'click' && e.button === 0) this.updateClick(t.slice('update:'.length))
       return
     }
+    if (t.startsWith('changes:')) {
+      if (e.type !== 'wheel' && e.type !== 'key' && e.type !== 'text' && e.type !== 'focus' && e.type !== 'blur') {
+        this.changes.event(t.slice('changes:'.length), e, this.area())
+      }
+      return
+    }
     // A right or middle press reaches the core only to close the explorer's
     // menu: it starts no drag, selects no tab and focuses no pane.
     const sidePress = e.type === 'down' && e.button !== 0
@@ -582,6 +626,11 @@ export class Controller {
     else if (head === 'find') this.findEvent(parts[1] ?? '', e.type)
     else if (e.type === 'click') this.chromeClick(t)
     else if (e.type === 'dblclick' && t === 'strip:empty') this.newTab()
+  }
+
+  /** `view:event` from the shell: what the changes preview page reported. */
+  view(e: ViewEvent): void {
+    this.changes.view(e)
   }
 
   term(e: TermEvent): void {
@@ -1167,6 +1216,10 @@ export class Controller {
       if (type === 'click') this.restartPane(id)
       return
     }
+    if (sub === 'changes') {
+      if (type === 'click') this.changes.toggle(id)
+      return
+    }
     if (sub === 'moveTo') {
       if (type === 'click') this.dropPane(id, parts[3] ?? '', parts[4] ?? '')
       return
@@ -1634,6 +1687,9 @@ export class Controller {
     const { lookup, proven, provenAgents } = await collectSaveLookup(this.s, this.deps.invoke.bind(this.deps))
     if (Object.keys(proven).length > 0) this.dispatch({ type: 'panes.sessionIds', ids: proven })
     if (Object.keys(provenAgents).length > 0) this.dispatch({ type: 'panes.agents', agents: provenAgents })
+    // Every agent session seen running starts being watched: its baseline is
+    // the folder as it stood now, when SeaShell first saw it.
+    for (const w of provenSessions(this.s, proven, provenAgents)) void this.deps.invoke('changes:watch', w).catch(() => undefined)
     const tabs = snapshotTabs(this.s, lookup)
     try {
       if (!shouldOfferRestore(tabs)) {
@@ -1696,6 +1752,7 @@ export class Controller {
     if (this.s.toast !== prevToast) this.armToast()
     // A popover whose pane closed or left the active tab goes with it.
     if (this.popover && !this.activeTab()?.panes[this.popover.paneId]) this.popover = null
+    this.changes.follow()
     this.sync()
     this.emit()
   }
@@ -1807,7 +1864,10 @@ export class Controller {
     if (tab.zoomedPaneId && tab.panes[tab.zoomedPaneId]) {
       // The zoomed pane fills the area; the others keep their tiled size, as hidden panes do in the renderer.
       const tiled = layOut(tab.tree, area, this.windowCell(), ui, fontFor)
-      const z = layOutZoomed(tab.zoomedPaneId, area, ui, fontFor(tab.zoomedPaneId))
+      // The changes column, when it shows, takes the right of the area.
+      const own = tab.id === this.s.activeTabId && tab.zoomedPaneId === this.changes.agentPane()
+      const zArea = (own ? this.changes.split(area, ui)?.pane : undefined) ?? area
+      const z = layOutZoomed(tab.zoomedPaneId, zArea, ui, fontFor(tab.zoomedPaneId))
       for (const [k, v] of z.rects) tiled.rects.set(k, v)
       for (const [k, v] of z.gridRects) tiled.gridRects.set(k, v)
       for (const [k, v] of z.cols) tiled.cols.set(k, v)
@@ -2406,6 +2466,7 @@ export class Controller {
     if (this.ui.settings[key] === value) return
     this.ui = { ...this.ui, settings: { ...this.ui.settings, [key]: value } }
     if (key === 'tabStrip' || key === 'nativeTheme') this.rebuildTokens()
+    if (key === 'accent') this.changes.themeChanged()
     this.saveUi()
     this.emit()
   }
@@ -2436,6 +2497,7 @@ export class Controller {
     // Graphite (flatFrame) has no glass even where DWM could draw it.
     const glass = c.composition && isColorization(c.argb) && tokens.flatFrame !== '1'
     this.tokens = { ...tokens, composition: glass ? '1' : '0' }
+    this.changes.themeChanged()
   }
 
   private sheetEvent(t: string, e: UiEvent): void {
@@ -2774,6 +2836,7 @@ export class Controller {
                 : null,
       update: this.updateModel(),
       popover: this.popoverModel(panes, ui),
+      changes: this.changes.model(area, ui),
     }
   }
 
@@ -2845,6 +2908,7 @@ export class Controller {
           : null,
       linked: p.linkId !== undefined,
       linkEnabled: isTerm(p),
+      changes: p.id === this.changes.agentPane() ? (this.changes.visible() ? 'on' : 'off') : 'none',
     }
   }
 }

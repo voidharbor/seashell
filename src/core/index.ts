@@ -87,6 +87,7 @@ function route(ch: string, p: unknown): void {
   // push, not command: edit.paste carries the shell's clipboard text with it.
   else if (ch === 'ui:command') c.push(ch, p)
   else if (ch === 'term:event') c.term(p as never)
+  else if (ch === 'view:event') c.view(p as never)
   else if (ch === 'shell:geometry') {
     if (!booted) {
       booted = true

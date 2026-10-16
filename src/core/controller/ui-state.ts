@@ -16,6 +16,14 @@ export interface UiState {
   drawerHeight: number
   tutorialSeen: boolean
   dismissedUpdate: string | null
+  /** The changes column's width, a fraction of the grid area. */
+  changesWidth: number
+}
+
+/** The changes column: about 38 percent of the area, and never under a fifth or over 70 percent. */
+export const CHANGES_WIDTH_DEFAULT = 0.38
+export function clampChangesWidth(w: number): number {
+  return Number.isFinite(w) ? Math.min(0.7, Math.max(0.2, w)) : CHANGES_WIDTH_DEFAULT
 }
 
 export function defaultUiState(): UiState {
@@ -26,6 +34,7 @@ export function defaultUiState(): UiState {
     drawerHeight: DRAWER_DEFAULT,
     tutorialSeen: false,
     dismissedUpdate: null,
+    changesWidth: CHANGES_WIDTH_DEFAULT,
   }
 }
 
@@ -40,6 +49,7 @@ export function coerceUiState(value: unknown): UiState {
   if (typeof raw['drawerHeight'] === 'number') out.drawerHeight = clampDrawer(raw['drawerHeight'])
   if (typeof raw['tutorialSeen'] === 'boolean') out.tutorialSeen = raw['tutorialSeen']
   if (typeof raw['dismissedUpdate'] === 'string') out.dismissedUpdate = raw['dismissedUpdate']
+  if (typeof raw['changesWidth'] === 'number') out.changesWidth = clampChangesWidth(raw['changesWidth'])
   return out
 }
 

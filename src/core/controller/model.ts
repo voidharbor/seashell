@@ -50,6 +50,15 @@
  * them, `popover:<itemId>` picks an item (a colour key or `none`; another
  * pane's id or `unlink`), and `popover` itself takes `key Escape`. Any `down`
  * outside the popover closes it.
+ *
+ * The changes column of a zoomed agent pane: `pane:<id>:changes` (the title
+ * bar button) toggles it; `changes:grip` (down/move/up resize, dblclick
+ * resets); `changes:hide`; `changes:group:<created|edited|deleted>` (click
+ * folds the group); `changes:row:<path>` (click previews the file, dblclick
+ * opens it in its default app); `changes:list` (wheel, the shell scrolls the
+ * rows itself). The preview below the list is a WebView2 the shell hosts at
+ * `preview.rect` only while `preview` is set; what it shows travels on
+ * `view:cmd` and what it reports on `view:event`, never in the model.
  */
 
 export interface Rect {
@@ -88,7 +97,93 @@ export interface PaneModel {
   exit: { text: string; failed: boolean } | null
   linked: boolean
   linkEnabled: boolean
+  /**
+   * The changes button in the title bar: 'none' unless this is the zoomed
+   * pane and an agent session runs in it; then 'off' or 'on' with the column.
+   */
+  changes: 'none' | 'off' | 'on'
 }
+
+/** One changed file in the changes column. */
+export interface ChangeRowModel {
+  /** 'row:' + path; the shell's target is 'changes:' + id. */
+  id: string
+  path: string
+  /** The file name, drawn first. */
+  name: string
+  /** The folder relative to the session cwd ('' at its top), drawn dim after the name. */
+  dir: string
+  change: 'created' | 'edited' | 'deleted'
+  /** '+12 -3', or '' for a binary file. */
+  stat: string
+  added: number
+  removed: number
+  /** The full path, and where the change was seen. */
+  tooltip: string
+  selected: boolean
+}
+
+export interface ChangeGroupModel {
+  id: 'created' | 'edited' | 'deleted'
+  /** 'Created', 'Edited', 'Deleted'. */
+  label: string
+  count: number
+  folded: boolean
+  rows: ChangeRowModel[]
+}
+
+/**
+ * The changes column beside a zoomed agent pane (Cursor's agent view): the
+ * files the session created, edited and deleted, and below them a preview of
+ * the selected one. Null while no zoomed agent pane shows it.
+ */
+export interface ChangesModel {
+  paneId: string
+  /** The whole column, DIP, right of the pane. */
+  rect: Rect
+  /** The 6 DIP grip between the pane and the column. */
+  gripRect: Rect
+  /** The stored width, a fraction of the area (0.2 to 0.7). */
+  width: number
+  /** 'Changes'. */
+  title: string
+  /** 'Claude Code · 12 files'. */
+  subtitle: string
+  /** '+120 -30' over every row, or ''. */
+  totals: string
+  /** Why only the agent's record is listed, or null. */
+  note: string | null
+  /** 'No changes yet' while there are none, else null. */
+  empty: string | null
+  /** Where the rows go: the column under its header, above the preview. */
+  listRect: Rect
+  groups: ChangeGroupModel[]
+  /** Bumps whenever `groups` changes, like the sidebar's `rowsSeq`. */
+  rowsSeq: number
+  /** The header, a row and a group heading, DIP (uiScale in). */
+  headerH: number
+  rowH: number
+  groupH: number
+  /** The selected file's preview, or null. The shell hosts WebView2 at `rect` only while this is set. */
+  preview: { rect: Rect; path: string; seq: number } | null
+}
+
+/**
+ * A one-off order to the preview (`view:cmd`): `post` hands `message` to the
+ * page as it is (PostWebMessageAsJson). The shell never looks inside.
+ */
+export type ViewCmd = { op: 'post'; message: Record<string, unknown> }
+
+/**
+ * What the preview reports (`view:event`): `message` is whatever the page
+ * posted (`chrome.webview.postMessage`), forwarded as it is; `navigate` is a
+ * navigation the shell cancelled whose scheme was http or https, for the core
+ * to open in the browser; `gone` says the WebView2 went away (closed, crashed).
+ */
+export type ViewEvent =
+  | { type: 'message'; message: unknown }
+  | { type: 'navigate'; uri: string }
+  | { type: 'gone' }
 
 export interface DividerModel {
   id: string
@@ -370,6 +465,7 @@ export interface UiModel {
   sheet: SheetModel | null
   update: UpdateBannerModel | null
   popover: PopoverModel | null
+  changes: ChangesModel | null
 }
 
 export interface Mods {

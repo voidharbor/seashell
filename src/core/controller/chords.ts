@@ -41,6 +41,7 @@ const COMMAND_BY_LABEL: Readonly<Record<string, string>> = {
   'Find Previous': 'edit.findPrev',
   'Clear Pane': 'pane.clear',
   'Full-Screen Pane': 'pane.zoom',
+  'Toggle Changes Panel': 'changes.toggle',
   'Rebalance Panes': 'layout.rebalance',
   'Toggle File Explorer': 'explorer.toggle',
   'Toggle Shell Drawer': 'drawer.toggle',

@@ -130,6 +130,9 @@ export function buildMenu(
         // Not "Toggle Zoom": it sat directly above Zoom In / Zoom Out, which made
         // "zoom" ambiguous between filling the tab and changing text size.
         item('Full-Screen Pane', 'Cmd+Return', 'pane.zoom'),
+        // The changes column beside a full-screen agent pane (Cursor's agent
+        // view); on a pane that is not full screen it makes it so first.
+        item('Toggle Changes Panel', 'Cmd+E', 'changes.toggle'),
         item('Rebalance Panes', 'Cmd+Shift+R', 'layout.rebalance'),
         { type: 'separator' },
         // No accelerators on these three, deliberately — see the note below.
