@@ -8,6 +8,7 @@
 //   npm run build:core && node scripts/core-changes-smoke.mjs
 //
 // Linux (or WSL) only: the agent registry reads /proc. Uses a throwaway HOME.
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
