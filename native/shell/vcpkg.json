@@ -1,1 +1,1 @@
-{ "name": "seashell-shell", "version-string": "0.5.0", "dependencies": ["utf8proc", "nlohmann-json"] }
+{ "name": "seashell-shell", "version-string": "0.5.0", "dependencies": ["utf8proc", "nlohmann-json", "webview2"] }

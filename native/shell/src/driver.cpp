@@ -1,4 +1,5 @@
 #include "driver.h"
+#include "preview_host.h"
 #include "app.h"
 #include "droptarget.h"
 #include "hostapi.h"
@@ -629,6 +630,27 @@ json Driver::execute(const json& req) {
   if (cmd == "grid") return grid(strArg(req, "paneId"));
   if (cmd == "wheel") return wheel(req);
   if (cmd == "rows") return rows();
+  if (cmd == "changes") {
+    // The changes column as drawn and the preview's WebView2 (PreviewHost::state).
+    float offset = 0;
+    json out = json::array();
+    for (const Ui::DrawnRow& r : Ui::instance().changesRows(&offset))
+      out.push_back({ { "id", r.id }, { "y", r.y }, { "h", r.h }, { "visible", r.visible } });
+    return { { "ok", true }, { "column", App::instance().model().changes.has_value() }, { "rows", out }, { "offset", offset },
+             { "preview", PreviewHost::instance().state() } };
+  }
+  if (cmd == "previewScript") {
+    // Runs `js` in the preview page; previewResult {id} has its JSON once it finishes.
+    int id = PreviewHost::instance().runScript(strArg(req, "js"));
+    if (id == 0) return fail("ENOPREVIEW");
+    return { { "ok", true }, { "id", id } };
+  }
+  if (cmd == "previewResult") {
+    int id = req.contains("id") && req["id"].is_number_integer() ? req["id"].get<int>() : 0;
+    json r = PreviewHost::instance().scriptResult(id);
+    r["ok"] = true;
+    return r;
+  }
   if (cmd == "drop") return drop(req);
   if (cmd == "dragSelect") return dragSelect(req);
   if (cmd == "selection") {

@@ -60,8 +60,16 @@ public:
   struct DrawnRow { std::string id; float y = 0, h = 0; bool visible = false; };
   std::vector<DrawnRow> sidebarRows(D2D1_RECT_F* viewportDip, float* offsetDip) const;
   // The driver's scrollTo: a view's scroll offset in DIP, clamped; false when
-  // that view is not on screen ('sidebar' is the only one so far).
+  // that view is not on screen ('sidebar' or 'changes').
   bool scrollView(const std::string& view, float offsetDip, float* clamped);
+  // The changes column's groups and rows as drawn (the driver's `changes`),
+  // ids 'group:<id>' and 'row:<path>', and the list's scroll offset.
+  std::vector<DrawnRow> changesRows(float* offsetDip) const;
+  // Where the changes preview's WebView2 goes (body client pixels), whether
+  // it shows now, and the colour under it; false when no preview is open.
+  bool previewPlacement(RECT* bounds, bool* visible, uint32_t* bg) const;
+  // The app chord a key makes, for keys pressed inside the preview.
+  std::optional<std::string> chordCommand(const InputChord& c) const { return chords_.command(c); }
   // The application menu (ui/menu.h) under the `≡` button, or at the pointer
   // when the strip has no button on screen.
   void popAppMenu();
@@ -135,6 +143,10 @@ private:
   void viewPopover(Painter& p);                  // ui.cpp: a pane's colour or link popover over the body
   void syncPopover();                            // ui.cpp: the model's popover becomes popover_
   void viewDrawer(Painter& p);                   // drawer.cpp: the shell drawer's panel, grip and header; App draws its grid
+  void viewChanges(Painter& p);                  // changes.cpp: the changes column of a zoomed agent pane
+  void changesGeometry();                        // changes.cpp
+  bool changesWheel(POINT clientPx, int delta);
+  bool changesBarPress(UINT msg, POINT clientPx, const std::string& target);
   void viewSheet(Painter& p);                    // sheet.cpp: the dim and the sheet's card (from viewOverlays)
   bool sheetKey(UINT msg, WPARAM, LPARAM, Mods); // sheet.cpp: the sheet takes the keyboard
   bool sheetMouse(UINT msg, POINT clientPx, int button, Mods, const std::string& target, int wheelDelta);   // sheet.cpp
@@ -164,6 +176,13 @@ private:
   bool menuSendsOwnDown(const std::string& target, int button) const;
   static std::string rightOnRow(const std::string& target, int button);   // sidebar:twisty:<p> under a right press is sidebar:row:<p>
   void closeMenuOnPress(const std::string& target, float xDip, float yDip, int button, Mods m);
+
+  // The changes column's parts for the current model (changes.cpp), body pixels.
+  struct ChangesGeom {
+    bool on = false;
+    D2D1_RECT_F col{}, head{}, note{}, list{}, bar{}, preview{};
+    float rowsRight = 0;
+  };
 
   UiModel m_;
   bool haveModel_ = false;
@@ -196,6 +215,10 @@ private:
   std::map<std::string, ULONGLONG> flashSince_;  // when each flashing row's flash began, by path
   struct NameLayout { Microsoft::WRL::ComPtr<IDWriteTextLayout> tl; bool used = false; };
   std::map<std::string, NameLayout> sbNames_;    // the shown rows' name layouts by name, box and font size (viewSidebar)
+  ChangesGeom ch_;
+  ScrollBar chBar_;
+  ScrollState chScroll_;                         // the changes list's scroll, DIP (shell view state)
+  std::string chPane_;                           // the pane whose column the scroll belongs to
   Popup menu_;                                   // the explorer's context menu
   Popup popover_;                                // a pane's colour or link popover ("popover:")
   EditWidget sheetEdit_;                         // the sheet's text field

@@ -90,6 +90,17 @@ void Ui::viewPanes(Painter& p) {
       p.text(inset(pill, 5 * s, 0), bd, tiny, t_.badgeText, Align::Center, true);
       rx = pill.left - 4 * s;
     }
+    // The changes column's toggle, on the zoomed agent pane (changes.cpp draws the column).
+    if (pm.changes != "none") {
+      D2D1_RECT_F ch = D2D1::RectF(rx - 18 * s, title.top + (th - 18 * s) / 2, rx, title.top + (th + 18 * s) / 2);
+      std::string target = id + ":changes";
+      hit(false, ch, target);
+      bool on = pm.changes == "on";
+      if (on) p.roundedRect(ch, 3, t_.accent, hovered(target) ? 0.35f : 0.22f, t_.accent, 0.8f);
+      else if (hovered(target)) p.roundedRect(ch, 3, t_.hoverFace, 0.6f, t_.panelBorder, 0.6f);
+      p.glyph(ch, 0x00B1, on ? t_.accent : t_.badgeText, 12);   // the plus-minus of a diff
+      rx = ch.left - 4 * s;
+    }
     if (pm.linkEnabled) {
       D2D1_RECT_F link = D2D1::RectF(rx - 18 * s, title.top + (th - 18 * s) / 2, rx, title.top + (th + 18 * s) / 2);
       hit(false, link, id + ":link");

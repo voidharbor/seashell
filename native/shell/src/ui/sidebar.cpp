@@ -169,6 +169,12 @@ std::vector<Ui::DrawnRow> Ui::sidebarRows(D2D1_RECT_F* viewportDip, float* offse
 }
 
 bool Ui::scrollView(const std::string& view, float offsetDip, float* clamped) {
+  if (view == "changes" && ch_.on) {
+    chScroll_.offset = ScrollBar::clampOffset(offsetDip, chScroll_.content, chScroll_.viewport);
+    if (clamped) *clamped = chScroll_.offset;
+    sidebarScrolled(pointer_);
+    return true;
+  }
   if (view != "sidebar" || !sb_.on) return false;
   sbScroll_.offset = ScrollBar::clampOffset(offsetDip, sbScroll_.content, sbScroll_.viewport);
   if (clamped) *clamped = sbScroll_.offset;

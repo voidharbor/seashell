@@ -27,6 +27,7 @@ public:
   std::function<void(const std::string& paneId, const std::string& bytes)> onPtyData;   // decoded from base64
   std::function<void(const nlohmann::json& cmd)> onGridCmd;
   std::function<void(const nlohmann::json& cmd)> onShellCmd;   // ch 'shell:cmd': { op: 'ping' } (App::onShellCmd)
+  std::function<void(const nlohmann::json& cmd)> onViewCmd;    // ch 'view:cmd': { op: 'post', message } for the changes preview (PreviewHost)
   std::function<void(const std::string& line)> write;       // CoreProc::send
   void reset();                                             // a new core: forget the pending invokes
   const nlohmann::json& lastModelJson() const { return lastModel_; }   // the last ui:model p as sent (the driver's model)

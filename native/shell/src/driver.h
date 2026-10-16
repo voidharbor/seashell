@@ -16,7 +16,10 @@
 // moves and releases from one cell to another, `selection {paneId}` reads the
 // selection's text, `appBar {paneId}` the app scrollbar's state. `bounds {x, y,
 // w, h}` moves the shell's own top-level window to that DIP rect without
-// activating it; plain `bounds` reports the window rect in DIPs.
+// activating it; plain `bounds` reports the window rect in DIPs. `changes`
+// lists the changes column's groups and rows as drawn and the preview's
+// WebView2 state; `previewScript {js}` runs a script in the preview page and
+// `previewResult {id}` reads its JSON result once it finished.
 #pragma once
 #include <winsock2.h>
 #include <windows.h>

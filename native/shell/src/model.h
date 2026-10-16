@@ -90,6 +90,7 @@ struct PaneModel {
   std::string status = "starting";  // 'starting' | 'live' | 'exited'
   std::optional<PaneExit> exit;
   bool linked = false, linkEnabled = false;
+  std::string changes = "none";     // the title bar's changes button: 'none' | 'off' | 'on'
   static PaneModel parse(const nlohmann::json& j) {
     using namespace model_detail;
     PaneModel p;
@@ -104,6 +105,7 @@ struct PaneModel {
     p.attention = str(j, "attention", "none"); p.status = str(j, "status", "starting");
     if (const json* e = field(j, "exit"); e && e->is_object()) p.exit = PaneExit{ str(*e, "text"), flag(*e, "failed") };
     p.linked = flag(j, "linked"); p.linkEnabled = flag(j, "linkEnabled");
+    p.changes = str(j, "changes", "none");
     return p;
   }
 };
@@ -424,6 +426,84 @@ struct PopoverModel {
   }
 };
 
+// The changes column beside a zoomed agent pane (ChangesModel in model.ts).
+// Targets: changes:grip (down/move/up, dblclick resets), changes:hide,
+// changes:group:<id>, changes:row:<path> (click previews, dblclick opens),
+// changes:list (the wheel; the shell scrolls the rows itself). The preview is
+// a WebView2 at preview.rect while preview is set (preview_host.h).
+struct ChangeRowModel {
+  std::string id;                   // 'row:' + path; the target is 'changes:' + id
+  std::string path, name, dir;
+  std::string change;               // 'created' | 'edited' | 'deleted'
+  std::string stat;                 // '+12 -3', '' for a binary file
+  int added = 0, removed = 0;
+  std::string tooltip;
+  bool selected = false;
+  static ChangeRowModel parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    ChangeRowModel r;
+    r.id = str(j, "id"); r.path = str(j, "path"); r.name = str(j, "name"); r.dir = str(j, "dir");
+    r.change = str(j, "change"); r.stat = str(j, "stat");
+    r.added = integer(j, "added"); r.removed = integer(j, "removed");
+    r.tooltip = str(j, "tooltip"); r.selected = flag(j, "selected");
+    return r;
+  }
+};
+
+struct ChangeGroupModel {
+  std::string id, label;            // 'created' | 'edited' | 'deleted'; 'Created' ...
+  int count = 0;
+  bool folded = false;
+  std::vector<ChangeRowModel> rows;
+  static ChangeGroupModel parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    ChangeGroupModel g;
+    g.id = str(j, "id"); g.label = str(j, "label"); g.count = integer(j, "count"); g.folded = flag(j, "folded");
+    g.rows = list<ChangeRowModel>(j, "rows");
+    return g;
+  }
+};
+
+struct ChangesPreview {
+  Rect rect;                        // DIP, client coordinates: where the WebView2 goes
+  std::string path;
+  double seq = 0;
+};
+
+struct ChangesModel {
+  std::string paneId;
+  Rect rect, gripRect, listRect;    // DIP, client coordinates
+  double width = 0.38;
+  std::string title, subtitle, totals;
+  std::optional<std::string> note, empty;
+  std::vector<ChangeGroupModel> groups;
+  double rowsSeq = 0;
+  double headerH = 44, rowH = 22, groupH = 24;   // DIP, uiScale in
+  std::optional<ChangesPreview> preview;
+  static ChangesModel parse(const nlohmann::json& j) {
+    using namespace model_detail;
+    ChangesModel c;
+    c.paneId = str(j, "paneId");
+    if (const json* r = field(j, "rect")) c.rect = Rect::parse(*r);
+    if (const json* r = field(j, "gripRect")) c.gripRect = Rect::parse(*r);
+    if (const json* r = field(j, "listRect")) c.listRect = Rect::parse(*r);
+    c.width = num(j, "width", 0.38);
+    c.title = str(j, "title"); c.subtitle = str(j, "subtitle"); c.totals = str(j, "totals");
+    c.note = optStr(j, "note"); c.empty = optStr(j, "empty");
+    c.groups = list<ChangeGroupModel>(j, "groups");
+    c.rowsSeq = num(j, "rowsSeq");
+    c.headerH = num(j, "headerH", 44); c.rowH = num(j, "rowH", 22); c.groupH = num(j, "groupH", 24);
+    if (const json* p = field(j, "preview"); p && p->is_object()) {
+      ChangesPreview pv;
+      if (const json* r = field(*p, "rect")) pv.rect = Rect::parse(*r);
+      pv.path = str(*p, "path");
+      pv.seq = num(*p, "seq");
+      c.preview = std::move(pv);
+    }
+    return c;
+  }
+};
+
 // One application menu item (MenuItemModel in model.ts), from shell:cmd
 // { op: 'menu', items }, outside the ui:model. `path` is what menu:click sends back.
 struct MenuItemModel {
@@ -487,6 +567,7 @@ struct UiModel {
   std::optional<SheetModel> sheet;
   std::optional<UpdateBannerModel> update;
   std::optional<PopoverModel> popover;
+  std::optional<ChangesModel> changes;
 
   static UiModel parse(const nlohmann::json& j) {
     using namespace model_detail;
@@ -528,6 +609,7 @@ struct UiModel {
     if (const json* sh = field(j, "sheet"); sh && sh->is_object()) m.sheet = SheetModel::parse(*sh);
     if (const json* u = field(j, "update"); u && u->is_object()) m.update = UpdateBannerModel::parse(*u);
     if (const json* po = field(j, "popover"); po && po->is_object()) m.popover = PopoverModel::parse(*po);
+    if (const json* ch = field(j, "changes"); ch && ch->is_object()) m.changes = ChangesModel::parse(*ch);
     return m;
   }
 };

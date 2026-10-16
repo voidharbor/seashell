@@ -5,6 +5,7 @@
 #include "gfx.h"
 #include "log.h"
 #include "paths.h"
+#include "preview_host.h"
 #include "ui/menu.h"
 #include "ui/sheet.h"
 #include "ui/ui.h"
@@ -57,10 +58,23 @@ void App::log(const char* fmt, ...) {
 
 int App::run(HINSTANCE hinst) { return instance().main(hinst); }
 
+namespace {
+// The changes preview follows the applied model: a WebView2 while a preview is
+// open, placed where Ui put the column's preview rect; none otherwise.
+void syncPreview() {
+  RECT b{};
+  bool visible = false;
+  uint32_t bg = 0;
+  bool want = Ui::instance().previewPlacement(&b, &visible, &bg);
+  PreviewHost::instance().sync(want, b, visible, bg);
+}
+}  // namespace
+
 void App::quit(int code) {
   App& a = instance();
   a.exitCode_ = code;
   HWND h = Window::instance().hwnd();
+  PreviewHost::instance().destroy();   // before its parent window goes
   if (h && IsWindow(h)) {
     saveBounds(Window::instance().bounds());
     DestroyWindow(h);   // WM_DESTROY posts the quit
@@ -189,6 +203,7 @@ void App::onCoreExit(DWORD code, LPARAM gen) {
   // Every pane shows "core exited" with Restart, and this is the toast.
   log("coreDead: The SeaShell core stopped (code %lu). Restart a pane or quit.", code);
   Ui::instance().setCoreDead(true, code);
+  PreviewHost::instance().destroy();   // nobody is left to feed it
   Window::instance().invalidateStrip();
   Window::instance().invalidateBody();
 }
@@ -710,6 +725,7 @@ int App::main(HINSTANCE hinst) {
     input_.setChords(in.chords);
     QueryPerformanceCounter(&l0);
     Ui::instance().setModel(std::move(in));   // the one copy: model() reads it there
+    syncPreview();
     QueryPerformanceCounter(&l1);
     const UiModel& m = model();
     if (m.window.tabStripH > 0 && m.window.tabStripH != oldStrip) Window::instance().onStripHeightChanged();
@@ -738,6 +754,7 @@ int App::main(HINSTANCE hinst) {
   wire_.onPtyData = [this](const std::string& paneId, const std::string& bytes) { onPtyData(paneId, bytes); };
   wire_.onGridCmd = [this](const nlohmann::json& cmd) { onGridCmd(cmd); };
   wire_.onShellCmd = [this](const nlohmann::json& cmd) { onShellCmd(cmd); };
+  wire_.onViewCmd = [](const nlohmann::json& cmd) { PreviewHost::instance().post(cmd); };
   startCore();
   SetTimer(nullptr, 0, kBlinkMs, blinkTick);
 

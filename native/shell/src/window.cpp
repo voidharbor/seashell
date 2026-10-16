@@ -455,6 +455,8 @@ LRESULT Window::onHost(HWND h, UINT msg, WPARAM w, LPARAM l) {
         TrackMouseEvent(&t);
       }
       noteMouse(msg);
+      // A press in the body takes the keyboard back from the changes preview.
+      if ((msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN) && GetFocus() != h) SetFocus(h);
       if (msg >= WM_KEYFIRST && msg <= WM_KEYLAST && menuKeys(msg, w, l)) return 0;
       if ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || (msg >= WM_KEYFIRST && msg <= WM_KEYLAST)) {
         if (App::instance().onInput(h, msg, w, l)) return 0;

@@ -47,6 +47,12 @@ New-Item -ItemType Directory -Force -Path "$core\node_modules\node-pty\build\Rel
 Copy-Item -Force "$Root\scripts\win\stage-core.sh" "$res\stage-core.sh"
 Copy-Item -Force "$bundle\index.cjs" "$core\index.cjs"
 Copy-Item -Force "$bundle\VERSION" "$core\VERSION"
+# The changes preview page (src/preview, built into out\core\preview): the
+# shell maps resources\preview to its WebView2's virtual host.
+$preview = "$res\preview"
+if (Test-Path $preview) { Remove-Item -Recurse -Force $preview }
+if (Test-Path "$bundle\preview\index.html") { Copy-Item -Recurse -Force "$bundle\preview" $preview }
+else { [Console]::Error.WriteLine("pack-native: $bundle\preview is missing (npm run build:core); the changes preview will say so") }
 Copy-Item -Force "$pty\package.json" "$core\node_modules\node-pty\package.json"
 Copy-Item -Recurse -Force "$pty\lib" "$core\node_modules\node-pty\lib"
 Copy-Item -Force "$pty\build\Release\pty.node" "$core\node_modules\node-pty\build\Release\pty.node"

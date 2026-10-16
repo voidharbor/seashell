@@ -4,6 +4,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(utf8proc CONFIG REQUIRED)   # the vcpkg port exports utf8proc::utf8proc
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(unofficial-webview2 CONFIG REQUIRED)   # the vcpkg webview2 port: WebView2.h and the static loader
 add_subdirectory(../third_party/libvterm ${CMAKE_BINARY_DIR}/libvterm)
 
 # The one version: package.json's, into version.h for app.rc and the sources.
@@ -16,7 +17,7 @@ file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/generated/version.h CONTENT
 file(GLOB SHELL_SRC CONFIGURE_DEPENDS src/*.cpp src/ui/*.cpp)
 add_executable(SeaShell WIN32 ${SHELL_SRC} app.rc)
 target_include_directories(SeaShell PRIVATE src ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(SeaShell PRIVATE vterm utf8proc::utf8proc nlohmann_json::nlohmann_json d2d1 dwrite dwmapi windowscodecs shlwapi ws2_32 shell32 ole32 uxtheme dxguid xaudio2)
+target_link_libraries(SeaShell PRIVATE vterm utf8proc::utf8proc nlohmann_json::nlohmann_json unofficial::webview2::webview2 d2d1 dwrite dwmapi windowscodecs shlwapi ws2_32 shell32 ole32 uxtheme dxguid xaudio2)
 target_compile_definitions(SeaShell PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(SeaShell PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W3 /utf-8 /EHsc>)
 # app.rc embeds app.manifest; a linker-generated one would be a duplicate resource.

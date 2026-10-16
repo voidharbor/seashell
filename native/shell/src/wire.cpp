@@ -176,6 +176,8 @@ void Wire::onCoreLine(std::string line) {
         if (onGridCmd) onGridCmd(p);
       } else if (ch == "shell:cmd") {
         if (onShellCmd) onShellCmd(p);
+      } else if (ch == "view:cmd") {
+        if (onViewCmd) onViewCmd(p);
       } else {
         App::log("on %s ignored: not a core push the shell takes", ch.c_str());
       }

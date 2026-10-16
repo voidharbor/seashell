@@ -28,7 +28,9 @@ bool parseHex(const std::string& s, uint32_t* out) {
 }
 bool isGrid(const std::string& t) { return (startsWith(t, "pane:") && endsWith(t, ":grid")) || t == "drawer:grid"; }
 // The handles a press drags: the core takes their down, move and up.
-bool isHandle(const std::string& t) { return startsWith(t, "divider:") || t == "sidebar:grip" || t == "drawer:grip"; }
+bool isHandle(const std::string& t) {
+  return startsWith(t, "divider:") || t == "sidebar:grip" || t == "drawer:grip" || t == "changes:grip";
+}
 
 // Everything drawStrip and viewTabs read from the model. A model that changes
 // none of it (a divider move, the status bar, a pane's title) leaves the
@@ -52,6 +54,7 @@ Ui::Ui() {
   // The popup and the scrollbar register their parts in the body's hit list.
   menu_.hit = [this](D2D1_RECT_F r, const std::string& t) { hit(false, r, t); };
   sbBar_.hit = [this](D2D1_RECT_F r, const std::string& t) { hit(false, r, t); };
+  chBar_.hit = [this](D2D1_RECT_F r, const std::string& t) { hit(false, r, t); };
   menu_.emit = [](const nlohmann::json& e) { App::instance().wire().sendEvent(e); };
   popover_.hit = [this](D2D1_RECT_F r, const std::string& t) { hit(false, r, t); };
   popover_.emit = [](const nlohmann::json& e) { App::instance().wire().sendEvent(e); };
@@ -176,10 +179,12 @@ void Ui::layout() {
   stripHits_.clear();
   bodyHits_.clear();
   sidebarGeometry();
+  changesGeometry();
   Painter none(nullptr, dpi(), (float)m_.window.uiScale, &t_);
   viewTabs(none);
   viewSidebar(none);
   viewPanes(none);
+  viewChanges(none);
   viewDividers(none);
   viewStatus(none);
   viewUpdate(none);
@@ -220,7 +225,7 @@ LPCWSTR Ui::cursorFor(POINT bodyPx) const {
     return (d && d->orientation == "horizontal") || dragDivider_ == "drawer:grip" ? IDC_SIZENS : IDC_SIZEWE;
   }
   std::string t = bodyTargetAt(bodyPx);
-  if (t == "sidebar:grip") return IDC_SIZEWE;
+  if (t == "sidebar:grip" || t == "changes:grip") return IDC_SIZEWE;
   if (t == "drawer:grip") return IDC_SIZENS;
   if (startsWith(t, "divider:")) {
     for (const DividerModel& d : m_.dividers)
@@ -257,6 +262,24 @@ std::wstring Ui::tooltipFor(const std::string& target) const {
   if (startsWith(target, "sidebar:row:")) return fromUtf8(target.substr(12));
   if (startsWith(target, "sidebar:twisty:")) return fromUtf8(target.substr(15));
   if (target == "sidebar:strip") return L"Click to copy";
+  // The changes column: a row's full path and where it was seen.
+  if (startsWith(target, "changes:row:") && m_.changes) {
+    for (const ChangeGroupModel& g : m_.changes->groups)
+      for (const ChangeRowModel& r : g.rows)
+        if ("changes:" + r.id == target) return fromUtf8(r.tooltip);
+  }
+  if (target == "changes:grip") return L"Drag to resize";
+  if (target == "changes:hide" || (startsWith(target, "pane:") && endsWith(target, ":changes"))) {
+    bool on = target == "changes:hide";
+    if (!on) {
+      const PaneModel* p = pane(target.substr(5, target.size() - 5 - 8));
+      on = p && p->changes == "on";
+    }
+    std::wstring what = on ? L"Hide changes" : L"Show what the agent changed";
+    for (const ChordModel& c : m_.chords)
+      if (c.command == "changes.toggle") return what + L" (" + fromUtf8(c.chord) + L")";
+    return what;
+  }
   // The drawer's (DrawerShell.tsx titles).
   if (target == "drawer:grip") return L"Drag to resize";
   if (target == "drawer:close") {
@@ -368,8 +391,9 @@ void Ui::closeMenuOnPress(const std::string& target, float xDip, float yDip, int
 // and every later pointer move would resize the panes with no button down.
 void Ui::cancelDrag() {
   if (move_.kind != MoveDrag::None) endMove(false, false);
-  if (sbScroll_.dragging) {
+  if (sbScroll_.dragging || chScroll_.dragging) {
     sbScroll_.dragging = false;
+    chScroll_.dragging = false;
     Window::instance().invalidateBody();
   }
   if (dragDivider_.empty()) return;
@@ -397,7 +421,8 @@ void Ui::activate(const std::string& target, Mods m, float xDip, float yDip) {
     return;
   }
   if (target == "web:new" && m_.tabFull) return;   // dimmed: the tab already holds six panes
-  if (startsWith(target, "sidebar:scroll:")) return;   // the scrollbar is the shell's own
+  if (startsWith(target, "sidebar:scroll:") || startsWith(target, "changes:scroll:")) return;   // the scrollbars are the shell's own
+  if (target == "changes:column" || target == "changes:list" || target == "changes:preview") return;
   if (menu_.owns(target) && target != menu_.base() && !menu_.enabled(target)) return;   // a greyed menu item
   if (popover_.owns(target) && !popover_.enabled(target)) return;   // the popover's face, its header, a greyed row
   if (startsWith(target, "sheet:")) {
@@ -473,6 +498,7 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
     if (modal() && !m_.restore) return sheetMouse(msg, pt, button, mods, "", wheelDelta);
     if (modal()) return true;
     if (stripWheel(pt, wheelDelta)) return true;   // an overflowing tab strip
+    if (changesWheel(pt, wheelDelta)) return true;   // the changes column's rows
     return sidebarWheel(pt, wheelDelta);   // the explorer's rows; elsewhere a grid's
   }
   bool inStrip = pt.y < win.stripHeightPx();
@@ -490,6 +516,15 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
   }
 
   // A scrollbar thumb drag owns the pointer until the button comes up.
+  if (chScroll_.dragging) {
+    if ((msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP) && m_.changes) {
+      chBar_.mouse(msg, (float)pt.x, (float)pt.y - bodyTop(), chScroll_, (float)m_.changes->rowH, "");
+      if (msg == WM_LBUTTONUP && GetCapture() == win.body()) ReleaseCapture();
+      sidebarScrolled(pt);
+    }
+    if (msg == WM_LBUTTONUP) chScroll_.dragging = false;
+    return true;
+  }
   if (sbScroll_.dragging) {
     if (msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP) {
       sbBar_.mouse(msg, (float)pt.x, (float)pt.y - bodyTop(), sbScroll_, sb_.rowDip, "");
@@ -575,6 +610,26 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
       sidebarBarPress(msg, pt, target);
       return true;
     }
+    if (startsWith(target, "changes:scroll:")) {
+      changesBarPress(msg, pt, target);
+      return true;
+    }
+    if (target == "changes:grip" && m_.changes) {
+      if (msg == WM_LBUTTONDBLCLK) {
+        send("dblclick", target, xd, yd, 0, mods);   // the core resets the width
+        return true;
+      }
+      // The core takes the column's left edge; the grab offset inside the grip is kept.
+      float edge = (float)m_.changes->rect.x;
+      dragGrabDip_ = xd - edge;
+      dragDivider_ = target;
+      dragLastX_ = edge;
+      dragLastY_ = yd;
+      SetCapture(win.body());
+      send("down", target, dragLastX_, dragLastY_, 0, mods);
+      win.invalidateBody();
+      return true;
+    }
     if (target == "sidebar:grip") {
       if (msg == WM_LBUTTONDBLCLK) {
         send("dblclick", target, xd, yd, 0, mods);   // the core resets the width
@@ -625,7 +680,8 @@ bool Ui::mouse(UINT msg, POINT pt, int button, Mods mods, int wheelDelta) {
       return true;
     }
     bool dblTarget = (startsWith(target, "tab:") && std::count(target.begin(), target.end(), ':') == 1 && target != "tab:new") ||
-                     (startsWith(target, "pane:") && endsWith(target, ":title")) || startsWith(target, "sidebar:row:");
+                     (startsWith(target, "pane:") && endsWith(target, ":title")) || startsWith(target, "sidebar:row:") ||
+                     startsWith(target, "changes:row:");
     if (msg == WM_LBUTTONDBLCLK && dblTarget) {
       send("dblclick", target, xd, yd, 0, mods);
       pressed_.clear();
@@ -828,6 +884,7 @@ void Ui::drawBody(ID2D1RenderTarget* rt) {
   if (!p.live()) return;
   viewSidebar(p);
   viewPanes(p);
+  viewChanges(p);
   viewDividers(p);
   viewStatus(p);
   viewUpdate(p);
