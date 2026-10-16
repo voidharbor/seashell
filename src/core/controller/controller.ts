@@ -1684,12 +1684,12 @@ export class Controller {
    */
   private async snapshot(force: boolean): Promise<void> {
     if (this.restoreCandidate || this.restoring || this.s.tabs.length === 0) return
-    const { lookup, proven, provenAgents } = await collectSaveLookup(this.s, this.deps.invoke.bind(this.deps))
+    const { lookup, proven, provenAgents, cwds } = await collectSaveLookup(this.s, this.deps.invoke.bind(this.deps))
     if (Object.keys(proven).length > 0) this.dispatch({ type: 'panes.sessionIds', ids: proven })
     if (Object.keys(provenAgents).length > 0) this.dispatch({ type: 'panes.agents', agents: provenAgents })
     // Every agent session seen running starts being watched: its baseline is
     // the folder as it stood now, when SeaShell first saw it.
-    for (const w of provenSessions(this.s, proven, provenAgents)) void this.deps.invoke('changes:watch', w).catch(() => undefined)
+    for (const w of provenSessions(this.s, proven, provenAgents, cwds)) void this.deps.invoke('changes:watch', w).catch(() => undefined)
     const tabs = snapshotTabs(this.s, lookup)
     try {
       if (!shouldOfferRestore(tabs)) {

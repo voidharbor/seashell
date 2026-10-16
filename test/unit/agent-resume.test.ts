@@ -222,7 +222,7 @@ describe('resolveAgentVerdicts', () => {
       new Map([['jarvis', new Set([J2])]]),
       new Set()
     )
-    expect(out.a).toEqual({ kind: 'ultron', sid: J1, source: 'process' })
+    expect(out.a).toEqual({ kind: 'ultron', sid: J1, source: 'process', cwd: '/x' })
     expect(out.b).toEqual({ kind: 'jarvis', sid: J1, source: 'carried' })
     // J2 is open in a process somewhere: the pane comes back fresh.
     expect(out.c).toEqual({ kind: 'jarvis', source: 'carried' })
@@ -290,7 +290,7 @@ describe('sessionIdsForPanes with the agent lanes', () => {
       12: info(12, ['node', `${H}/local-ai/jarvis/pi/node_modules/.bin/pi`]),
     }
     const out = await sessionIdsForPanes([{ paneId: 'p1', cwd: '/home/user/proj' }], deps(procs, { 11: 10, 12: 11 }))
-    expect(out.agents).toEqual({ p1: { kind: 'jarvis', sid: J1, flags: ['--effort', 'high'], source: 'process' } })
+    expect(out.agents).toEqual({ p1: { kind: 'jarvis', sid: J1, flags: ['--effort', 'high'], source: 'process', cwd: '/home/user/proj' } })
     expect(out.agentsChecked).toBe(true)
     expect(out.ids).toEqual({})
   })

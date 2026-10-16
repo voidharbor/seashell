@@ -59,6 +59,8 @@ export const CHANGES_HEADER_DIP = 44
 export const CHANGES_NOTE_DIP = 40
 export const CHANGES_ROW_DIP = 22
 export const CHANGES_GROUP_DIP = 24
+/** Above the first group and below the last row (the shell's kPadDip, the renderer's padding). */
+export const CHANGES_LIST_PAD_DIP = 4
 /** The list keeps at least this much above an open preview. */
 const LIST_MIN_DIP = 96
 
@@ -72,13 +74,22 @@ export interface TrackedSession {
 export function sessionFromLookup(res: ProjectsSessionIdsResponse | null, pane: PaneState): TrackedSession | null {
   if (!res) return null
   const v: PaneAgentVerdict | undefined = res.agents?.[pane.id]
+  // The agent's own directory when main could read it: the pane's shell
+  // reports its cwd only where shell integration runs, and an agent may have
+  // been started somewhere else.
   if (v && v.source === 'process' && isOtherAgentKind(v.kind)) {
-    return { kind: v.kind, ...(v.sid ? { sid: v.sid } : {}), cwd: pane.cwd }
+    return { kind: v.kind, ...(v.sid ? { sid: v.sid } : {}), cwd: absolute(v.cwd) ?? pane.cwd }
   }
   const src = res.sources?.[pane.id]
   const sid = res.ids?.[pane.id]
-  if ((src === 'process' || src === 'registry') && typeof sid === 'string') return { kind: 'claude', sid, cwd: pane.cwd }
+  if ((src === 'process' || src === 'registry') && typeof sid === 'string') {
+    return { kind: 'claude', sid, cwd: absolute(res.cwds?.[pane.id]) ?? pane.cwd }
+  }
   return null
+}
+
+function absolute(p: unknown): string | undefined {
+  return typeof p === 'string' && p.startsWith('/') ? p : undefined
 }
 
 function sameSession(a: TrackedSession | null, b: TrackedSession | null): boolean {
@@ -383,7 +394,9 @@ export class ChangesPanel {
     const showing = this.selected !== null
     let listH = avail
     if (showing) {
-      const want = groups.reduce((n, g) => n + CHANGES_GROUP_DIP * uiScale + (g.folded ? 0 : g.rows.length * CHANGES_ROW_DIP * uiScale), 0)
+      const want =
+        groups.reduce((n, g) => n + CHANGES_GROUP_DIP * uiScale + (g.folded ? 0 : g.rows.length * CHANGES_ROW_DIP * uiScale), 0) +
+        2 * CHANGES_LIST_PAD_DIP * uiScale
       listH = Math.min(Math.max(LIST_MIN_DIP * uiScale, Math.min(want, avail * 0.4)), avail)
     }
     const listRect = { x: col.x, y: top, w: col.w, h: listH }
@@ -599,16 +612,19 @@ export class ChangesPanel {
 export function provenSessions(
   state: AppState,
   proven: Readonly<Record<string, string>>,
-  agents: Readonly<Record<string, PaneAgentVerdict>>
+  agents: Readonly<Record<string, PaneAgentVerdict>>,
+  cwds: Readonly<Record<string, string>> = {}
 ): Array<{ paneId: string } & TrackedSession> {
   const out: Array<{ paneId: string } & TrackedSession> = []
   for (const [paneId, sid] of Object.entries(proven)) {
     const p = paneById(state, paneId)
-    if (p && !agents[paneId]) out.push({ paneId, kind: 'claude', sid, cwd: p.cwd })
+    if (p && !agents[paneId]) out.push({ paneId, kind: 'claude', sid, cwd: absolute(cwds[paneId]) ?? p.cwd })
   }
   for (const [paneId, v] of Object.entries(agents)) {
     const p = paneById(state, paneId)
-    if (p && isAgentKind(v.kind) && v.source === 'process') out.push({ paneId, kind: v.kind, ...(v.sid ? { sid: v.sid } : {}), cwd: p.cwd })
+    if (p && isAgentKind(v.kind) && v.source === 'process') {
+      out.push({ paneId, kind: v.kind, ...(v.sid ? { sid: v.sid } : {}), cwd: absolute(v.cwd) ?? p.cwd })
+    }
   }
   return out
 }

@@ -404,6 +404,7 @@ export interface ResolveResult {
   sources: Record<string, SessionIdSource>
   agents?: Record<string, PaneAgentVerdict>
   agentsChecked?: boolean
+  cwds?: Record<string, string>
 }
 
 /**
@@ -437,6 +438,7 @@ export function resolveAgentVerdicts(
         ...(hit.sid && isValidAgentSessionId(hit.kind, hit.sid) ? { sid: hit.sid } : {}),
         ...(hit.flags.length > 0 ? { flags: hit.flags } : {}),
         source: 'process',
+        ...(hit.cwd ? { cwd: hit.cwd } : {}),
       }
       continue
     }
@@ -697,6 +699,8 @@ export async function sessionIdsForPanes(
   let processIds: Record<string, string> = {}
   let liveAgents = new Map<string, PaneAgent>()
   let agentsChecked = false
+  /** The working directory of each pane's proven claude, from /proc. */
+  const claudeCwds: Record<string, string> = {}
   let agentLiveSids = new Map<OtherAgentKind, Set<string>>()
   /** Panes whose nearest agent is claude: they never keep another agent. */
   const claudeNearest = new Set<string>()
@@ -738,14 +742,19 @@ export async function sessionIdsForPanes(
           )
           agentLiveSids = found.liveSids
           // One agent per pane, the one nearest its shell; claude wins a tie.
-          const claudeDepth = findPaneAgents(shells, children, (pid) => (live.has(pid) ? { kind: 'claude' } : null))
+          const claudeDepth = findPaneAgents(shells, children, (pid) => (live.has(pid) ? { kind: 'claude', pid } : null))
           for (const [paneId, hit] of found.panes) {
             const c = claudeDepth.get(paneId)
             if (c && c.depth <= hit.depth) continue
             liveAgents.set(paneId, hit)
             delete processIds[paneId]
           }
-          for (const [paneId] of claudeDepth) if (!liveAgents.has(paneId)) claudeNearest.add(paneId)
+          for (const [paneId, c] of claudeDepth) {
+            if (liveAgents.has(paneId)) continue
+            claudeNearest.add(paneId)
+            const cwd = (await deps.agents.procInfo(c.hit.pid, true).catch(() => null))?.cwd
+            if (cwd) claudeCwds[paneId] = cwd
+          }
           agentsChecked = true
         }
       }
@@ -784,9 +793,11 @@ export async function sessionIdsForPanes(
   })
   const claudePanes = new Set([...claudeNearest, ...Object.keys(result.sources).filter((id) => result.sources[id] === 'process')])
   const agents = resolveAgentVerdicts(panes, liveAgents, agentLiveSids, claudePanes)
+  const cwds = Object.fromEntries(Object.entries(claudeCwds).filter(([id]) => result.sources[id] === 'process'))
   return {
     ...result,
     ...(Object.keys(agents).length > 0 ? { agents } : {}),
     ...(agentsChecked ? { agentsChecked } : {}),
+    ...(Object.keys(cwds).length > 0 ? { cwds } : {}),
   }
 }

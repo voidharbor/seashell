@@ -10,6 +10,7 @@ import {
   type MenuItem,
 } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -85,15 +86,30 @@ let watcher: DirWatcher | null = null
 
 const RENDERER_DIR = path.join(dirname, '../renderer')
 
+/**
+ * The changes preview page (src/preview), served as `app://preview/`: an
+ * origin of its own, so the page and anything it renders can never reach the
+ * renderer's DOM or its preload API. The build copies it beside the renderer;
+ * a dev run without that copy falls back to the core build's.
+ */
+const PREVIEW_DIRS = [path.join(dirname, '../renderer/preview'), path.join(dirname, '../core/preview')]
+function previewDir(): string {
+  return PREVIEW_DIRS.find((d) => fs.existsSync(path.join(d, 'index.html'))) ?? PREVIEW_DIRS[0]!
+}
+
 /** Resolves an app:// URL to a real file, refusing anything outside the bundle. */
 function resolveRendererFile(requestUrl: string): string | null {
   const url = new URL(requestUrl)
+  const root = url.host === 'preview' ? previewDir() : RENDERER_DIR
   const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '')
-  const abs = path.resolve(RENDERER_DIR, rel === '' ? 'index.html' : rel)
-  // Path traversal guard: the resolved path must stay under the renderer dir.
-  if (abs !== RENDERER_DIR && !abs.startsWith(RENDERER_DIR + path.sep)) return null
+  const abs = path.resolve(root, rel === '' ? 'index.html' : rel)
+  // Path traversal guard: the resolved path must stay under its own dir.
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null
   return abs
 }
+
+/** When the changes preview last opened a link, so a page cannot open a stream of them. */
+let previewLinkAt = 0
 
 function createWindow(): void {
   // Saved bounds come back clamped to the work area of the display they best
@@ -211,6 +227,19 @@ function createWindow(): void {
     return { action: 'deny' }
   })
   mainWindow.webContents.on('will-navigate', (e) => e.preventDefault())
+  // Frames: the changes preview page and the sandboxed frame it renders into
+  // stay on app://preview; anything else is cancelled, and an http or https
+  // link opens in the browser (at most one every two seconds).
+  mainWindow.webContents.on('will-frame-navigate', (e) => {
+    if (e.isMainFrame) return
+    const url = e.url
+    if (url.startsWith('app://preview/') || url === 'about:blank' || url === 'about:srcdoc') return
+    e.preventDefault()
+    if (/^https?:\/\//i.test(url) && Date.now() - previewLinkAt > 2000) {
+      previewLinkAt = Date.now()
+      void shell.openExternal(url)
+    }
+  })
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (isDev && devUrl) {

@@ -41,6 +41,9 @@ import {
   type PtyResizeRequest,
   type PtySpawnRequest,
   type PtySpawnResponse,
+  type ChangesFileResponse,
+  type ChangesListResponse,
+  type ChangesWatchRequest,
   type ProjectsDeleteRequest,
   type ProjectsDeleteResponse,
   type ProjectsListResponse,
@@ -131,6 +134,12 @@ const api: SeashellApi = {
   },
   metrics: {
     onTick: (cb: (e: MetricsTickEvent) => void) => subscribe<MetricsTickEvent>(CH.metricsTick, cb),
+  },
+  changes: {
+    watch: (req: ChangesWatchRequest): Promise<{ ok: boolean }> => ipcRenderer.invoke(CH.changesWatch, req),
+    list: (req: { paneId: string }): Promise<ChangesListResponse | null> => ipcRenderer.invoke(CH.changesList, req),
+    file: (req: { paneId: string; path: string }): Promise<ChangesFileResponse> => ipcRenderer.invoke(CH.changesFile, req),
+    release: (req: { paneId: string }): Promise<{ ok: boolean }> => ipcRenderer.invoke(CH.changesRelease, req),
   },
   projects: {
     list: (): Promise<ProjectsListResponse> => ipcRenderer.invoke(CH.projectsList),

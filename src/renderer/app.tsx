@@ -73,6 +73,9 @@ import {
 } from '../shared/ipc.js'
 import { loadSettings, saveSettings, type Settings } from './settings/settings.js'
 import { dirtyPreviewPanes } from './viewer/FilePreview.js'
+import { ChangesColumn } from './changes/ChangesColumn.js'
+import { useChangesPanel } from './changes/useChangesPanel.js'
+import { provenSessions } from '../core/controller/changes.js'
 
 const CELL_FALLBACK = { cellW: 7.8, cellH: 15 }
 
@@ -241,6 +244,14 @@ export function App(): React.JSX.Element {
 
   const gridRef = useRef<HTMLDivElement | null>(null)
   const [gridSize, setGridSize] = useState({ width: 0, height: 0 })
+  // The changes column of a zoomed agent pane (changes/). Its callbacks reach
+  // functions defined further down only when they run, after this render.
+  const changes = useChangesPanel({
+    state,
+    dispatch,
+    reveal: (p, isDir) => revealPath(p, isDir),
+    openWithDefaultApp: (p) => void openPath(p, openDeps, 'os'),
+  })
 
   // Chrome scale is a CSS variable, so it must be published before first paint —
   // a layout effect, not an effect, or the first frame renders at the wrong size.
@@ -508,6 +519,11 @@ export function App(): React.JSX.Element {
       if (proven.length > 0) dispatch({ type: 'panes.sessionIds', ids: Object.fromEntries(proven) })
       const agents = provenAgents(r)
       if (Object.keys(agents).length > 0) dispatch({ type: 'panes.agents', agents })
+      // Every agent session seen running starts being watched: its baseline is
+      // the folder as it stood now, when SeaShell first saw it.
+      for (const w of provenSessions(state, Object.fromEntries(proven), agents, r.cwds ?? {})) {
+        void window.seashell.changes.watch(w).catch(() => undefined)
+      }
     }
     return saveLookupFrom(termPanes, asked, res)
   }, [state])
@@ -927,10 +943,14 @@ export function App(): React.JSX.Element {
         case 'pane.zoom':
           dispatch({ type: 'pane.zoom' })
           break
-        case 'changes.toggle':
-          // The changes column of the focused pane (Part D wires the column itself).
-          dispatch({ type: 'pane.zoom' })
+        // The changes column of the focused pane: zooms it first when it is not.
+        case 'changes.toggle': {
+          const id = activeTab?.focusedPaneId
+          if (!activeTab || !id || activeTab.panes[id]?.kind !== 'term') break
+          changes.panel.toggle(id)
+          if (activeTab.zoomedPaneId !== id) dispatch({ type: 'pane.zoom', paneId: id })
           break
+        }
         case 'pane.clear': {
           // Nothing to clear in a text box, and clearing the pane behind it is
           // not what ⌘K in a draft box could possibly mean — throwing away a
@@ -1094,7 +1114,7 @@ export function App(): React.JSX.Element {
     })
     return off
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, home, newPane, userNewPane, closePane, closeTab, closeAllPreviews, openFind, stepFind])
+  }, [activeTab, home, newPane, userNewPane, closePane, closeTab, closeAllPreviews, openFind, stepFind, changes.panel])
 
   /**
    * Zoom keys are bound here rather than as menu accelerators.
@@ -1357,43 +1377,6 @@ export function App(): React.JSX.Element {
     []
   )
 
-  if (!ready) return <div className="empty">Starting SeaShell…</div>
-
-  // The card stands in for the whole window rather than sitting over it. There
-  // is nothing behind it yet, and a modal over an empty window would only be a
-  // more elaborate way of saying the same thing.
-  if (pendingRestore) {
-    const paneCount = pendingRestore.tabs.reduce((n, t) => n + Object.keys(t.panes).length, 0)
-    return (
-      <RestoreCard
-        tabCount={pendingRestore.tabs.length}
-        paneCount={paneCount}
-        savedAt={pendingRestore.savedAt}
-        onRestore={() => {
-          const snap = pendingRestore
-          setPendingRestore(null)
-          void restoreProjectTabs({
-            id: 'last-session',
-            name: 'Last session',
-            savedAt: snap.savedAt,
-            tabs: snap.tabs,
-          }).then((restored) => {
-            // No live panes to reap: this is boot, and the window is empty.
-            if (restored.length === 0) {
-              dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current, ...userCommand() })
-              return
-            }
-            dispatch({ type: 'tabs.replace', tabs: restored })
-          })
-        }}
-        onFresh={() => {
-          setPendingRestore(null)
-          void window.seashell.session.clear()
-          dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current, ...userCommand() })
-        }}
-      />
-    )
-  }
 
   /**
    * An offer already refused is not an offer. A version the user said "Later"
@@ -1493,6 +1476,46 @@ export function App(): React.JSX.Element {
       window.removeEventListener('pointercancel', up)
     }
   }, [rects, activeTab])
+
+  // Every hook is above this line: the hooks a render calls must not depend on
+  // whether the app is ready or a restore is pending.
+  if (!ready) return <div className="empty">Starting SeaShell…</div>
+
+  // The card stands in for the whole window rather than sitting over it. There
+  // is nothing behind it yet, and a modal over an empty window would only be a
+  // more elaborate way of saying the same thing.
+  if (pendingRestore) {
+    const paneCount = pendingRestore.tabs.reduce((n, t) => n + Object.keys(t.panes).length, 0)
+    return (
+      <RestoreCard
+        tabCount={pendingRestore.tabs.length}
+        paneCount={paneCount}
+        savedAt={pendingRestore.savedAt}
+        onRestore={() => {
+          const snap = pendingRestore
+          setPendingRestore(null)
+          void restoreProjectTabs({
+            id: 'last-session',
+            name: 'Last session',
+            savedAt: snap.savedAt,
+            tabs: snap.tabs,
+          }).then((restored) => {
+            // No live panes to reap: this is boot, and the window is empty.
+            if (restored.length === 0) {
+              dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current, ...userCommand() })
+              return
+            }
+            dispatch({ type: 'tabs.replace', tabs: restored })
+          })
+        }}
+        onFresh={() => {
+          setPendingRestore(null)
+          void window.seashell.session.clear()
+          dispatch({ type: 'tab.new', cwd: home, home, autoColor: autoColorRef.current, ...userCommand() })
+        }}
+      />
+    )
+  }
 
   /** Panes in this tab that could share notes, in the order they appear. */
   const linkCandidates: LinkCandidate[] = activeTab
@@ -1729,8 +1752,12 @@ export function App(): React.JSX.Element {
               if (!pane) return null
               const zoomed = tab.zoomedPaneId
               const isZoomTarget = zoomed === r.paneId
-              const rect =
-                isActive && isZoomTarget
+              // The changes column, when it shows, takes the right of the area.
+              const ownsColumn = isActive && isZoomTarget && changes.panel.agentPane() === r.paneId
+              const split = ownsColumn ? changes.panel.split({ x: 0, y: 0, w: gridSize.width, h: gridSize.height }, 1) : null
+              const rect = split
+                ? { x: split.pane.x, y: split.pane.y, width: split.pane.w, height: split.pane.h }
+                : isActive && isZoomTarget
                   ? { x: 0, y: 0, width: gridSize.width, height: gridSize.height }
                   : r
               // A background tab's panes must never take focus or answer a find.
@@ -1755,6 +1782,9 @@ export function App(): React.JSX.Element {
                   dragging={paneDrop?.paneId === r.paneId}
                   onClose={() => void closePane(r.paneId)}
                   onZoom={() => dispatch({ type: 'pane.zoom', paneId: r.paneId })}
+                  changes={ownsColumn ? (changes.panel.visible() ? 'on' : 'off') : 'none'}
+                  changesChord={k('Cmd+E')}
+                  onToggleChanges={() => changes.panel.toggle(r.paneId)}
                   onReveal={(p, isDir) => revealPath(p, isDir)}
                   onOpen={(p, mode) =>
                     void openPath(p, openDeps, mode === 'os' ? 'os' : undefined)
@@ -1786,6 +1816,15 @@ export function App(): React.JSX.Element {
               )
             })
           })}
+
+          {(() => {
+            const area = { x: 0, y: 0, w: gridSize.width, h: gridSize.height }
+            const model = zoomedPaneId ? changes.panel.model(area, 1) : null
+            void changes.rev
+            return model ? (
+              <ChangesColumn model={model} panel={changes.panel} area={area} frame={changes.frame} chordLabel={k('Cmd+E')} />
+            ) : null
+          })()}
 
           {dividers.map((d) => (
             <div

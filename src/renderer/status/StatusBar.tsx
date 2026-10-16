@@ -76,8 +76,8 @@ export function StatusBar(props: StatusBarProps): React.JSX.Element {
           Shift is what selects the focused pane instead. See app.tsx. */}
       <span className="statusbar__hint">
         {isMac
-          ? '⌘D pane · ⌘T tab · ⌘=/- zoom · ⌘+/_ pane zoom · ⌘↩ full screen'
-          : `${k('Cmd+D')} pane · ${k('Cmd+T')} tab · ${z('=')}/- zoom · ${paneZoomIn}/- pane zoom · ${k('Cmd+Return')} full screen`}
+          ? '⌘D pane · ⌘T tab · ⌘=/- zoom · ⌘+/_ pane zoom · ⌘↩ full screen · ⌘E changes'
+          : `${k('Cmd+D')} pane · ${k('Cmd+T')} tab · ${z('=')}/- zoom · ${paneZoomIn}/- pane zoom · ${k('Cmd+Return')} full screen · ${k('Cmd+E')} changes`}
       </span>
     </div>
   )

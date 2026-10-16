@@ -8,7 +8,7 @@
   "scripts": {
     "postinstall": "node scripts/fix-pty-perms.cjs",
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build && node scripts/build-preview.mjs out/renderer/preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",

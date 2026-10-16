@@ -44,7 +44,13 @@ export function snapshotTabs(state: AppState, lookup: SaveLookup | undefined): S
 export async function collectSaveLookup(
   state: AppState,
   invoke: Invoke
-): Promise<{ lookup: SaveLookup | undefined; proven: Record<string, string>; provenAgents: Record<string, PaneAgentVerdict> }> {
+): Promise<{
+  lookup: SaveLookup | undefined
+  proven: Record<string, string>
+  provenAgents: Record<string, PaneAgentVerdict>
+  /** The proven claude processes' own working directories. */
+  cwds: Record<string, string>
+}> {
   const termPanes = state.tabs.flatMap((t) => Object.values(t.panes).filter((p) => p.kind === 'term'))
   const asked = Math.min(termPanes.length, MAX_TERM_PANES)
   const livePanes = termPanes.slice(0, asked).map(lookupPaneFor)
@@ -63,7 +69,8 @@ export async function collectSaveLookup(
       if (res.sources[id] === 'process' || res.sources[id] === 'registry') proven[id] = sid
     }
   }
-  return { lookup: saveLookupFrom(termPanes, asked, res), proven, provenAgents: provenAgents(res) }
+  const cwds = res && typeof res.cwds === 'object' && res.cwds !== null ? res.cwds : {}
+  return { lookup: saveLookupFrom(termPanes, asked, res), proven, provenAgents: provenAgents(res), cwds }
 }
 
 /**

@@ -552,6 +552,9 @@ export interface ProjectsSessionIdsResponse {
   /** main read the process table for the other agents this time, so a pane
    *  it reports no live agent in has none. */
   agentsChecked?: boolean
+  /** paneId -> the working directory of the claude process proven in it
+   *  ('process' source), when it could be read. */
+  cwds?: Record<string, string>
 }
 
 export interface PaneAgentVerdict {
@@ -559,6 +562,8 @@ export interface PaneAgentVerdict {
   sid?: string
   flags?: string[]
   source: 'process' | 'carried'
+  /** A live agent's own working directory, when it could be read. */
+  cwd?: string
 }
 
 export interface ProjectsResumeModesRequest {
@@ -653,6 +658,13 @@ export interface SeashellApi {
   links: {
     /** Create (or find) the shared notes file for a link group. */
     ensure(req: LinksEnsureRequest): Promise<LinksEnsureResponse>
+  }
+  /** The changes column (src/main/changes): watch a pane's agent session, list what it changed, read one file. */
+  changes: {
+    watch(req: ChangesWatchRequest): Promise<{ ok: boolean }>
+    list(req: { paneId: string }): Promise<ChangesListResponse | null>
+    file(req: { paneId: string; path: string }): Promise<ChangesFileResponse>
+    release(req: { paneId: string }): Promise<{ ok: boolean }>
   }
   projects: {
     list(): Promise<ProjectsListResponse>

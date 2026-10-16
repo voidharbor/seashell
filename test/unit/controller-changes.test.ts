@@ -181,6 +181,10 @@ describe('changes helpers', () => {
     expect(sessionFromLookup({ ids: { p: SID }, sources: { p: 'process' } }, pane)).toEqual({ kind: 'claude', sid: SID, cwd: '/home/user/proj' })
     expect(sessionFromLookup({ ids: { p: SID }, sources: { p: 'carried' } }, pane)).toBeNull()
     expect(sessionFromLookup({ ids: {}, sources: {}, agents: { p: { kind: 'opencode', source: 'process' } } }, pane)).toEqual({ kind: 'opencode', cwd: '/home/user/proj' })
+    // The agent's own directory wins over the pane's when main could read it.
+    expect(sessionFromLookup({ ids: {}, sources: {}, agents: { p: { kind: 'jarvis', source: 'process', cwd: '/home/user/proj/sub' } } }, pane)?.cwd).toBe('/home/user/proj/sub')
+    expect(sessionFromLookup({ ids: { p: SID }, sources: { p: 'process' }, cwds: { p: '/home/user/elsewhere' } }, pane)?.cwd).toBe('/home/user/elsewhere')
+    expect(sessionFromLookup({ ids: { p: SID }, sources: { p: 'process' }, cwds: { p: 'relative/x' } }, pane)?.cwd).toBe('/home/user/proj')
   })
 
   it('hands the page the theme’s colours and radius', () => {

@@ -107,6 +107,10 @@ export interface PaneViewProps {
   onFocus: () => void
   onClose: () => void
   onZoom: () => void
+  /** The changes column's toggle in the title bar: shown on the zoomed agent pane only. */
+  changes?: 'none' | 'off' | 'on'
+  changesChord?: string
+  onToggleChanges?: () => void
   /** `isDir` decides whether the explorer opens the folder or merely selects it. */
   onReveal: (path: string, isDir: boolean) => void
   /** Cmd+double-click on a path previews it, Cmd+Opt hands it to the OS. */
@@ -182,7 +186,7 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
         className="pane__title"
         onPointerDown={props.onTitlePointerDown}
         onDoubleClick={(e) => {
-          if ((e.target as HTMLElement).closest('.pane__close, .pane__dot')) return
+          if ((e.target as HTMLElement).closest('.pane__close, .pane__dot, .pane__changes')) return
           props.onZoom()
         }}
       >
@@ -205,6 +209,18 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
             }}
           >
             ⇄
+          </span>
+        )}
+        {props.changes && props.changes !== 'none' && (
+          <span
+            className={'pane__changes' + (props.changes === 'on' ? ' pane__changes--on' : '')}
+            title={`${props.changes === 'on' ? 'Hide changes' : 'Show what the agent changed'}${props.changesChord ? ` (${props.changesChord})` : ''}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              props.onToggleChanges?.()
+            }}
+          >
+            ±
           </span>
         )}
         <span className="pane__badge">{badgeFor(pane)}</span>
