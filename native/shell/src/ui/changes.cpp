@@ -241,7 +241,7 @@ bool Ui::previewPlacement(RECT* bounds, bool* visible, uint32_t* bg) const {
   float corner = std::ceil(t_.radius * d * (float)m_.window.uiScale);
   *bounds = RECT{ (LONG)std::lround(r.left + one), (LONG)std::lround(r.top), (LONG)std::lround(r.right - one),
                   (LONG)std::lround(std::max(r.top, r.bottom - std::max(one, corner))) };
-  *visible = !modal() && !menu_.isOpen() && !popover_.isOpen() && move_.kind == MoveDrag::None;
+  *visible = !modal() && !menu_.isOpen() && !popover_.isOpen() && !(move_.kind != MoveDrag::None && move_.live);
   *bg = t_.panel;
   return bounds->right > bounds->left && bounds->bottom > bounds->top;
 }
