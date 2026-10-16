@@ -210,16 +210,16 @@ void Ui::viewTabs(Painter& p) {
     std::string id = "tab:" + t.id;
     D2D1_RECT_F close = closeRect(r);
     if (flat) {
-      // Graphite: every tab is a hairline outline with its top corners round
-      // (the bottom edge runs off under the clip). The active tab's face is
-      // the lighter tabActive, joining the pane title below it; the others
-      // carry a faint sheen so each still reads as a tab, more under the pointer.
-      if (p.live()) {
+      // Graphite: the active tab is a lifted face with round top corners (the
+      // bottom edge runs off under the clip) and a whisper of outline, joining
+      // the pane title below it. The others are bare text with a faint face
+      // under the pointer; a short hairline between two quiet neighbours
+      // (the loop below) keeps them apart without boxing each one.
+      if ((t.active || hover) && p.live()) {
         p.pushClip(r);
         D2D1_RECT_F face = D2D1::RectF(r.left, r.top, r.right, r.bottom + 8 * s);
-        uint32_t line = mixRgb(t_.tabText, t_.frame, t.active ? 0.3f : 0.2f);
-        if (t.active) p.roundedRect(face, 6, t_.tabActive, 1, line, 1);
-        else p.roundedRect(face, 6, t_.tabSheen, hover ? 0.6f : 0.25f, line, 1);
+        if (t.active) p.roundedRect(face, 6, t_.tabActive, 1, mixRgb(t_.tabText, t_.frame, 0.22f), 1);
+        else p.roundedRect(face, 6, t_.tabSheen, 0.5f, 0, 0);
         p.popClip();
       }
     } else if (dark) {
@@ -260,7 +260,9 @@ void Ui::viewTabs(Painter& p) {
     }
   };
   const TabModel* moving = nullptr;
+  size_t ti = 0;
   for (const TabModel& t : m_.tabs) {
+    size_t i = ti++;
     D2D1_RECT_F r = D2D1::RectF(std::round(x), tabTop, std::round(x + tw), H);
     x = r.right + gap;
     if (movingTab(t.id)) moving = &t;   // drawn under the pointer, after the rest
@@ -272,6 +274,16 @@ void Ui::viewTabs(Painter& p) {
     D2D1_RECT_F ch = shown(closeRect(r));
     if (!t.renaming && ch.right > ch.left) hit(true, ch, id + ":close");
     if (moving != &t) drawTab(t, r, hover);
+    if (flat && p.live() && i + 1 < n) {
+      // The flat strip's separator: a short hairline in the gap between two
+      // quiet tabs, none beside the active, hovered or dragged one.
+      const TabModel& nx = m_.tabs[i + 1];
+      bool quiet = !t.active && !nx.active && !hover && !hovered("tab:" + nx.id) && !movingTab(t.id) && !movingTab(nx.id);
+      if (quiet) {
+        float sx = std::round(r.right + gap / 2 - one / 2);
+        p.fillRect(D2D1::RectF(sx, r.top + 9 * s, sx + one, r.bottom - 9 * s), mixRgb(t_.tabText, t_.frame, 0.32f));
+      }
+    }
   }
   if (moving) {
     float l = std::round(movingTabLeft(viewL, viewR));
