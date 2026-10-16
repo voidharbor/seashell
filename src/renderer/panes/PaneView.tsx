@@ -123,6 +123,10 @@ export interface PaneViewProps {
   onLink: (otherPaneId: string) => void
   onUnlink: () => void
   onTitle: (title: string) => void
+  /** A press on the title bar: app.tsx may turn it into a drag onto another pane. */
+  onTitlePointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void
+  /** Being dragged: the pane dims while its drop zone shows. */
+  dragging?: boolean
   onCwd: (cwd: string) => void
   /** Whether the attention pulse is enabled in settings. */
   glow: boolean
@@ -168,13 +172,15 @@ export function PaneView(props: PaneViewProps): React.JSX.Element {
         (hidden ? ' pane--hidden' : '') +
         (pane.kind !== 'term' ? ' pane--preview' : '') +
         (accent ? ' pane--tagged' : '') +
-        (props.glow && !focused && pane.attention ? ` pane--attn-${pane.attention}` : '')
+        (props.glow && !focused && pane.attention ? ` pane--attn-${pane.attention}` : '') +
+        (props.dragging ? ' pane--dragging' : '')
       }
       style={paneStyle}
       onMouseDown={props.onFocus}
     >
       <div
         className="pane__title"
+        onPointerDown={props.onTitlePointerDown}
         onDoubleClick={(e) => {
           if ((e.target as HTMLElement).closest('.pane__close, .pane__dot')) return
           props.onZoom()

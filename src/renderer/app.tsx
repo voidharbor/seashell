@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { DRAG_SLOP, dropTree, dropZoneAt, tabSlotAt, type DropZone } from './chrome/rearrange.js'
 import { dropText } from './panes/drop'
 import { isPrimaryModifier } from '../shared/keys.js'
 import { isMac, k, platform, z } from './platform.js'
@@ -6,7 +7,7 @@ import { computeLayout } from './layout/resize.js'
 import { dfsPaneOrder } from './layout/tree.js'
 import { MAX_PANES_PER_TAB, type RowNode } from './layout/types.js'
 import { applyDividerDrag, deriveDividers, type DividerSpec } from './layout/dividers.js'
-import { MAX_TAB_NAME, paneById, reducer, uid, type AppState, type PaneCommand } from './store.js'
+import { MAX_TAB_NAME, paneById, reducer, uid, type AppState, type PaneCommand, type TabState } from './store.js'
 import {
   PaneView,
   forgetSpawn,
@@ -419,6 +420,8 @@ export function App(): React.JSX.Element {
         return
       }
       const pane = activeTab?.panes[paneId]
+      // The tab's last pane going is the tab going: it asks as closing the tab does.
+      if (activeTab && pane && Object.keys(activeTab.panes).length === 1 && !confirmCloseTab(activeTab)) return
       if (pane && pane.kind === 'term') {
         const res = await window.seashell.pty.kill({ paneId })
         forgetSpawn(paneId)
@@ -441,6 +444,7 @@ export function App(): React.JSX.Element {
       ) {
         return
       }
+      if (tab && !confirmCloseTab(tab)) return
       if (tab) {
         await Promise.all(
           Object.values(tab.panes)
@@ -1399,6 +1403,93 @@ export function App(): React.JSX.Element {
 
   const order = activeTab ? dfsPaneOrder(activeTab.tree) : []
 
+  // Dragging a tab along the strip (the native shell's ui/drag.cpp): once the
+  // press moves past DRAG_SLOP the tab takes each slot its centre crosses
+  // into; a shorter press stays a click. The pointer is captured by the tab,
+  // so the drag survives leaving the strip.
+  const tabsRef = useRef<HTMLDivElement | null>(null)
+  const tabDragRef = useRef<{ tabId: string; grab: number; startX: number; live: boolean } | null>(null)
+  const [draggingTabId, setDraggingTabId] = useState<string | null>(null)
+  const onTabPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>, tabId: string) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('.tab__close, .tab__rename')) return
+    tabDragRef.current = { tabId, grab: e.clientX - e.currentTarget.getBoundingClientRect().left, startX: e.clientX, live: false }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }, [])
+  const onTabPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const d = tabDragRef.current
+      if (!d) return
+      if (!d.live) {
+        if (Math.abs(e.clientX - d.startX) < DRAG_SLOP) return
+        d.live = true
+        setDraggingTabId(d.tabId)
+      }
+      const strip = tabsRef.current
+      const at = state.tabs.findIndex((t) => t.id === d.tabId)
+      if (!strip || at < 0) return
+      const spans = Array.from(strip.querySelectorAll<HTMLElement>('.tab')).map((el) => {
+        const r = el.getBoundingClientRect()
+        return { left: r.left, width: r.width }
+      })
+      const slot = tabSlotAt(spans, e.clientX - d.grab + (spans[at]?.width ?? 0) / 2)
+      if (slot !== at) dispatch({ type: 'tab.move', tabId: d.tabId, toIndex: slot })
+    },
+    [state.tabs]
+  )
+  const endTabDrag = useCallback(() => {
+    tabDragRef.current = null
+    setDraggingTabId(null)
+  }, [])
+
+  // Dragging a pane by its title onto another: the middle of the target swaps
+  // the two, an edge docks the dragged pane on that side (rearrange.ts). The
+  // zone shows over the target while the pointer is down; the release drops.
+  const paneDragRef = useRef<{ paneId: string; startX: number; startY: number; live: boolean; zone: DropZone | null } | null>(null)
+  const [paneDrop, setPaneDrop] = useState<{ paneId: string; zone: DropZone | null } | null>(null)
+  const onPaneTitlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>, paneId: string) => {
+      if (e.button !== 0 || (e.target as HTMLElement).closest('.pane__close, .pane__dot, .pane__link, button, input')) return
+      if (!activeTab || Object.keys(activeTab.panes).length < 2 || activeTab.zoomedPaneId) return
+      paneDragRef.current = { paneId, startX: e.clientX, startY: e.clientY, live: false, zone: null }
+    },
+    [activeTab]
+  )
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const d = paneDragRef.current
+      if (!d) return
+      if (!d.live) {
+        if (Math.abs(e.clientX - d.startX) < DRAG_SLOP && Math.abs(e.clientY - d.startY) < DRAG_SLOP) return
+        d.live = true
+      }
+      const g = gridRef.current?.getBoundingClientRect()
+      if (!g) return
+      d.zone = dropZoneAt(rects, { x: e.clientX - g.left, y: e.clientY - g.top }, d.paneId)
+      setPaneDrop({ paneId: d.paneId, zone: d.zone })
+    }
+    const up = () => {
+      const d = paneDragRef.current
+      paneDragRef.current = null
+      if (d?.live && d.zone && activeTab) {
+        const next = dropTree(activeTab.tree, d.paneId, d.zone)
+        if (next !== activeTab.tree) {
+          // A docked layout is no longer the auto-arranged one; a swap keeps whatever the tab was.
+          dispatch({ type: 'layout.setTree', tree: next, pristine: d.zone.where === 'swap' && activeTab.pristine })
+          dispatch({ type: 'pane.focus', paneId: d.paneId })
+        }
+      }
+      if (d) setPaneDrop(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+  }, [rects, activeTab])
+
   /** Panes in this tab that could share notes, in the order they appear. */
   const linkCandidates: LinkCandidate[] = activeTab
     ? order
@@ -1435,12 +1526,17 @@ export function App(): React.JSX.Element {
 
       <div className="tabbar">
         {!isMac && <MenuButton />}
-        <div className="tabbar__tabs">
+        <div className="tabbar__tabs" ref={tabsRef}>
           {state.tabs.map((t) => (
             <div
               key={t.id}
-              className={'tab' + (t.id === state.activeTabId ? ' tab--active' : '')}
+              className={'tab' + (t.id === state.activeTabId ? ' tab--active' : '') + (draggingTabId === t.id ? ' tab--dragging' : '')}
               onMouseDown={() => dispatch({ type: 'tab.select', tabId: t.id })}
+              onPointerDown={(e) => onTabPointerDown(e, t.id)}
+              onPointerMove={onTabPointerMove}
+              onPointerUp={endTabDrag}
+              onPointerCancel={endTabDrag}
+              onLostPointerCapture={endTabDrag}
               onDoubleClick={(e) => {
                 if ((e.target as HTMLElement).closest('.tab__close')) return
                 setRenamingTabId(t.id)
@@ -1586,6 +1682,12 @@ export function App(): React.JSX.Element {
         )}
 
         <div className="grid" ref={gridRef}>
+          {paneDrop?.zone && (
+            <div
+              className="pane-drop"
+              style={{ left: paneDrop.zone.rect.x, top: paneDrop.zone.rect.y, width: paneDrop.zone.rect.width, height: paneDrop.zone.rect.height }}
+            />
+          )}
           {/*
             Every pane of every tab stays mounted; only the active tab's are laid
             out and visible.
@@ -1645,6 +1747,8 @@ export function App(): React.JSX.Element {
                   findDirection={find.direction}
                   onCloseFind={() => setFindOpen(false)}
                   onFocus={() => dispatch({ type: 'pane.focus', paneId: r.paneId })}
+                  onTitlePointerDown={(e) => onPaneTitlePointerDown(e, r.paneId)}
+                  dragging={paneDrop?.paneId === r.paneId}
                   onClose={() => void closePane(r.paneId)}
                   onZoom={() => dispatch({ type: 'pane.zoom', paneId: r.paneId })}
                   onReveal={(p, isDir) => revealPath(p, isDir)}
@@ -1815,6 +1919,17 @@ export function App(): React.JSX.Element {
  * Blur commits rather than cancels: clicking away from a rename you have
  * finished typing should keep it. Escape is the explicit discard.
  */
+/**
+ * The question before a tab with a live shell closes (its X, the close
+ * chord, its last pane's X); a tab whose shells have all exited needs none.
+ */
+function confirmCloseTab(tab: TabState): boolean {
+  const live = Object.values(tab.panes).filter((p) => p.kind === 'term' && p.status !== 'exited').length
+  if (live === 0) return true
+  const what = live === 1 ? 'Its pane and whatever is running in it' : `Its ${live} panes and whatever is running in them`
+  return window.confirm(`Close "${tab.name}"?\n\n${what} will be stopped.`)
+}
+
 function TabNameInput(props: {
   initial: string
   onCommit: (name: string) => void

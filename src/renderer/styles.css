@@ -239,6 +239,10 @@ body {
   cursor: default;
 }
 
+.tab--dragging {
+  opacity: 0.6;
+}
+
 .tab--active {
   background-color: var(--tabOnBg, var(--chromeAlt));
   background-image: var(--tabOnImg, none);
@@ -2144,4 +2148,20 @@ body.dragging .drawer__grip {
 
 .app-scrollbar--dragging .app-scrollbar__thumb {
   background: color-mix(in srgb, var(--termFg) 60%, transparent);
+}
+
+/* A pane being dragged by its title, and the zone on the pane under the pointer
+   where it would land (rearrange.ts): the middle swaps, an edge docks. */
+.pane--dragging {
+  opacity: 0.55;
+}
+
+.pane-drop {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  border-radius: var(--paneRadius, 4px);
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  pointer-events: none;
+  z-index: 5;
 }

@@ -25,7 +25,7 @@ export interface Theme {
   vars: Record<string, string>
 }
 
-export type ThemeKey = 'homebrew' | 'nautical' | 'retro' | 'mac' | 'macDark' | 'hacker' | 'aero'
+export type ThemeKey = 'homebrew' | 'nautical' | 'retro' | 'mac' | 'macDark' | 'hacker' | 'aero' | 'graphite'
 
 export const THEMES: Record<ThemeKey, Theme> = {
   homebrew: {
@@ -491,7 +491,68 @@ export const THEMES: Record<ThemeKey, Theme> = {
       '--m': '#a071cf',
       '--gr': '#6b8aab',
     },
-  },}
+  },
+  graphite: {
+    label: 'Graphite',
+    name: 'Graphite — flat dark grey, no glass',
+    note: 'Flat dark grey from the tab strip to the status bar, no glass, no desktop colour, a quiet blue accent and 6px corners; the native Windows build\u2019s own look.',
+    vars: {
+      '--fu': "'Segoe UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
+      '--fm': "Consolas, 'SF Mono', Menlo, monospace",
+      '--chrome': '#111214',
+      '--chromeAlt': '#18191b',
+      '--line': '#2a2b2f',
+      '--text': '#e4e5e7',
+      '--dim': '#a8abb2',
+      '--faint': '#7d8088',
+      '--accent': '#2563eb',
+      '--onAccent': '#ffffff',
+      '--barBg': '#1c1d20',
+      '--barPadL': '78px',
+      '--barImg': 'none',
+      '--headBg': '#1c1d20',
+      '--sideBg': '#18191b',
+      '--treeBg': '#18191b',
+      '--gridBg': '#111214',
+      '--termBg': '#000000',
+      '--termFg': '#e4e5e7',
+      '--paneBg': '#000000',
+      '--paneRadius': '6px',
+      '--paneBorder': '#34353a',
+      '--paneTitleBg': '#1d1e21',
+      '--paneTitleOn': '#2f3035',
+      '--cardBg': '#232427',
+      '--cardText': '#f0f0f2',
+      '--cardDim': '#a8abb2',
+      '--cardRadius': '8px',
+      '--cardBorder': '#3a3b40',
+      '--cardShadow': '0 6px 20px #00000066, 0 1px 2px #00000080',
+      '--cardRotate': '0deg',
+      '--btnBg': '#2e2f34',
+      '--btnText': '#e4e5e7',
+      '--btnRadius': '6px',
+      '--btnBorder': '#45474d',
+      '--primaryBg': '#2563eb',
+      '--primaryText': '#ffffff',
+      '--primaryBorder': '#2563eb',
+      '--body': '#111214',
+      '--sunken': '#18191b',
+      '--select': '#2563eb',
+      '--winRadius': '8px',
+      '--winShadow': '0 30px 70px #000000aa',
+      '--tabRadius': '7px',
+      '--tabOnBg': '#26272b',
+      '--tabOnMark': '0 0 0 1px #3a3b40',
+      '--g': '#4ade80',
+      '--c': '#67e8f9',
+      '--y': '#facc15',
+      '--r': '#f87171',
+      '--b': '#60a5fa',
+      '--m': '#c084fc',
+      '--gr': '#9ca3af',
+    },
+  },
+}
 
 /** Render order for the picker, and the order the design presents them in. */
 export const THEME_ORDER: readonly ThemeKey[] = [
@@ -502,6 +563,7 @@ export const THEME_ORDER: readonly ThemeKey[] = [
   'macDark',
   'hacker',
   'aero',
+  'graphite',
 ]
 
 /**
@@ -582,6 +644,7 @@ export const THEME_PANE_STYLE: Record<ThemeKey, Exclude<PaneStyleKey, 'theme'>> 
   macDark: 'floating',
   hacker: 'slab',
   aero: 'hairline',
+  graphite: 'hairline',
 }
 
 export type CrtKey = 'theme' | 'on' | 'off'

@@ -22,7 +22,7 @@ const choice = (over: Partial<ThemeChoice> = {}): ThemeChoice => ({
 describe('theme data', () => {
   it('has every theme the picker offers', () => {
     for (const key of THEME_ORDER) expect(THEMES[key], key).toBeDefined()
-    expect(THEME_ORDER).toHaveLength(7)
+    expect(THEME_ORDER).toHaveLength(8)
   })
 
   it('gives every theme the tokens the stylesheet cannot do without', () => {
