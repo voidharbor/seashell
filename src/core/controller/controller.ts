@@ -1922,6 +1922,8 @@ export class Controller {
       for (const key of [...this.spawned]) if (key.startsWith(`${id}:`)) this.spawned.delete(key)
       if (this.find.paneId === id) this.find = { ...this.find, paneId: null, count: null }
       this.grid({ paneId: id, op: 'dispose' })
+      // The pane is gone: main stops tracking its agent session (the shadow stays on disk).
+      void this.deps.invoke('changes:release', { paneId: id }).catch(() => undefined)
     }
     this.syncDrawer(area)
   }

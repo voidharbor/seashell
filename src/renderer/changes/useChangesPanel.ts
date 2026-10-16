@@ -143,6 +143,14 @@ export function useChangesPanel(deps: ChangesDeps): {
   })
   useEffect(() => () => panel.stop(), [panel])
 
+  // A pane that closed: main stops tracking its agent session (the shadow stays on disk).
+  const known = useRef(new Set<string>())
+  useEffect(() => {
+    const now = new Set(deps.state.tabs.flatMap((t) => Object.values(t.panes).filter((p) => p.kind === 'term').map((p) => p.id)))
+    for (const id of known.current) if (!now.has(id)) void window.seashell.changes.release({ paneId: id }).catch(() => undefined)
+    known.current = now
+  }, [deps.state.tabs])
+
   // What the preview page says, from its frame only.
   useEffect(() => {
     const onMessage = (e: MessageEvent): void => {
