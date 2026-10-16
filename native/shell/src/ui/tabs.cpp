@@ -210,11 +210,16 @@ void Ui::viewTabs(Painter& p) {
     std::string id = "tab:" + t.id;
     D2D1_RECT_F close = closeRect(r);
     if (flat) {
-      // Graphite: no face but the active tab's, which joins the pane title
-      // below it; only its top corners round. A hovered tab lifts faintly.
-      if ((t.active || hover) && p.live()) {
+      // Graphite: every tab is a hairline outline with its top corners round
+      // (the bottom edge runs off under the clip). The active tab's face is
+      // the lighter tabActive, joining the pane title below it; the others
+      // carry a faint sheen so each still reads as a tab, more under the pointer.
+      if (p.live()) {
         p.pushClip(r);
-        p.roundedRect(D2D1::RectF(r.left, r.top, r.right, r.bottom + 8 * s), 6, t.active ? t_.tabActive : t_.tabSheen, t.active ? 1.f : 0.6f, 0, 0);
+        D2D1_RECT_F face = D2D1::RectF(r.left, r.top, r.right, r.bottom + 8 * s);
+        uint32_t line = mixRgb(t_.tabText, t_.frame, t.active ? 0.3f : 0.2f);
+        if (t.active) p.roundedRect(face, 6, t_.tabActive, 1, line, 1);
+        else p.roundedRect(face, 6, t_.tabSheen, hover ? 0.6f : 0.25f, line, 1);
         p.popClip();
       }
     } else if (dark) {
